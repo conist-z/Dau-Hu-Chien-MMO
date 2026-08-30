@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Env & secrets (NEVER commit)
+.env
+.env.*
+.deploy.env
+secrets/
+secrets.local.yaml
+config.local.yaml
+
+# Runtime data
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test cache
+.pytest_cache/

@@ -1,0 +1,16 @@
+[Unit]
+Description=Discord Map-Game Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conist.559348bb
+WorkingDirectory=/home/conist.559348bb/discord-map-game
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/conist.559348bb/discord-map-game/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
