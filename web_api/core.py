@@ -164,7 +164,9 @@ class WebHub:
         items = []
         for rt in self.manager.runtimes.values():
             items.append({
-                "channel_id": rt.channel_id,
+                # STRING id: Discord snowflakes exceed JS Number precision;
+                # the Node relay mangles raw ints (trailing digits -> 00).
+                "channel_id": str(rt.channel_id),
                 "map_id": rt.map_data.map_id,
                 "map_name": rt.map_data.display_name or rt.map_data.map_id,
                 "players": len(rt.state.get_visible_players()),
@@ -232,13 +234,17 @@ class WebHub:
 
     async def _handle_join(self, conn: ClientConnection, frame: dict) -> None:
         token = frame.get("token", "")
-        channel_id = frame.get("channel_id")
+        raw_channel = frame.get("channel_id")
+        try:
+            channel_id = int(str(raw_channel))
+        except (TypeError, ValueError):
+            channel_id = -1
+        if channel_id <= 0:
+            await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_channel"})
+            return
         sess = self.registry.get(token)
         if sess is None:
             await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_token"})
-            return
-        if not isinstance(channel_id, int):
-            await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_channel"})
             return
         sess.channel_id = channel_id
         ok = self.manager.register_web_session(

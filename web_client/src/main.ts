@@ -114,7 +114,8 @@ const net = new Net({
     if (token.startsWith("guest:") || localStorage.getItem("guest_id")) {
       if (lastMap) {
         hud.showGate("Đang vào map…");
-        net.joinScenario(Number(lastMap), token);
+        // Keep the channel id as a STRING: snowflakes exceed JS Number precision.
+        net.joinScenario(lastMap, token);
       } else {
         hud.showGate("Chọn map…");
         net.requestScenarioList();

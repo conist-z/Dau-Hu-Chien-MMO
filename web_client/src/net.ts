@@ -115,9 +115,10 @@ export class Net {
 
   // ----- join / gameplay -----
 
-  joinScenario(channelId: number, token?: string): void {
+  // channelId stays a string: Discord snowflakes exceed JS Number precision.
+  joinScenario(channelId: string | number, token?: string): void {
     if (token) this.token = token;
-    this.send({ type: MSG_JOIN, token: this.token, channel_id: channelId });
+    this.send({ type: MSG_JOIN, token: this.token, channel_id: String(channelId) });
   }
 
   requestScenarioList(): void {
