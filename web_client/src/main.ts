@@ -96,10 +96,19 @@ const net = new Net({
   onInventory: applyInventory,
   onPush: (message) => hud.toast(message),
   onError: (code) => {
-    if (code === "bad_token") {
+    // Any auth/session error before joining: wipe the stale token and fall
+    // back to quick-play so the user is never stuck on a dead-end gate.
+    const stale =
+      code === "bad_token" ||
+      (code === "not_joined" && !net.isJoined);
+    if (stale) {
       localStorage.removeItem("web_token");
-      hud.showGate("Phiên đăng nhập hết hạn — đăng nhập lại.");
-    } else if (code === "scenario_missing_or_full") {
+      quickPlayArmed = true;
+      hud.setLoginButton(true, "Vào game nhanh (không cần đăng nhập)");
+      hud.showGate("Phiên cũ đã hết — bấm vào game để chơi ngay.");
+      return;
+    }
+    if (code === "scenario_missing_or_full") {
       hud.showGate("Map đầy hoặc không tồn tại.");
     }
     hud.toast(`Lỗi: ${code}`);
