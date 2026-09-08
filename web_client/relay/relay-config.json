@@ -1,6 +1,6 @@
 {
   "_comment": "Relay config cho panel không có UI Environment Variables. Đổi giá trị rồi Restart app. client_id là CÔNG KHAI (bình thường). TUYỆT ĐỐI không đặt bot token vào file này.",
   "RELAY_TOKEN": "bd3b9c716b74a4abc782a0166de9f9959af83170e00f0493",
-  "DISCORD_OAUTH_CLIENT_ID": "PASTE_CLIENT_ID_O_DAY",
+  "DISCORD_OAUTH_CLIENT_ID": "965153822861307914",
   "WEB_REDIRECT_URI": "https://rcatmmo.nexnodesite.xyz/"
 }
