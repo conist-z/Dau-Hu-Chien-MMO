@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord Map — Web Client</title>
+    <script type="module" crossorigin src="./assets/index-yX-wp8ti.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-zMwq5SXy.css">
+  </head>
+  <body>
+    <div id="game-root">
+      <div id="overlay">
+        <!-- Top-left: clock + weather (flush corner) -->
+        <div id="hud-topleft" class="hud-box">
+          <span id="hud-clock">--:--</span>
+          <span id="hud-weather">☀️</span>
+        </div>
+        <!-- Top-right: HP + mana bars (flush corner) -->
+        <div id="hud-topright" class="hud-box">
+          <div class="bar" id="bar-hp">
+            <div class="bar-fill" id="bar-hp-fill"></div>
+            <span class="bar-label" id="bar-hp-label">100/100</span>
+          </div>
+          <div class="bar" id="bar-mana">
+            <div class="bar-fill mana" id="bar-mana-fill"></div>
+            <span class="bar-label" id="bar-mana-label">50/50</span>
+          </div>
+        </div>
+        <!-- Bottom-center: hotbar (always visible) -->
+        <div id="hud-hotbar"></div>
+        <!-- Bottom-right: chat box + commands -->
+        <div id="hud-chat">
+          <div id="chat-log"></div>
+          <form id="chat-form">
+            <input id="chat-input" type="text" placeholder="Nhập /lệnh..." autocomplete="off" />
+          </form>
+        </div>
+        <!-- Center: toast area -->
+        <div id="hud-toast"></div>
+        <!-- Inventory + Craft panel (tabbed) -->
+        <div id="inv-panel" class="hidden">
+          <div class="inv-box">
+            <div class="inv-tabs">
+              <button class="inv-tab active" data-tab="items" type="button">Túi đồ</button>
+              <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
+              <button class="inv-close" id="inv-close" type="button">✕</button>
+            </div>
+            <div class="inv-body" id="inv-items"></div>
+            <div class="inv-body hidden" id="inv-craft"></div>
+          </div>
+        </div>
+        <!-- Login / join gate -->
+        <div id="login-gate">
+          <div class="panel">
+            <h1>Map Game</h1>
+            <p id="login-status">Đăng nhập bằng Discord…</p>
+            <button id="btn-login" type="button">Đăng nhập bằng Discord</button>
+            <div id="scenario-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

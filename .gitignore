@@ -26,3 +26,11 @@ Thumbs.db
 
 # Test cache
 .pytest_cache/
+
+# Web client build deps (dist/ phải được push — NexNode serve nó)
+web_client/node_modules/
+web_client/relay/node_modules/
+
+# Deploy scratch
+deploy_log.txt
+
