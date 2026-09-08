@@ -89,6 +89,7 @@ const net = new Net({
   onScenarioList: (items) => {
     hud.showScenarioList(items, (channelId) => {
       const token = localStorage.getItem("web_token") ?? "";
+      localStorage.setItem("last_channel", String(channelId));
       net.joinScenario(channelId, token);
     });
   },
@@ -108,6 +109,18 @@ const net = new Net({
   },
   onLoginOk: (token, displayName) => {
     hud.setLoginButton(true, `Tiếp: ${displayName}`);
+    // Guest flow: auto-join the remembered map immediately (no pick step).
+    const lastMap = localStorage.getItem("last_channel");
+    if (token.startsWith("guest:") || localStorage.getItem("guest_id")) {
+      if (lastMap) {
+        hud.showGate("Đang vào map…");
+        net.joinScenario(Number(lastMap), token);
+      } else {
+        hud.showGate("Chọn map…");
+        net.requestScenarioList();
+      }
+      return;
+    }
     hud.showGate("Đăng nhập xong — chọn map…");
     net.requestScenarioList();
     void token;
@@ -161,7 +174,13 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  if (saved) {
+  if (saved && saved.startsWith("guest:")) {
+    // Guest tokens do not survive a bot restart (server-side registry is
+    // in-memory): ALWAYS re-run guest login, never send frames with the
+    // stale token — the server would reject them with not_joined.
+    hud.showGate("Chế độ nhanh: tự động vào game…");
+    guestLogin(net);
+  } else if (saved) {
     hud.showGate("Đã có phiên — chọn map…");
     net.requestScenarioList();
   } else {
