@@ -126,6 +126,16 @@ class WebHub:
         if ftype == MSG_JOIN:
             await self._handle_join(conn, frame)
             return
+        if ftype == "list":
+            # Pre-join picklist: requires a login (session) but NOT a joined
+            # scenario — gating it below made the map picker unreachable.
+            if conn.session is None:
+                await self.send_to_client(
+                    cid, {"type": MSG_ERROR, "code": "not_joined"}
+                )
+                return
+            await self._handle_list(conn.session)
+            return
         if conn.session is None or not conn.joined:
             await self.send_to_client(
                 cid, {"type": MSG_ERROR, "code": "not_joined"}
@@ -134,8 +144,6 @@ class WebHub:
         sess = conn.session
         if ftype == MSG_INPUT:
             await self._handle_input(sess, frame)
-        elif ftype == "list":
-            await self._handle_list(sess)
         elif ftype == MSG_ACTION:
             await self._handle_action(sess, frame)
         elif ftype == MSG_INV_OP:
@@ -187,6 +195,12 @@ class WebHub:
         sess = self.registry.create(
             user_id, f"Khach-{raw[-4:]}", channel_id=0,
         )
+        # Bind the session to THIS connection NOW (not at join): reply helpers
+        # route by conn.session identity — without this, scenario_list and
+        # every pre-join reply silently vanish.
+        conn = self.connections.get(cid)
+        if conn is not None:
+            conn.session = sess
         print(f"[WEB] guest login {user_id}", flush=True)
         await self.send_to_client(cid, {
             "type": "login_result", "ok": True,
@@ -206,6 +220,9 @@ class WebHub:
         sess = self.registry.create(
             profile["user_id"], profile["display_name"], channel_id=0,
         )
+        conn = self.connections.get(cid)
+        if conn is not None:
+            conn.session = sess
         await self.send_to_client(cid, {
             "type": "login_result", "ok": True,
             "token": sess.token,
