@@ -176,6 +176,16 @@ hud.onLoginClick(() => {
   if (quickPlayArmed) {
     hud.setLoginButton(false, "Đang vào game…");
     guestLogin(net);
+    // Guard: server không trả lời trong 10s -> báo lỗi thay vì treo.
+    window.setTimeout(() => {
+      if (!net.isJoined) {
+        hud.setLoginButton(true);
+        hud.showGate(
+          "Server game chưa kết nối được relay (bot offline hoặc RELAY_URL sai). " +
+          "Thử lại sau — hoặc báo admin xem log panel có dòng [WEB] relay connected.",
+        );
+      }
+    }, 10000);
     return;
   }
   hud.setLoginButton(false, "Đang mở Discord…");
