@@ -1,0 +1,13 @@
+{
+  "name": "dauhu-chien-mmo-root",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Root wrapper: NexNode 'Deploy from Git' runs npm start at repo root; it launches the relay in web_client/relay/",
+  "scripts": {
+    "start": "node web_client/relay/relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
