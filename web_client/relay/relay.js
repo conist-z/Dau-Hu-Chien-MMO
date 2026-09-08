@@ -16,8 +16,24 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 8787;
-const RELAY_TOKEN = process.env.RELAY_TOKEN || "";
+
+// Config: env vars first; falls back to relay-config.json next to relay.js
+// (panels without an env UI — the file is editable via SFTP/file manager).
+// client_id is PUBLIC by design; never put a bot token in the config file.
+function loadFileConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, "relay-config.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+const fileCfg = loadFileConfig();
+const cfg = (key) => process.env[key] ?? fileCfg[key] ?? "";
+
+const PORT = process.env.PORT || cfg("PORT") || 8787;
+const RELAY_TOKEN = cfg("RELAY_TOKEN");
+const DISCORD_OAUTH_CLIENT_ID = cfg("DISCORD_OAUTH_CLIENT_ID");
+const WEB_REDIRECT_URI = cfg("WEB_REDIRECT_URI");
 const DIST_DIR = path.join(__dirname, "dist");
 
 // ---- state ----
@@ -42,10 +58,13 @@ const MIME = {
 function serveStatic(req, res) {
   // /config.json is generated (client_id is public by design).
   if (req.url === "/config.json") {
-    res.writeHead(200, { "Content-Type": "application/json" });
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    });
     res.end(JSON.stringify({
-      client_id: process.env.DISCORD_OAUTH_CLIENT_ID || "",
-      redirect_uri: process.env.WEB_REDIRECT_URI || null,
+      client_id: DISCORD_OAUTH_CLIENT_ID,
+      redirect_uri: WEB_REDIRECT_URI || null,
     }));
     return;
   }
