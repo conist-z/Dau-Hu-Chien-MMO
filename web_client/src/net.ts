@@ -124,6 +124,10 @@ export class Net {
     this.send({ type: MSG_LIST });
   }
 
+  requestGuestJoin(guestId: string): void {
+    this.send({ type: "guest_login", guest_id: guestId });
+  }
+
   setInput(dx: number, dy: number, running: boolean): void {
     const p = this.pendingInput;
     p.dx = dx; p.dy = dy; p.running = running; p.dirty = true;
