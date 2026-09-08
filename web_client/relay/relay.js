@@ -30,10 +30,20 @@ function loadFileConfig() {
 const fileCfg = loadFileConfig();
 const cfg = (key) => process.env[key] ?? fileCfg[key] ?? "";
 
+// Hardcoded fallback for panels with no env UI at all (values are NOT
+// secrets: client_id is public by design; RELAY_TOKEN here matches the
+// bot's .env — rotate both together if it ever leaks).
+const HARDCODED = {
+  RELAY_TOKEN: "bd3b9c716b74a4abc782a0166de9f9959af83170e00f0493",
+  DISCORD_OAUTH_CLIENT_ID: "965153822861307914",
+  WEB_REDIRECT_URI: "https://rcatmmo.nexnodesite.xyz/",
+};
+
 const PORT = process.env.PORT || cfg("PORT") || 8787;
-const RELAY_TOKEN = cfg("RELAY_TOKEN");
-const DISCORD_OAUTH_CLIENT_ID = cfg("DISCORD_OAUTH_CLIENT_ID");
-const WEB_REDIRECT_URI = cfg("WEB_REDIRECT_URI");
+const RELAY_TOKEN = cfg("RELAY_TOKEN") || HARDCODED.RELAY_TOKEN;
+const DISCORD_OAUTH_CLIENT_ID =
+  cfg("DISCORD_OAUTH_CLIENT_ID") || HARDCODED.DISCORD_OAUTH_CLIENT_ID;
+const WEB_REDIRECT_URI = cfg("WEB_REDIRECT_URI") || HARDCODED.WEB_REDIRECT_URI;
 const DIST_DIR = path.join(__dirname, "dist");
 
 // ---- state ----
