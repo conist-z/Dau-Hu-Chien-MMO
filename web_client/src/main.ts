@@ -154,7 +154,9 @@ const net = new Net({
     }
     const REASONS: Record<string, string> = {
       no_node: "Không có gì để chặt ở ô đó.",
-      regrowing: "Cây đang mọc lại — chờ chút.",
+      // regrowing: intentionally silent — the player must NOT think of the
+      // spot as a pot that regrows; the tree just quietly comes back later
+      // (nothing visible, nothing blocking in the meantime).
       too_hard: "Quá cứng — cần cúp từ tầng dirt trở lên.",
       not_placeable: "Khối này không thể đặt.",
       blocked_tile: "Không thể đặt ở ô đó.",

@@ -183,12 +183,19 @@ export class WorldScene extends Phaser.Scene {
     );
     if (usable.length === 0) return;
 
-    // Resource tiles are drawn as a separate dynamic layer (choppable),
-    // so the base bake must EXCLUDE them or chopped trees would leave
-    // ghosts painted into the canvas.
-    const resourceSet = new Set(
-      welcome.resources.map(([x, y]) => `${x},${y}`),
-    );
+    // Resource layers ("cây", "vật phẩm ko liên quan", ...) are drawn as a
+    // separate dynamic layer (choppable), so the base bake must EXCLUDE the
+    // whole LAYER (by folded name, mirroring the server's
+    // RESOURCE_LAYER_NAMES) — NOT per-coordinate: excluding coordinates also
+    // drops the ground/grass tiles UNDER a tree, leaving a hole when the
+    // tree is felled.
+    const RESOURCE_LAYERS = new Set([
+      "cay", "tree", "trees", "resources",
+      "vat pham ko lien quan", "ore", "ores", "mine",
+    ]);
+    const foldName = (s: string): string =>
+      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 
     const canvas = document.createElement("canvas");
     canvas.width = map.width * tw;
@@ -196,13 +203,13 @@ export class WorldScene extends Phaser.Scene {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     for (const layer of map.layers) {
+      if (RESOURCE_LAYERS.has(foldName(layer.name || ""))) continue;
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
         if (!row) continue;
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
-          if (resourceSet.has(`${x},${y}`)) continue; // dynamic layer draws it
           const ts = map.tilesets.find(
             (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
           );
