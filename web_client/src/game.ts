@@ -126,12 +126,15 @@ export class WorldScene extends Phaser.Scene {
     this.inputVec.running = running;
   }
 
-  /** Screen (0..1) -> world tile, through the camera. */
+  /** Screen (0..1) -> world tile, through the camera (zoom-safe). */
   screenToTile(sx: number, sy: number): { x: number; y: number } {
-    const cam = this.cameras.main;
-    const wx = cam.scrollX + (sx * cam.width) / cam.zoom;
-    const wy = cam.scrollY + (sy * cam.height) / cam.zoom;
-    return { x: Math.floor(wx / 32), y: Math.floor(wy / 32) };
+    // getWorldPoint handles zoom + scroll + camera bounds correctly;
+    // manual scroll math drifted under zoom != 1 (the reported offset).
+    const p = this.cameras.main.getWorldPoint(
+      sx * this.cameras.main.width,
+      sy * this.cameras.main.height,
+    );
+    return { x: Math.floor(p.x / 32), y: Math.floor(p.y / 32) };
   }
 
   /** Offset of a clicked tile relative to the player (for place). */
@@ -149,6 +152,10 @@ export class WorldScene extends Phaser.Scene {
     if (!this.welcome.map.tilesets.some((t) => t.image === image)) return;
     this.loadedTilesets.add(image);
     this.bakeMapIfReady();
+    // Resource layer was skipped at build time (no textures yet) — rebuild
+    // it now and clear the sig cache so snapshots can refresh it again.
+    this.resourceSig = "";
+    this.updateResourceLayer(this.welcome.resources);
   }
 
   private bakeMapIfReady(): void {
