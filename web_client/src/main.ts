@@ -240,9 +240,12 @@ const input = new KeyboardInput({
 });
 
 // Bind canvas clicks once Phaser creates it.
+// NOTE: must be Phaser's OWN canvas (game.canvas). The weather-fx canvas is
+// mounted into #game-root BEFORE Phaser boots, so "#game-root canvas"
+// matched the weather canvas — which has pointer-events:none and never
+// receives events (clicks dead, browser context menu leaked through).
 game.events.once("ready", () => {
-  const canvas = document.querySelector("#game-root canvas") as HTMLCanvasElement | null;
-  if (canvas) input.bindCanvas(canvas);
+  input.bindCanvas(game.canvas);
 });
 
 // Tab-return hygiene: rAF paused while hidden — clear stuck movement keys
