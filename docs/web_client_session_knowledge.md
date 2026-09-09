@@ -151,13 +151,10 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - Railway tự deploy mỗi git push; kiểm tra bản served bằng cách fetch JS bundle
   và tìm chuỗi đặc trưng (vd `channel_id:String`).
 
-## 6. Việc đang treo / next steps
-- **OAuth Discord thật** chưa chạy vì NexNode không restart được relay; Railway
-  giờ có auto-deploy → có thể bật lại, đổi redirect_uri trong app-config.json +
-  Dev Portal, cần endpoint token exchange phía bot (đã có `web_api/auth.py`).
+## 6. Ý tưởng tiếp theo (không có bug đang treo — bug được fix riêng ở session khác)
+- **OAuth Discord thật**: Railway có auto-deploy nên có thể bật lại, đổi
+  redirect_uri trong app-config.json + Dev Portal (bot đã có `web_api/auth.py`).
 - Block selector trên web (phím B) thay vì set 🧱 bên Discord.
 - Shake animation + particle khi chặt (Kaetram có `resource.shake()`).
 - Avatar player thật (cần OAuth) — đang là ô vuông màu (xanh=self, cam=Discord
   player, xanh lá=web player khác).
-- Lỗi "hiện nguyên đống tile thô lên map" vừa báo (chưa debug — có thể do
-  resource layer vẽ trùng/bakedImage sai crop khi rebuild sau khi texture sẵn).
