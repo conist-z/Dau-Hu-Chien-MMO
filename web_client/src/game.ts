@@ -152,9 +152,13 @@ export class WorldScene extends Phaser.Scene {
 
   /** Offset of a clicked tile relative to the player (for place). */
   offsetFromSelf(tile: { x: number; y: number }): { dx: number; dy: number } {
+    // IMPORTANT: offsets are relative to the SERVER's integer tile
+    // (selfServerPos), not the predicted float position — the server
+    // computes tx = player.x + dx with its own int tile, so using the
+    // drifted prediction landed blocks on the wrong tile.
     return {
-      dx: Math.round(tile.x - this.selfX),
-      dy: Math.round(tile.y - this.selfY),
+      dx: Math.round(tile.x - this.selfServerPos.x),
+      dy: Math.round(tile.y - this.selfServerPos.y),
     };
   }
 
