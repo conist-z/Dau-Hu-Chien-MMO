@@ -46,6 +46,8 @@ export interface WelcomePayload {
   };
   inventory: InventoryPayload;
   recipes: RecipePayload[];
+  // Item id -> emoji (server registries; authoritative for icons).
+  item_emojis: Record<string, string>;
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
   resources: [number, number, number][];

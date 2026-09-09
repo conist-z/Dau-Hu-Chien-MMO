@@ -32,6 +32,12 @@ function itemEmoji(id: string | null): string {
   return ITEM_EMOJI[id] ?? id[0]?.toUpperCase() ?? "?";
 }
 
+/** Icon through the server's registry first, static map as fallback. */
+function iconFor(id: string | null, serverMap: Record<string, string>): string {
+  if (!id) return "";
+  return serverMap[id] ?? itemEmoji(id);
+}
+
 function fmtClock(secondsOfDay: number): string {
   const h = Math.floor(secondsOfDay / 3600) % 24;
   const m = Math.floor((secondsOfDay % 3600) / 60);
@@ -59,6 +65,10 @@ export class Hud {
   private invCraft = document.getElementById("inv-craft")!;
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
+  // Server-driven emoji map (welcome.item_emojis): every item the player has
+  // EVER received gets its proper icon; the static fallback below only
+  // covers the bootstrap moment before welcome arrives.
+  private itemEmojis: Record<string, string> = {};
   private recipes: RecipePayload[] = [];
   private activeSlot = 0;
   private onUse: ((itemId: string) => void) | null = null;
@@ -137,7 +147,7 @@ export class Hud {
       const cell = document.createElement("div");
       cell.className = "inv-item";
       cell.title = stack.id;
-      cell.innerHTML = `<span>${itemEmoji(stack.id)}</span><span class="qty">${stack.qty}</span>`;
+      cell.innerHTML = `<span>${iconFor(stack.id, this.itemEmojis)}</span><span class="qty">${stack.qty}</span>`;
       cell.addEventListener("click", () => this.onUse?.(stack.id));
       this.invItems.appendChild(cell);
     }
@@ -235,6 +245,13 @@ export class Hud {
     this.recipes = recipes;
   }
 
+  /** Authoritative id->emoji map from the server's item registries. */
+  setItemEmojis(map: Record<string, string>): void {
+    this.itemEmojis = map ?? {};
+    this.renderHotbar();
+    if (this.inventoryOpen) this.renderInventory();
+  }
+
   get recipeList(): RecipePayload[] {
     return this.recipes;
   }
@@ -248,7 +265,7 @@ export class Hud {
       const qty = itemId
         ? (this.inventory.bag.find((b) => b.id === itemId)?.qty ?? 0)
         : 0;
-      div.innerHTML = `<span class="key">${idx + 1}</span><span>${itemEmoji(itemId)}</span>` +
+      div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconFor(itemId, this.itemEmojis)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
       div.addEventListener("click", () => {
         this.selectSlot(idx);

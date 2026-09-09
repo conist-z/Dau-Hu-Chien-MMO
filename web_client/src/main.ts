@@ -202,23 +202,19 @@ const input = new KeyboardInput({
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
   onCanvasAction: (kind, _sx, _sy) => {
-    // Act on the MOUSE TILE (what the cursor points at), not the facing
-    // tile. The server clamps to AIM_RANGE around the player.
+    // ABSOLUTE tile targeting: send the clicked tile itself. The server
+    // derives the offset from its own player tile — no client position
+    // math to drift (this mis-placed blocks before).
     const tile = scene.getMouseTile();
-    const off = tile ? scene.offsetFromSelf(tile) : null;
+    if (!tile) {
+      net.action(kind === "primary" ? "chop" : "place");
+      return;
+    }
     if (kind === "primary") {
-      // Contextual: a placed block under the cursor -> break it; a tree/
-      // bush/ore -> chop; otherwise chop (the server answers precisely).
-      if (tile && scene.isBlockAt(tile.x, tile.y)) {
-        if (off) net.action("break", off.dx, off.dy);
-        else net.action("break");
-      } else {
-        net.action("chop");
-      }
+      // Contextual: placed block under cursor -> break; else chop.
+      net.actionAt(scene.isBlockAt(tile.x, tile.y) ? "break" : "chop", tile.x, tile.y);
     } else {
-      // Right click: place the held block at the mouse tile.
-      if (off) net.action("place", off.dx, off.dy);
-      else net.action("place");
+      net.actionAt("place", tile.x, tile.y);
     }
   },
   onCanvasHover: (sx, sy) => {

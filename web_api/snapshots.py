@@ -77,6 +77,24 @@ def _recipes_payload() -> List[dict]:
     ]
 
 
+def _item_emojis_payload() -> Dict[str, str]:
+    """Item id -> emoji, straight from the server registries (data-driven).
+
+    The web client renders bag/hotbar icons from this map so every item the
+    player has EVER received shows its proper icon — the client-side map can
+    never drift out of sync with game/items.py + game/blocks.py again.
+    """
+    from game.blocks import BLOCK_REGISTRY
+    from game.items import ITEM_REGISTRY
+
+    out: Dict[str, str] = {}
+    for iid, item in ITEM_REGISTRY.items():
+        out[iid] = item.emoji
+    for bid, block in BLOCK_REGISTRY.items():
+        out.setdefault(bid, block.emoji)
+    return out
+
+
 def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
     """The full initial payload after join: map + self + economy + recipes."""
     md = rt.map_data
@@ -114,6 +132,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         },
         "inventory": _inventory_payload(rt, user_id),
         "recipes": _recipes_payload(),
+        # Item id -> emoji for the client's inventory/hotbar icons.
+        "item_emojis": _item_emojis_payload(),
         # Placeable block catalog (id + emoji + name) for the build UI.
         "blocks_catalog": _blocks_catalog_payload(),
         "blocks": _blocks_payload(rt),
@@ -158,6 +178,10 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "coins": player.coins if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
+            # AUTHORITATIVE int tile the server resolves actions against.
+            # The client must target relative to THIS (its predicted float
+            # position drifts; using it for offsets misplaced blocks).
+            "tile": [player.x, player.y] if player else [0, 0],
             # Facing/aim data so the web client can draw its target square:
             # the player's 8-way direction plus the active Build-Mode cursor
             # offset when one exists.

@@ -313,23 +313,33 @@ class WebHub:
         name = frame.get("name")
         uid = sess.user_id
         action = None
+        # ABSOLUTE mouse-tile targeting: the client sends the tile it clicked
+        # (tx, ty); the server derives the offset from ITS OWN player tile —
+        # client-side position math drifts (prediction) and misplaced blocks.
+        rt_a = self.manager.get_runtime(sess.channel_id)
+        player_a = rt_a.state.get_player(uid) if rt_a else None
+        abs_dx = abs_dy = None
+        raw_tx, raw_ty = frame.get("tx"), frame.get("ty")
+        if (
+            player_a is not None
+            and isinstance(raw_tx, (int, float))
+            and isinstance(raw_ty, (int, float))
+        ):
+            abs_dx = int(raw_tx) - player_a.x
+            abs_dy = int(raw_ty) - player_a.y
         if name == "attack":
             action = AttackAction(user_id=uid)
-        elif name == "chop":  # chặt cây (mouse tile offset nếu có)
-            cdx = frame.get("dx")
-            cdy = frame.get("dy")
+        elif name == "chop":  # chặt cây (mouse tile nếu có)
             action = ChopAction(
                 user_id=uid,
-                dx=int(cdx) if cdx is not None else None,
-                dy=int(cdy) if cdy is not None else None,
+                dx=abs_dx if abs_dx is not None else None,
+                dy=abs_dy if abs_dy is not None else None,
             )
-        elif name == "break":  # đập block (mouse tile offset nếu có)
-            bdx = frame.get("dx")
-            bdy = frame.get("dy")
+        elif name == "break":  # đập block (mouse tile nếu có)
             action = BreakBlockAction(
                 user_id=uid,
-                dx=int(bdx) if bdx is not None else None,
-                dy=int(bdy) if bdy is not None else None,
+                dx=abs_dx if abs_dx is not None else None,
+                dy=abs_dy if abs_dy is not None else None,
             )
         elif name == "shovel":  # xúc cỏ/đất (target tile)
             action = ShovelAction(user_id=uid)
@@ -339,9 +349,12 @@ class WebHub:
                 action = TurnAction(user_id=uid, direction=direction)
             except KeyError:
                 action = None
-        elif name == "place":  # đặt block (target tile hoặc offset)
-            dx = frame.get("dx")
-            dy = frame.get("dy")
+        elif name == "place":  # đặt block (mouse tile tuyệt đối nếu có)
+            if abs_dx is not None:
+                dx, dy = abs_dx, abs_dy
+            else:
+                dx = frame.get("dx")
+                dy = frame.get("dy")
             block_id = str(frame.get("block_id", ""))
             if not block_id:
                 # No explicit block from the client. Resolution order:

@@ -156,6 +156,11 @@ export class Net {
     }
   }
 
+  /** Actions target an ABSOLUTE tile (tx,ty) — no client position math. */
+  actionAt(name: string, tx: number, ty: number): void {
+    this.send({ type: "action", name, tx, ty });
+  }
+
   action(name: string, dx?: number, dy?: number): void {
     const frame: Record<string, unknown> = { type: "action", name };
     if (dx !== undefined) frame.dx = dx;
