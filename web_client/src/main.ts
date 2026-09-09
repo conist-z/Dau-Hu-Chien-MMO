@@ -234,11 +234,9 @@ const input = new KeyboardInput({
     }
   },
   onCanvasHover: (sx, sy) => {
-    if (sx < 0) {
-      scene.setMouseTile(null);
-      return;
-    }
-    scene.setMouseTile(scene.screenToTile(sx, sy));
+    // Store raw screen coords; the scene re-derives the tile every frame
+    // (camera moves under a still cursor — cached tiles go stale).
+    scene.setMouseTile(sx < 0 ? null : { x: sx, y: sy });
   },
 });
 
@@ -246,6 +244,17 @@ const input = new KeyboardInput({
 game.events.once("ready", () => {
   const canvas = document.querySelector("#game-root canvas") as HTMLCanvasElement | null;
   if (canvas) input.bindCanvas(canvas);
+});
+
+// Tab-return hygiene: rAF paused while hidden — clear stuck movement keys
+// so returning to the tab never leaves the player walking or targeting
+// from stale input.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    input.clearKeys();
+    scene.setLocalInput(0, 0, false);
+    net.setInput(0, 0, false);
+  }
 });
 
 // --- boot: OAuth return or direct connect ---

@@ -46,6 +46,13 @@ export class KeyboardInput {
     }
   }
 
+  /** Drop all held keys (tab-switch hygiene) without disabling input. */
+  clearKeys(): void {
+    this.keys.clear();
+    this.running = false;
+    this.emit();
+  }
+
   private isChatFocused(): boolean {
     return this.hooks.onChatFocus();
   }

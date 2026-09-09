@@ -21,9 +21,19 @@ html, body {
 
 #game-root { position: relative; width: 100vw; height: 100vh; }
 #game-root canvas { display: block; width: 100%; height: 100%; }
+/* Animated weather layer (rain/snow/storm...): plain canvas mounted between
+   the Phaser canvas and the HUD overlay. Fixed so it never scrolls; the
+   z-order keeps HUD text crisp above the particles. */
+#weather-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
 #overlay {
   position: absolute; inset: 0;
   pointer-events: none;
+  z-index: 2;
 }
 #overlay > * { pointer-events: auto; }
 

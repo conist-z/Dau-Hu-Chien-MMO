@@ -50,6 +50,7 @@ export class WorldScene extends Phaser.Scene {
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
   private aimCursor: { dx: number; dy: number } | null = null;
   private mouseTile: { x: number; y: number } | null = null;
+  private mouseScreen: { x: number; y: number } | null = null; // normalized 0..1, kept current
   private lastHoverUpdate = 0; // throttle hover reposition (perf)
   // --- resource nodes layer (trees/bushes/ore from the server) ---
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
@@ -313,6 +314,12 @@ export class WorldScene extends Phaser.Scene {
   // ---- per-frame update (60fps) ----
 
   update(_time: number): void {
+    // Mouse tile is derived FRESH each frame from the last known cursor
+    // position: the camera moves under a still cursor (follow lerp, tab
+    // switch) and a tile cached at mousemove time would be stale.
+    if (this.mouseScreen) {
+      this.mouseTile = this.screenToTile(this.mouseScreen.x, this.mouseScreen.y);
+    }
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
@@ -680,9 +687,12 @@ export class WorldScene extends Phaser.Scene {
     this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
-  /** Track the mouse tile for the hover highlight (from main.ts). */
+  /** Track the raw mouse position; the tile is recomputed EVERY FRAME —
+   * tile-at-mousemove goes stale when the camera moves under a still
+   * cursor (tab switch, follow lerp) and clicks then target the wrong
+   * tile (the "block lands elsewhere after alt-tab" bug). */
   setMouseTile(tile: { x: number; y: number } | null): void {
-    this.mouseTile = tile;
+    this.mouseScreen = tile;
   }
 
   getMouseTile(): { x: number; y: number } | null {
