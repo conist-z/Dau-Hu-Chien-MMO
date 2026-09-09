@@ -400,14 +400,41 @@ export class WorldScene extends Phaser.Scene {
     this.syncProgressBars({});
   }
 
-  /** Find the tileset texture a gid belongs to (firstgid ranges). */
+  /**
+   * Find (or lazily crop) the per-tile texture for a gid. The tileset texture
+   * is the WHOLE sheet — using it directly would draw the entire raw tileset
+   * on every resource tile. Instead crop the tile into its own canvas texture
+   * once ("res-<gid>") and reuse it.
+   */
   private textureForGid(gid: number): string | null {
     const map = this.welcome?.map;
     if (!map) return null;
-    const ts = map.tilesets.find((t) => gid >= t.firstgid);
+    const cacheKey = `res-${gid}`;
+    if (this.textures.exists(cacheKey)) return cacheKey;
+    const tw = map.tile_width;
+    const th = map.tile_height;
+    const ts = map.tilesets.find(
+      (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
+    );
     if (!ts?.image) return null;
-    const key = this.tileTextures.get(ts.image);
-    return key && this.textures.exists(key) ? key : null;
+    const sheetKey = this.tileTextures.get(ts.image);
+    if (!sheetKey || !this.textures.exists(sheetKey)) return null;
+    const src = this.textures.get(sheetKey).getSourceImage() as HTMLImageElement;
+    if (!src || !src.width) return null;
+    const local = gid - ts.firstgid;
+    const col = local % ts.columns;
+    const rowIdx = Math.floor(local / ts.columns);
+    const tileW = ts.tilewidth ?? tw;
+    const tileH = th;
+    if ((col + 1) * tileW > src.width || (rowIdx + 1) * tileH > src.height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = tileW;
+    canvas.height = tileH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(src, col * tileW, rowIdx * tileH, tileW, tileH, 0, 0, tileW, tileH);
+    this.textures.addCanvas(cacheKey, canvas);
+    return cacheKey;
   }
 
   /** Draw/update the small progress bar above nodes being harvested. */
