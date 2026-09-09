@@ -315,10 +315,22 @@ class WebHub:
         action = None
         if name == "attack":
             action = AttackAction(user_id=uid)
-        elif name == "chop":  # chặt cây (target tile)
-            action = ChopAction(user_id=uid)
-        elif name == "break":  # đập block (target tile)
-            action = BreakBlockAction(user_id=uid)
+        elif name == "chop":  # chặt cây (mouse tile offset nếu có)
+            cdx = frame.get("dx")
+            cdy = frame.get("dy")
+            action = ChopAction(
+                user_id=uid,
+                dx=int(cdx) if cdx is not None else None,
+                dy=int(cdy) if cdy is not None else None,
+            )
+        elif name == "break":  # đập block (mouse tile offset nếu có)
+            bdx = frame.get("dx")
+            bdy = frame.get("dy")
+            action = BreakBlockAction(
+                user_id=uid,
+                dx=int(bdx) if bdx is not None else None,
+                dy=int(bdy) if bdy is not None else None,
+            )
         elif name == "shovel":  # xúc cỏ/đất (target tile)
             action = ShovelAction(user_id=uid)
         elif name == "turn":  # quay hướng nhìn (8-way)

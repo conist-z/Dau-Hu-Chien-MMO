@@ -200,15 +200,23 @@ const input = new KeyboardInput({
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
   onCanvasAction: (kind, _sx, _sy) => {
+    // Act on the MOUSE TILE (what the cursor points at), not the facing
+    // tile. The server clamps to AIM_RANGE around the player.
+    const tile = scene.getMouseTile();
+    const off = tile ? scene.offsetFromSelf(tile) : null;
     if (kind === "primary") {
-      // Chop/mine the AIM TARGET (the yellow square the arm points at) —
-      // matching Discord Build-Mode semantics: click acts on the target.
-      net.action("chop");
+      // Contextual: a placed block under the cursor -> break it; a tree/
+      // bush/ore -> chop; otherwise chop (the server answers precisely).
+      if (tile && scene.isBlockAt(tile.x, tile.y)) {
+        if (off) net.action("break", off.dx, off.dy);
+        else net.action("break");
+      } else {
+        net.action("chop");
+      }
     } else {
-      // Place the selected block on the AIM TARGET too (predictable):
-      // right click uses the tile the arm/target square shows, not a far
-      // mouse tile — the server clamps to AIM_RANGE around the player.
-      net.action("place");
+      // Right click: place the held block at the mouse tile.
+      if (off) net.action("place", off.dx, off.dy);
+      else net.action("place");
     }
   },
   onCanvasHover: (sx, sy) => {

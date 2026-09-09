@@ -56,6 +56,9 @@ export class WorldScene extends Phaser.Scene {
   private resourceSig = "";
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
   private lastResProgress = "";
+  // Placed blocks (x,y -> id): solid for the local prediction too.
+  private blockSet = new Set<string>();
+  private lastBlocksSig = "";
   // --- build mode: selected block to place ---
   private selectedBlock = "stone";
 
@@ -470,6 +473,15 @@ export class WorldScene extends Phaser.Scene {
     this.mouseTile = tile;
   }
 
+  getMouseTile(): { x: number; y: number } | null {
+    return this.mouseTile;
+  }
+
+  /** True when a player-placed block stands on this tile. */
+  isBlockAt(x: number, y: number): boolean {
+    return this.blockSet.has(`${x},${y}`);
+  }
+
   /** Set the active Build-Mode cursor offset (from the server snapshot). */
   setAimCursor(aim: { dx: number; dy: number } | null): void {
     this.aimCursor = aim;
@@ -513,7 +525,12 @@ export class WorldScene extends Phaser.Scene {
 
   private solidAt(tx: number, ty: number): boolean {
     const row = this.collision[ty];
-    return !row || tx < 0 || tx >= row.length || row[tx] === 1;
+    if (!row || tx < 0 || tx >= row.length || row[tx] === 1) return true;
+    // Placed blocks block movement (server mirrors this via BlockGrid).
+    if (this.blockSet.has(`${tx},${ty}`)) return true;
+    // Standing resource nodes (trees/bushes) block until felled.
+    if (this.resourceTiles.has(`${tx},${ty}`)) return true;
+    return false;
   }
 
   applySnapshot(snap: SnapshotPayload): void {
@@ -545,6 +562,12 @@ export class WorldScene extends Phaser.Scene {
     if (sig !== this.lastBlockSig) {
       this.lastBlockSig = sig;
       this.updateBlocks(snap.blocks);
+    }
+    // Keep the local solid set in sync with placed blocks.
+    const bsig = sig;
+    if (bsig !== this.lastBlocksSig) {
+      this.lastBlocksSig = bsig;
+      this.blockSet = new Set(snap.blocks.map((b) => `${b[0]},${b[1]}`));
     }
   }
 
