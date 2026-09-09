@@ -51,7 +51,6 @@ export class WorldScene extends Phaser.Scene {
   private aimCursor: { dx: number; dy: number } | null = null;
   private mouseTile: { x: number; y: number } | null = null;
   private mouseScreen: { x: number; y: number } | null = null; // normalized 0..1, kept current
-  private lastHoverUpdate = 0; // throttle hover reposition (perf)
   // --- resource nodes layer (trees/bushes/ore from the server) ---
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
@@ -325,6 +324,14 @@ export class WorldScene extends Phaser.Scene {
     if (this.mouseScreen) {
       this.mouseTile = this.screenToTile(this.mouseScreen.x, this.mouseScreen.y);
     }
+    // Hover square ALWAYS tracks the tile — independent of movement/state
+    // (the box vanished whenever stepSelf returned early).
+    if (this.mouseTile) {
+      this.hoverSquare?.setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16);
+      this.hoverSquare?.setVisible(true);
+    } else {
+      this.hoverSquare?.setVisible(false);
+    }
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
@@ -436,17 +443,6 @@ export class WorldScene extends Phaser.Scene {
     // spawnSelf; adding +16 here would offset the arm off the body).
     this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
     this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
-
-    // Hover square: only reposition on change (throttled) — chasing the
-    // mouse every frame caused the drift/lag the old version had.
-    const now = performance.now();
-    if (this.mouseTile && now - this.lastHoverUpdate > 50) {
-      this.lastHoverUpdate = now;
-      this.hoverSquare?.setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16);
-      this.hoverSquare?.setVisible(true);
-    } else if (!this.mouseTile) {
-      this.hoverSquare?.setVisible(false);
-    }
   }
 
   /**
