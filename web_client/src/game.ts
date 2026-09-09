@@ -48,6 +48,7 @@ export class WorldScene extends Phaser.Scene {
   private arm: Phaser.GameObjects.Triangle | null = null;
   private armVec: { x: number; y: number } | null = null; // smoothed facing
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
+  private phaserPointerBound = false;
   private aimCursor: { dx: number; dy: number } | null = null;
   // Mouse tile cache — written by refreshMouseTile() each frame from the
   // Phaser pointer (single source of truth). Clicks read this AFTER a
@@ -131,6 +132,20 @@ export class WorldScene extends Phaser.Scene {
       this.arm.setDepth(6);
     }
     this.ensureHoverSquare();
+    // Second, independent cursor source: Phaser's own canvas listeners.
+    // If the DOM mousemove chain ever misses (listener on the wrong canvas,
+    // event swallowed), Phaser still reports every move/click here — and
+    // vice versa. Both write the same normalized cursor position.
+    if (!this.phaserPointerBound) {
+      this.phaserPointerBound = true;
+      const grab = (p: Phaser.Input.Pointer): void => {
+        const dw = this.scale.displaySize.width || 1;
+        const dh = this.scale.displaySize.height || 1;
+        this.mouseScreen = { x: p.x / dw, y: p.y / dh };
+      };
+      this.input.on("pointermove", grab);
+      this.input.on("pointerdown", grab);
+    }
     // Resource tiles from the welcome payload (trees etc.).
     this.updateResourceLayer(welcome.resources);
     this.felledTiles = new Set((welcome.res_felled ?? []).map(([x, y]) => `${x},${y}`));
@@ -429,7 +444,9 @@ export class WorldScene extends Phaser.Scene {
     this.hoverSquare
       .setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16)
       .setVisible(true)
-      .setDepth(100);
+      .setDepth(100)
+      .setActive(true)
+      .setAlpha(1);
   }
 
   /**
