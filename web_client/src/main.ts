@@ -56,8 +56,9 @@ function applyTexture(name: string, b64: string): void {
     if (game.textures.exists(key)) game.textures.remove(key);
     game.textures.addImage(key, img);
     URL.revokeObjectURL(url);
-    // Texture arrived after the world built: rebuild the tile layers once.
-    if (welcome) scene.buildWorld(welcome, (n) => net.fetchAsset(n));
+    // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
+    // rebuilding duplicated players and reset the camera).
+    scene.onTilesetLoaded(name);
   };
   img.src = url;
   assetTextures.set(key, key);

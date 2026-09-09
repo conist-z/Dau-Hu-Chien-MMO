@@ -20,9 +20,12 @@ interface RemotePlayer {
 export class WorldScene extends Phaser.Scene {
   private welcome: WelcomePayload | null = null;
   private tileTextures = new Map<string, string>(); // image name -> texture key
+  private loadedTilesets = new Set<string>(); // tileset images that arrived
   private players = new Map<number, RemotePlayer>();
   private selfMarker: Phaser.GameObjects.Rectangle | null = null;
   private blockLayer: Phaser.GameObjects.Layer | null = null;
+  private mapBake: Phaser.GameObjects.Image | null = null;
+  private lastBlockSig = "";
   private selfId = 0;
 
   constructor() {
@@ -45,8 +48,8 @@ export class WorldScene extends Phaser.Scene {
         fetchAsset(ts.image);
       }
     }
-    this.buildTileLayers();
     this.buildBlocks(welcome.blocks);
+    this.bakeMapIfReady();
 
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
@@ -61,12 +64,32 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private buildTileLayers(): void {
+  // A tileset PNG arrived via the relay: bake the map (only redraws tiles,
+  // never rebuilds players/physics — no duplication, no camera reset).
+  onTilesetLoaded(image: string): void {
+    if (!this.welcome) return;
+    if (!this.welcome.map.tilesets.some((t) => t.image === image)) return;
+    this.loadedTilesets.add(image);
+    this.bakeMapIfReady();
+  }
+
+  private bakeMapIfReady(): void {
     const welcome = this.welcome;
     if (!welcome) return;
     const map = welcome.map;
     const tw = map.tile_width;
     const th = map.tile_height;
+    // Require at least one tileset texture; bake with what we have.
+    const usable = map.tilesets.filter(
+      (t) => t.image && this.textures.exists(this.tileTextures.get(t.image) ?? ""),
+    );
+    if (usable.length === 0) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = map.width * tw;
+    canvas.height = map.height * th;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     for (const layer of map.layers) {
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
@@ -77,24 +100,31 @@ export class WorldScene extends Phaser.Scene {
           const ts = map.tilesets.find(
             (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
           );
-          const texKey = ts?.image ? this.tileTextures.get(ts.image) : undefined;
+          if (!ts?.image) continue;
+          const texKey = this.tileTextures.get(ts.image);
           if (!texKey || !this.textures.exists(texKey)) continue;
-          const tex = this.textures.get(texKey);
-          const tileW = ts?.tilewidth ?? tw;
-          const local = gid - (ts?.firstgid ?? 1);
-          const col = local % (ts?.columns ?? 1);
-          const rowIdx = Math.floor(local / (ts?.columns ?? 1));
-          if (!tex || col * tileW >= tex.getSourceImage().width) continue;
-          const img = this.add.image(x * tw + tw / 2, y * th + th / 2, texKey);
-          img.setDisplaySize(tw, th);
-          img.setCrop(
-            (col * tex.getSourceImage().width) / (ts?.columns ?? 1),
-            0, tw, th,
+          const src = this.textures.get(texKey).getSourceImage() as HTMLImageElement;
+          if (!src || !src.width) continue;
+          const local = gid - ts.firstgid;
+          const col = local % ts.columns;
+          const rowIdx = Math.floor(local / ts.columns);
+          const tileW = ts.tilewidth ?? tw;
+          const tileH = th;
+          if (col * tileW >= src.width) continue;
+          ctx.drawImage(
+            src, col * tileW, rowIdx * tileH, tileW, tileH,
+            x * tw, y * th, tw, th,
           );
-          img.setData("gid", gid);
-          void rowIdx;
         }
       }
+    }
+    const key = "map-bake";
+    if (this.textures.exists(key)) this.textures.remove(key);
+    this.textures.addCanvas(key, canvas);
+    if (this.mapBake) {
+      this.mapBake.setTexture(key);
+    } else {
+      this.mapBake = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-10);
     }
   }
 
@@ -177,7 +207,13 @@ export class WorldScene extends Phaser.Scene {
         this.players.delete(id);
       }
     }
-    this.updateBlocks(snap.blocks);
+    // Skip block rebuild when nothing changed (snapshots arrive at 20 Hz;
+    // rebuilding thousands of rectangles per tick is pure waste).
+    const sig = snap.blocks.length + ":" + snap.blocks.map((b) => b[0] + "," + b[1]).join(";");
+    if (sig !== this.lastBlockSig) {
+      this.lastBlockSig = sig;
+      this.updateBlocks(snap.blocks);
+    }
   }
 
   // Local self position in tile units (for the HUD + camera sanity).
