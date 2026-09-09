@@ -27,6 +27,13 @@ export class WorldScene extends Phaser.Scene {
   private mapBake: Phaser.GameObjects.Image | null = null;
   private lastBlockSig = "";
   private selfId = 0;
+  // --- client-side prediction (instant local movement) ---
+  private inputVec = { dx: 0, dy: 0, running: false };
+  private selfX = 0; // predicted float position, TILE units
+  private selfY = 0;
+  private collision: number[][] = []; // collision[y][x] = 1 blocks
+  private selfServerPos = { x: 0, y: 0 }; // last authoritative position
+  private lastServerRecv = 0;
 
   constructor() {
     super("world");
@@ -58,10 +65,25 @@ export class WorldScene extends Phaser.Scene {
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
 
-    // Camera follows the self marker smoothly.
+    // Client-side prediction state: start from the authoritative spawn.
+    this.selfX = welcome.self.x;
+    this.selfY = welcome.self.y;
+    this.selfServerPos = { x: welcome.self.x, y: welcome.self.y };
+    this.lastServerRecv = performance.now();
+    this.collision = welcome.map.collision ?? [];
+
+    // Camera follows the SELF MARKER every frame — the marker itself is
+    // driven by prediction in update(), so camera lag = marker lag.
     if (this.selfMarker) {
-      this.cameras.main.startFollow(this.selfMarker, true, 0.12, 0.12);
+      this.cameras.main.startFollow(this.selfMarker, true, 0.15, 0.15);
     }
+  }
+
+  /** Called 20 Hz from main.ts: store the current input vector. */
+  setLocalInput(dx: number, dy: number, running: boolean): void {
+    this.inputVec.dx = dx;
+    this.inputVec.dy = dy;
+    this.inputVec.running = running;
   }
 
   // A tileset PNG arrived via the relay: bake the map (only redraws tiles,
@@ -150,8 +172,14 @@ export class WorldScene extends Phaser.Scene {
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
   }
-
   private upsertPlayer(p: PlayerPayload): void {
+    if (p.id === this.selfId) {
+      // Authoritative self position from the server (reconciliation only —
+      // rendering stays on the predicted position for zero perceived lag).
+      this.selfServerPos = { x: p.x, y: p.y };
+      this.lastServerRecv = performance.now();
+      return;
+    }
     let rp = this.players.get(p.id);
     const now = performance.now();
     if (!rp) {
@@ -172,11 +200,16 @@ export class WorldScene extends Phaser.Scene {
     rp.dir = p.dir;
   }
 
-  // ---- per-frame update (60fps): interpolate every player ----
+  // ---- per-frame update (60fps) ----
 
   update(_time: number): void {
+    // --- client-side prediction: move SELF instantly every frame ---
+    // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
+    this.stepSelf();
+
     const now = performance.now() - INTERP_BUFFER_MS;
     for (const rp of this.players.values()) {
+      if (rp.container.getData("self")) continue; // self is predicted, not interpolated
       const buf = rp.buf;
       if (buf.length === 0) continue;
       // Find the pair bracketing `now`.
@@ -195,6 +228,69 @@ export class WorldScene extends Phaser.Scene {
       const y = prev[2] + (next[2] - prev[2]) * t;
       rp.container.setPosition(x, y);
     }
+  }
+
+  /** One frame of predicted local movement with tile collision. */
+  private stepSelf(): void {
+    const marker = this.selfMarker;
+    if (!marker || !this.welcome) return;
+    const v = this.inputVec;
+    if (v.dx !== 0 || v.dy !== 0) {
+      // Normalize so diagonal is not faster.
+      const len = Math.hypot(v.dx, v.dy) || 1;
+      const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors the server
+      const stepX = (v.dx / len) * speed * (1 / 60);
+      const stepY = (v.dy / len) * speed * (1 / 60);
+      const nx = this.tryMoveAxis(this.selfX, this.selfY, stepX, 0);
+      this.selfX = nx.x;
+      const ny = this.tryMoveAxis(this.selfX, this.selfY, 0, stepY);
+      this.selfY = ny.y;
+    }
+    // Gentle server reconciliation: pull toward the authoritative position
+    // only when drifting far (teleport/collision mismatch), never fight
+    // normal prediction — that would re-introduce input lag.
+    const age = performance.now() - this.lastServerRecv;
+    if (age > 500) {
+      const drift = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
+      if (drift > 2) {
+        // Hard correction: prediction diverged (teleport/trap).
+        this.selfX = this.selfServerPos.x;
+        this.selfY = this.selfServerPos.y;
+      } else if (drift > 0.1 && age > 1000) {
+        this.selfX += (this.selfServerPos.x - this.selfX) * 0.1;
+        this.selfY += (this.selfServerPos.y - this.selfY) * 0.1;
+      }
+    }
+    marker.setPosition(this.selfX * 32, this.selfY * 32);
+  }
+
+  /** Axis-separated movement against the tile collision grid. */
+  private tryMoveAxis(
+    x: number, y: number, dx: number, dy: number,
+  ): { x: number; y: number } {
+    let nx = x + dx;
+    let ny = y + dy;
+    const half = 0.35; // player half-width in tiles (a bit smaller than 0.5)
+    if (dx !== 0) {
+      const edge = nx + Math.sign(dx) * half;
+      const tx = Math.floor(edge);
+      const tyA = Math.floor(y - half + 0.02);
+      const tyB = Math.floor(y + half - 0.02);
+      if (this.solidAt(tx, tyA) || this.solidAt(tx, tyB)) nx = x;
+    }
+    if (dy !== 0) {
+      const edge = ny + Math.sign(dy) * half;
+      const ty = Math.floor(edge);
+      const txA = Math.floor(x - half + 0.02);
+      const txB = Math.floor(x + half - 0.02);
+      if (this.solidAt(txA, ty) || this.solidAt(txB, ty)) ny = y;
+    }
+    return { x: nx, y: ny };
+  }
+
+  private solidAt(tx: number, ty: number): boolean {
+    const row = this.collision[ty];
+    return !row || tx < 0 || tx >= row.length || row[tx] === 1;
   }
 
   applySnapshot(snap: SnapshotPayload): void {

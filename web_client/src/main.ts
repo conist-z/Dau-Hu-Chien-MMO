@@ -157,7 +157,12 @@ hud.setHooks(
 );
 
 new KeyboardInput({
-  onVector: (dx, dy, running) => net.setInput(dx, dy, running),
+  onVector: (dx, dy, running) => {
+    // Zero-lag: prediction runs every frame locally; the network copy is
+    // just the authoritative echo (20 Hz throttle in Net).
+    scene.setLocalInput(dx, dy, running);
+    net.setInput(dx, dy, running);
+  },
   onAttack: () => net.action("attack"),
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => {
