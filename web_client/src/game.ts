@@ -53,6 +53,7 @@ export class WorldScene extends Phaser.Scene {
   // Phaser pointer (single source of truth). Clicks read this AFTER a
   // synchronous refresh, so they never see stale coordinates.
   private mouseTile: { x: number; y: number } | null = null;
+  private mouseScreen: { x: number; y: number } | null = null; // normalized 0..1 cursor pos
   // --- resource nodes layer (trees/bushes/ore from the server) ---
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
@@ -315,10 +316,14 @@ export class WorldScene extends Phaser.Scene {
   // ---- per-frame update (60fps) ----
 
   update(_time: number): void {
-    // Mouse tile + hover square come from the Phaser pointer every frame:
-    // the camera moves under a still cursor (follow lerp, tab switch) and a
-    // tile cached at mousemove time would be stale.
-    this.refreshMouseTile();
+    // Mouse tile + hover box derive FRESH each frame from the last cursor
+    // position: the camera moves under a still cursor (follow lerp, tab
+    // switch) and a tile cached at mousemove time would be stale.
+    if (this.mouseScreen) {
+      this.mouseTile = this.tileFromScreen(this.mouseScreen.x, this.mouseScreen.y);
+    } else {
+      this.mouseTile = null;
+    }
     this.updateHoverSquare();
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
@@ -389,20 +394,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /**
-   * The Phaser active pointer is the SINGLE source of truth for the cursor:
-   * Phaser tracks it on its own canvas listeners (survives tab switches,
-   * scene rebuilds, re-logins) and worldX/worldY are camera-aware (zoom,
-   * scroll) — no custom mousemove plumbing, no cached normalized coords to
-   * go stale, and nothing to "forget".
+   * Screen (0..1, from DOM mouse events) -> world tile, through the camera
+   * (zoom-safe). Called fresh EVERY FRAME for the hover box, and with the
+   * click's own coordinates for actions — no cached tile can go stale.
    */
-  private pointerToTile(): { x: number; y: number } | null {
-    const p = this.input.activePointer;
-    if (!p || p.time <= 0) return null; // cursor never seen on the canvas
-    // Recompute the world point FRESH from the pointer's screen position:
-    // the cached worldX/worldY go stale while the camera lerps under a
-    // still cursor (exactly the stale-tile bug we are eliminating).
-    const w = this.cameras.main.getWorldPoint(p.x, p.y);
-    // Camera is clamped to map bounds; a cursor outside the map has no tile.
+  private tileFromScreen(sx: number, sy: number): { x: number; y: number } | null {
+    const cam = this.cameras.main;
+    if (!cam.width || !cam.height) return null;
+    const w = cam.getWorldPoint(sx * cam.width, sy * cam.height);
     if (w.x < 0 || w.y < 0) return null;
     const map = this.welcome?.map;
     if (map) {
@@ -411,11 +410,6 @@ export class WorldScene extends Phaser.Scene {
       if (w.x >= mw || w.y >= mh) return null;
     }
     return { x: Math.floor(w.x / 32), y: Math.floor(w.y / 32) };
-  }
-
-  /** Recompute the cached mouse tile from the live pointer. */
-  private refreshMouseTile(): void {
-    this.mouseTile = this.pointerToTile();
   }
 
   private ensureHoverSquare(): void {
@@ -734,18 +728,19 @@ export class WorldScene extends Phaser.Scene {
     this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
-  /** Mouse hover bookkeeping — the tile math itself lives in the scene's
-   * per-frame pointer refresh; nothing to cache or go stale here. */
-  setMouseTile(_tile: { x: number; y: number } | null): void {
-    // Intentionally empty: the Phaser active pointer is the single source
-    // of truth for the cursor. Kept as a hook so main.ts stays decoupled.
+  /** Track the raw cursor position (normalized 0..1 from DOM events);
+   * the TILE is derived fresh every frame from it — the camera moves under
+   * a still cursor, so caching the tile itself goes stale. */
+  setMouseTile(tile: { x: number; y: number } | null): void {
+    this.mouseScreen = tile;
   }
 
-  /** Live mouse tile: refreshed synchronously from the Phaser pointer so a
-   * click always targets the cell under the cursor at that instant. */
+  /** Live mouse tile from the last known cursor position. */
   getMouseTile(): { x: number; y: number } | null {
-    this.refreshMouseTile();
-    return this.mouseTile;
+    if (!this.mouseScreen) return null;
+    const t = this.tileFromScreen(this.mouseScreen.x, this.mouseScreen.y);
+    this.mouseTile = t;
+    return t;
   }
 
   /** True when a player-placed block stands on this tile. */

@@ -216,9 +216,9 @@ const input = new KeyboardInput({
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
   onCanvasAction: (kind, sx, sy) => {
-    // Live tile from the Phaser pointer, refreshed at click time — always
-    // the cell under the cursor at this exact instant.
-    const tile = scene.getMouseTile() ?? scene.screenToTile(sx, sy);
+    // Resolve the tile from the CLICK's own coordinates — always the cell
+    // under the cursor at this exact instant, never a cached value.
+    const tile = scene.screenToTile(sx, sy);
     if (!tile) {
       net.action(kind === "primary" ? "chop" : "place");
       return;
@@ -233,8 +233,8 @@ const input = new KeyboardInput({
     }
   },
   onCanvasHover: (sx, sy) => {
-    // Hover events just nudge Phaser's pointer bookkeeping; the scene owns
-    // the tile math via its live pointer (updated every frame).
+    // Store the raw cursor position; the scene re-derives the tile every
+    // frame (camera moves under a still cursor — cached tiles go stale).
     scene.setMouseTile(sx < 0 ? null : { x: sx, y: sy });
   },
 });
