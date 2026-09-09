@@ -119,11 +119,21 @@ export class KeyboardInput {
 
   /** Canvas mouse bindings: click actions + hover tracking. */
   bindCanvas(canvas: HTMLCanvasElement): void {
+    const canvasPosition = (e: MouseEvent): [number, number] => {
+      const rect = canvas.getBoundingClientRect();
+      return [
+        (e.clientX - rect.left) / rect.width,
+        (e.clientY - rect.top) / rect.height,
+      ];
+    };
+
     canvas.addEventListener("mousedown", (e) => {
       if (this.isChatFocused() || !this.enabled) return;
-      const rect = canvas.getBoundingClientRect();
-      const sx = (e.clientX - rect.left) / rect.width;
-      const sy = (e.clientY - rect.top) / rect.height;
+      // A click can arrive before the first mousemove (especially after
+      // opening the game or switching tabs). Keep the hover tile in sync so
+      // actions never see a missing/stale mouse cell.
+      const [sx, sy] = canvasPosition(e);
+      this.hooks.onCanvasHover?.(sx, sy);
       if (e.button === 0) {
         this.hooks.onCanvasAction?.("primary", sx, sy);
       } else if (e.button === 2) {
@@ -131,11 +141,8 @@ export class KeyboardInput {
       }
     });
     canvas.addEventListener("mousemove", (e) => {
-      const rect = canvas.getBoundingClientRect();
-      this.hooks.onCanvasHover?.(
-        (e.clientX - rect.left) / rect.width,
-        (e.clientY - rect.top) / rect.height,
-      );
+      const [sx, sy] = canvasPosition(e);
+      this.hooks.onCanvasHover?.(sx, sy);
     });
     canvas.addEventListener("mouseleave", () => this.hooks.onCanvasHover?.(-1, -1));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());

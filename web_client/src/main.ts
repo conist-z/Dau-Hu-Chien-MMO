@@ -215,11 +215,10 @@ const input = new KeyboardInput({
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
-  onCanvasAction: (kind, _sx, _sy) => {
-    // ABSOLUTE tile targeting: send the clicked tile itself. The server
-    // derives the offset from its own player tile — no client position
-    // math to drift (this mis-placed blocks before).
-    const tile = scene.getMouseTile();
+  onCanvasAction: (kind, sx, sy) => {
+    // Live tile from the Phaser pointer, refreshed at click time — always
+    // the cell under the cursor at this exact instant.
+    const tile = scene.getMouseTile() ?? scene.screenToTile(sx, sy);
     if (!tile) {
       net.action(kind === "primary" ? "chop" : "place");
       return;
@@ -234,8 +233,8 @@ const input = new KeyboardInput({
     }
   },
   onCanvasHover: (sx, sy) => {
-    // Store raw screen coords; the scene re-derives the tile every frame
-    // (camera moves under a still cursor — cached tiles go stale).
+    // Hover events just nudge Phaser's pointer bookkeeping; the scene owns
+    // the tile math via its live pointer (updated every frame).
     scene.setMouseTile(sx < 0 ? null : { x: sx, y: sy });
   },
 });
