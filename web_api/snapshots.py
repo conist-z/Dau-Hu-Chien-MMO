@@ -141,6 +141,7 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # separate layer so chopped nodes can disappear per node.
         "resources": _resource_tiles_payload(rt),
         "res_progress": _resource_progress_payload(rt),
+        "res_felled": _resource_felled_payload(rt),
         "players": _players_payload(rt, user_id),
     }
 
@@ -199,6 +200,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         # progress bar over the node being harvested.
         "resources": _resource_tiles_payload(rt),
         "res_progress": _resource_progress_payload(rt),
+        "res_felled": _resource_felled_payload(rt),
     }
 
 
@@ -207,6 +209,26 @@ def _resource_tiles_payload(rt) -> List[list]:
     if grid is None:
         return []
     return [[x, y, gid] for x, y, gid in grid.visible_tiles()]
+
+
+def _resource_felled_payload(rt) -> List[list]:
+    """Every tile covered by a FELLED node: [x, y, anchor_x, anchor_y].
+
+    The client marks these tiles WALKABLE in its local prediction (mirrors
+    the server's Collision rule: a felled tree/ore frees its tiles until it
+    regrows) and can re-show the correct visual state on rebake.
+    """
+    grid = getattr(rt, "resources", None)
+    if grid is None:
+        return []
+    out: List[list] = []
+    for anchor in grid.chopped_at:
+        node = grid.nodes.get(anchor)
+        if node is None:
+            continue
+        for x, y in node.tiles:
+            out.append([x, y, anchor[0], anchor[1]])
+    return out
 
 
 def _resource_progress_payload(rt) -> dict:

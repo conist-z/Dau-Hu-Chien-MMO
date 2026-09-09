@@ -61,6 +61,10 @@ export class WorldScene extends Phaser.Scene {
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
   private progressFills = new Map<string, Phaser.GameObjects.Rectangle>();
   private lastResProgress = "";
+  // Tiles of FELLED nodes (server res_felled): walkable in the local
+  // prediction — the tree/ore is gone until it regrows (mirrors the
+  // server's Collision rule exactly).
+  private felledTiles = new Set<string>();
   // Per-node hit counts from the latest action_result echo (tool-adjusted
   // needed total — more accurate than the snapshot's base value).
   private neededByAnchor = new Map<string, number>();
@@ -132,6 +136,7 @@ export class WorldScene extends Phaser.Scene {
     }
     // Resource tiles from the welcome payload (trees etc.).
     this.updateResourceLayer(welcome.resources);
+    this.felledTiles = new Set((welcome.res_felled ?? []).map(([x, y]) => `${x},${y}`));
 
     // Camera follows the SELF MARKER every frame — the marker itself is
     // driven by prediction in update(), so camera lag = marker lag.
@@ -625,6 +630,8 @@ export class WorldScene extends Phaser.Scene {
         bar.destroy();
         this.progressBars.delete(key);
         this.progressFills.delete(key);
+        // Stale tool-adjusted count must not poison the node's NEXT life.
+        this.neededByAnchor.delete(key);
       }
     }
     for (const [key, entry] of Object.entries(progress)) {
@@ -644,9 +651,12 @@ export class WorldScene extends Phaser.Scene {
 
       let bar = this.progressBars.get(key);
       let fill = this.progressFills.get(key);
-      if (!bar || !fill) {
+      const isNew = !bar || !fill;
+      if (isNew) {
         bar = this.add.container(cx, maxY - 6);
-        fill = this.add.rectangle(-width / 2, 0, width - 4, 5, 0x6fe26f)
+        // Fresh bar starts at ZERO width — never lerps from a previous
+        // node's leftover value (the old green-flash bug).
+        fill = this.add.rectangle(-width / 2, 0, 2, 5, 0x6fe26f)
           .setOrigin(0, 0.5);
         const bg = this.add.rectangle(0, 0, width, 7, 0x000000, 0.6);
         const border = this.add.rectangle(0, 0, width, 7)
@@ -663,13 +673,16 @@ export class WorldScene extends Phaser.Scene {
         duration: 120,
         ease: "Sine.Out",
       });
-      // One-shot "thunk" bounce of the bar on each landed hit.
-      this.tweens.add({
-        targets: bar,
-        scaleY: { from: 1.25, to: 1 },
-        duration: 110,
-        ease: "Quad.Out",
-      });
+      // One-shot "thunk" bounce on each LANDED hit (not on creation — the
+      // creation bounce was the blink the user saw).
+      if (!isNew) {
+        this.tweens.add({
+          targets: bar,
+          scaleY: { from: 1.25, to: 1 },
+          duration: 110,
+          ease: "Quad.Out",
+        });
+      }
     }
   }
 
@@ -746,11 +759,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private solidAt(tx: number, ty: number): boolean {
+    // A FELLED node's tile walks free even though the static grid still
+    // lists it as blocked (the standing-tree blocker): server parity.
+    if (this.felledTiles.has(`${tx},${ty}`)) return false;
     const row = this.collision[ty];
     if (!row || tx < 0 || tx >= row.length || row[tx] === 1) return true;
     // Placed blocks block movement (server mirrors this via BlockGrid).
     if (this.blockSet.has(`${tx},${ty}`)) return true;
-    // Standing resource nodes (trees/bushes) block until felled.
+    // Standing resource nodes (trees/bushes/ore) block until felled.
     if (this.resourceTiles.has(`${tx},${ty}`)) return true;
     return false;
   }
@@ -768,6 +784,8 @@ export class WorldScene extends Phaser.Scene {
     // Resource nodes: chopped trees vanish / regrow, progress bars sync.
     this.updateResourceLayer(snap.resources);
     this.syncProgressBars(snap.res_progress);
+    // Felled tiles: walkable in prediction until the node regrows.
+    this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
     for (const p of snap.players) this.upsertPlayer(p);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));

@@ -53,6 +53,8 @@ export interface WelcomePayload {
   resources: [number, number, number][];
   // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
   res_progress: Record<string, [number, number, number[][]]>;
+  // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
+  res_felled: [number, number, number, number][];
   players: PlayerPayload[];
 }
 
@@ -79,6 +81,8 @@ export interface SnapshotPayload {
   resources: [number, number, number][];
   // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
   res_progress: Record<string, [number, number, number[][]]>;
+  // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
+  res_felled: [number, number, number, number][];
 }
 
 export interface PlayerPayload {
