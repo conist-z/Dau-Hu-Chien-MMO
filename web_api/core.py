@@ -126,6 +126,23 @@ class WebHub:
         if ftype == MSG_JOIN:
             await self._handle_join(conn, frame)
             return
+        if ftype == "select_slot":
+            # Hotbar selection mirror (numbers / wheel / click). Tools are
+            # auto-resolved server-side from the bag; this only echoes the
+            # held item so the client can label it.
+            slot = frame.get("slot")
+            sess = conn.session
+            if sess is not None and sess.channel_id:
+                rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
+                if rt is not None:
+                    from web_api.snapshots import _inventory_payload
+
+                    inv = _inventory_payload(rt, sess.user_id)
+                    held = inv["hotbar"][slot] if isinstance(slot, int) and 0 <= slot < len(inv["hotbar"]) else None
+                    await self.send_to_client(cid, {
+                        "type": "held", "slot": slot, "item_id": held,
+                    })
+            return
         if ftype == "list":
             # Pre-join picklist: requires a login (session) but NOT a joined
             # scenario — gating it below made the map picker unreachable.
@@ -280,17 +297,41 @@ class WebHub:
     # ----- gameplay frames -----
 
     async def _handle_action(self, sess: WebSession, frame: dict) -> None:
-        """Discrete gameplay actions (attack = the F key / left click)."""
-        from game.actions import AttackAction
+        """Discrete gameplay actions (attack/chop/break/place/shovel)."""
+        from game.actions import (
+            AttackAction,
+            BreakBlockAction,
+            ChopAction,
+            PlaceBlockAction,
+            ShovelAction,
+        )
 
-        if frame.get("name") != "attack":
+        name = frame.get("name")
+        uid = sess.user_id
+        action = None
+        if name == "attack":
+            action = AttackAction(user_id=uid)
+        elif name == "chop":  # chặt cây (facing tile)
+            action = ChopAction(user_id=uid)
+        elif name == "break":  # đập block (facing tile)
+            action = BreakBlockAction(user_id=uid)
+        elif name == "shovel":  # xúc cỏ/đất (facing tile)
+            action = ShovelAction(user_id=uid)
+        elif name == "place":  # đặt block (facing tile hoặc offset)
+            dx = frame.get("dx")
+            dy = frame.get("dy")
+            action = PlaceBlockAction(
+                user_id=uid,
+                block_id=str(frame.get("block_id", "")),
+                dx=int(dx) if dx is not None else None,
+                dy=int(dy) if dy is not None else None,
+            )
+        if action is None:
             await self.send_to_client_conn(
                 sess, {"type": MSG_ERROR, "code": "bad_action"}
             )
             return
-        await self.manager.dispatch(
-            sess.channel_id, AttackAction(user_id=sess.user_id)
-        )
+        await self.manager.dispatch(sess.channel_id, action)
 
     async def _handle_input(self, sess: WebSession, frame: dict) -> None:
         if not sess.input_allowed():

@@ -61,6 +61,7 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
+    this.cameras.main.setZoom(0.6); // 60% zoom — see more world per screen
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
@@ -84,6 +85,22 @@ export class WorldScene extends Phaser.Scene {
     this.inputVec.dx = dx;
     this.inputVec.dy = dy;
     this.inputVec.running = running;
+  }
+
+  /** Screen (0..1) -> world tile, through the camera. */
+  screenToTile(sx: number, sy: number): { x: number; y: number } {
+    const cam = this.cameras.main;
+    const wx = cam.scrollX + (sx * cam.width) / cam.zoom;
+    const wy = cam.scrollY + (sy * cam.height) / cam.zoom;
+    return { x: Math.floor(wx / 32), y: Math.floor(wy / 32) };
+  }
+
+  /** Offset of a clicked tile relative to the player (for place). */
+  offsetFromSelf(tile: { x: number; y: number }): { dx: number; dy: number } {
+    return {
+      dx: Math.round(tile.x - this.selfX),
+      dy: Math.round(tile.y - this.selfY),
+    };
   }
 
   // A tileset PNG arrived via the relay: bake the map (only redraws tiles,

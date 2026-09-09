@@ -5,8 +5,15 @@
 import type { InventoryPayload, RecipePayload } from "./protocol";
 
 const WEATHER_ICONS: Record<string, string> = {
-  sun_clouds: "⛅", sun: "☀️", clouds: "☁️", rain: "🌧️",
-  storm: "⛈️", snow: "🌨️", wind: "🌬️", fog: "🌫️",
+  sun_clouds: "⛅", sun: "☀️", sunny: "☀️", clouds: "☁️", cloudy: "☁️",
+  heavy_clouds: "☁️", rain: "🌧️", heavy_rain: "⛈️", storm: "⛈️",
+  snow: "🌨️", cold: "🥶", wind: "🌬️", fog: "🌫️",
+};
+const WEATHER_NAMES: Record<string, string> = {
+  sun_clouds: "Nắng có mây", sun: "Nắng", sunny: "Nắng", clouds: "Mây",
+  cloudy: "Nhiều mây", heavy_clouds: "U ám", rain: "Mưa",
+  heavy_rain: "Mưa to", storm: "Bão", snow: "Tuyết", cold: "Lạnh",
+  wind: "Gió", fog: "Sương mù",
 };
 
 // Hotbar slot icons: bundled Twemoji codepoints are a SERVER-side concern;
@@ -57,6 +64,7 @@ export class Hud {
   private onUse: ((itemId: string) => void) | null = null;
   private onCommand: ((text: string) => void) | null = null;
   private onCraft: ((recipeId: string) => void) | null = null;
+  private onSelectSlot: ((slot: number) => void) | null = null;
 
   constructor() {
     this.chatForm.addEventListener("submit", (e) => {
@@ -87,6 +95,27 @@ export class Hud {
     this.onUse = onUse;
     this.onCommand = onCommand;
     this.onCraft = onCraft;
+    // Mouse wheel over the game area cycles the hotbar slot (both dirs).
+    window.addEventListener("wheel", (e) => {
+      if (this.inventoryOpen || this.gateVisible) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      this.selectSlot(this.activeSlot + dir);
+    }, { passive: true });
+  }
+
+  get gateVisible(): boolean {
+    return !this.gateEl.classList.contains("hidden");
+  }
+
+  /** Select a hotbar slot (clamped, wraps); selection only — no auto-use. */
+  selectSlot(index: number): void {
+    const n = this.inventory.hotbar.length;
+    if (n === 0) return;
+    const next = ((index % n) + n) % n;
+    if (next === this.activeSlot) return;
+    this.activeSlot = next;
+    this.renderHotbar();
+    this.onSelectSlot?.(next);
   }
 
   // ----- inventory + craft panel -----
@@ -186,6 +215,7 @@ export class Hud {
 
   setWeather(key: string): void {
     this.weatherEl.textContent = WEATHER_ICONS[key] ?? "❓";
+    this.weatherEl.title = WEATHER_NAMES[key] ?? key;
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number): void {
@@ -221,9 +251,7 @@ export class Hud {
       div.innerHTML = `<span class="key">${idx + 1}</span><span>${itemEmoji(itemId)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
       div.addEventListener("click", () => {
-        this.activeSlot = idx;
-        if (itemId && this.onUse) this.onUse(itemId);
-        this.renderHotbar();
+        this.selectSlot(idx);
       });
       this.hotbarEl.appendChild(div);
     });
@@ -248,5 +276,9 @@ export class Hud {
     div.textContent = message;
     this.toastEl.appendChild(div);
     window.setTimeout(() => div.remove(), 3500);
+  }
+
+  onSlotSelect(cb: (slot: number) => void): void {
+    this.onSelectSlot = cb;
   }
 }

@@ -9,7 +9,8 @@ import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
-let welcome: WelcomePayload | null = null;
+let welcome: WelcomePayload | null = null; // kept for held-item lookups
+void welcome;
 let quickPlayArmed = false;
 
 // Quick-play guest login: derive a stable pseudo user_id from localStorage
@@ -140,6 +141,9 @@ const net = new Net({
     hud.setLoginButton(true);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
+  onHeld: (slot, itemId) => {
+    hud.chatLine(itemId ? `Cầm: ${itemId} (ô ${slot + 1})` : `Tay không (ô ${slot + 1})`);
+  },
   onConnectionChange: (connected) => {
     if (!connected) {
       hud.showGate("Mất kết nối — thử lại…");
@@ -156,7 +160,11 @@ hud.setHooks(
   (recipeId) => net.craftOp(recipeId),
 );
 
-new KeyboardInput({
+// Slot selection: numbers 1-8, mouse wheel, or click — changes the held
+// tool only (the server echoes back a `held` frame; no auto-use).
+hud.onSlotSelect((slot) => net.selectSlot(slot));
+
+const input = new KeyboardInput({
   onVector: (dx, dy, running) => {
     // Zero-lag: prediction runs every frame locally; the network copy is
     // just the authoritative echo (20 Hz throttle in Net).
@@ -165,11 +173,25 @@ new KeyboardInput({
   },
   onAttack: () => net.action("attack"),
   onToggleInventory: () => hud.toggleInventory(),
-  onSlot: (index) => {
-    const itemId = welcome?.inventory.hotbar[index] ?? null;
-    if (itemId) net.inventoryOp("use", { item_id: itemId });
-  },
+  onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
+  onCanvasAction: (kind, sx, sy) => {
+    const tile = scene.screenToTile(sx, sy);
+    if (kind === "primary") {
+      // Contextual harvest on the clicked tile (server resolves chop vs
+      // mine vs block by what stands there + the held/best tool).
+      net.action("chop");
+    } else {
+      const off = scene.offsetFromSelf(tile);
+      net.action("place", off.dx, off.dy);
+    }
+  },
+});
+
+// Bind canvas clicks once Phaser creates it.
+game.events.once("ready", () => {
+  const canvas = document.querySelector("#game-root canvas") as HTMLCanvasElement | null;
+  if (canvas) input.bindCanvas(canvas);
 });
 
 // --- boot: OAuth return or direct connect ---

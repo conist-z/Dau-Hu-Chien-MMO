@@ -28,17 +28,80 @@ def test_image_path_resolves():
 
 
 def test_load_tiled_godot_wrapper():
-    # bigmap.js is a Tiled export wrapped in the Godot (function(name,data){...}) form.
+    # bigmap is the fully rebuilt Tiled map (canvas == drawn region, 180x120).
     md = load_map("bigmap", ASSETS)
-    # The real map is the bounding box of placed assets, not the 180x120 canvas.
-    assert md.width == 49
-    assert md.height == 39
+    assert md.width == 180
+    assert md.height == 120
     assert md.tile_width == 32
-    assert len(md.tile_layers) == 3
-    # No explicit collision layer -> the map is fully walkable.
+    # The rebuilt map ships all 18 named Tiled layers.
+    # 18 original layers + the "mặt đất không cỏ" bare-dirt layer added for
+    # the shovel scoop mechanic.
+    assert len(md.tile_layers) == 19
+    # The "tường(...)" + "tảng đá(...)" + "cây" layers drive blocking (union).
+    # 338 (wall+boulder) + 308 tree tiles = 646 since "cây" became blocking.
     blocked = sum(1 for row in md.collision for v in row if v)
-    assert blocked == 0
+    assert blocked == 646
     assert md.is_walkable(*md.spawn)
+
+
+def test_tuong_wall_layer_blocks():
+    # A layer named "tường(...)" (mountain/hill blocker) must collide even
+    # though the name only contains the diacritic Vietnamese word.
+    md = load_map("bigmap", ASSETS)
+    assert not md.is_walkable(43, 4)   # wall layer tile
+    assert not md.is_walkable(46, 0)   # wall layer tile
+    assert md.is_walkable(0, 0)        # open ground
+
+
+def test_stairs_carve_walkable_path_both_directions():
+    # The "cầu thang leo lên núi(...)" layer carves a path through the walls;
+    # a static collision grid has no one-way tiles, so the SAME carved path
+    # must allow stepping on AND off each rung (up == down).
+    md = load_map("bigmap", ASSETS)
+    stairs = [(57, 5), (57, 6), (57, 7), (75, 15), (75, 16), (75, 17), (75, 18)]
+    for x, y in stairs:
+        assert md.is_walkable(x, y), (x, y)
+    # The tile straight above/below every rung is carved too, so the player
+    # can always step onto/off the staircase in both directions.
+    assert md.is_walkable(57, 4) and md.is_walkable(57, 8)
+    assert md.stair_walkable  # overrides are recorded on MapData
+
+
+def test_tang_da_layers_block_union():
+    # "tảng đá lớn"/"tảng đá nhỏ" are data-driven blocking layers, UNIONed
+    # with the wall layer (not first-match-wins).
+    md = load_map("bigmap", ASSETS)
+    blocked = sum(1 for row in md.collision for v in row if v)
+    # 264 wall + 74 boulder + 308 tree = 646 (trees block since the web
+    # client exposed walk-through-trees; dead trees stay walkable).
+    assert blocked == 646
+    assert not md.is_walkable(21, 3)    # tảng đá lớn tile
+    assert not md.is_walkable(120, 2)   # tảng đá nhỏ tile
+    assert md.is_walkable(0, 0)         # open ground stays open
+
+
+def test_stairs_carve_through_rocks_too():
+    # Stair overrides are applied AFTER the blocking union, so a staircase
+    # remains climbable even where a boulder/wall tile would block it.
+    md = load_map("bigmap", ASSETS)
+    for x, y in [(57, 5), (57, 6), (57, 7), (75, 16), (102, 17)]:
+        assert md.is_walkable(x, y), (x, y)
+
+
+def test_stairs_layer_only_matches_stair_names():
+    # The override matcher is data-driven from layer names: "cau thang"/"stair".
+    from game.map_loader import _normalize_layer_name, _stairs_walkable_overrides
+
+    assert "cau thang" in _normalize_layer_name(
+        "cầu thang leo lên núi(đầu và đỉnh của cầu thang cho phép player leo lên)"
+    )
+    layers = [
+        ("cầu thang", [[[0, 9], [0, 0]]]),
+        ("tường", [[[1, 1], [1, 1]]]),
+    ]
+    overrides = _stairs_walkable_overrides(layers, 2, 2)
+    # Stair tile (1,0) + tiles above (off-grid) and below (1,1) carved.
+    assert (1, 0) in overrides and (1, 1) in overrides
 
 
 def test_load_tiled_respects_explicit_collision_layer():

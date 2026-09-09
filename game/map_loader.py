@@ -19,8 +19,14 @@ class MapData:
     image_path: Optional[Path] = None
     # Tiled tileset (sliced at render time); None for simple/baked maps.
     tileset: Optional[Dict] = None
+    # ALL resolved tilesets (multi-sheet maps like lobbytrade). Empty list =
+    # single-sheet/simple map; renderers map GIDs by firstgid range.
+    tilesets: List[Dict] = field(default_factory=list)
     # Ordered tile layers: (name, grid[y][x] of tile GIDs).
     tile_layers: List[Tuple[str, List[List[int]]]] = field(default_factory=list)
+    # Tiles carved walkable by "stairs" layers (mountain staircases); up and
+    # down share the same carved path. Empty for maps without stairs.
+    stair_walkable: Tuple[Tuple[int, int], ...] = ()
     display_name: str = ""
 
     def is_walkable(self, x: int, y: int) -> bool:
@@ -44,7 +50,9 @@ def _unwrap_godot(text: str) -> dict:
 
 
 def _read_raw(assets_dir: Path, map_id: str):
-    for ext in (".js", ".json"):
+    # Tiled JSON is the source format (AGENTS.md); the Godot-wrapped .js form
+    # is only a legacy fallback for maps that have not been re-exported yet.
+    for ext in (".json", ".js"):
         path = assets_dir / f"{map_id}{ext}"
         if path.exists():
             text = path.read_text(encoding="utf-8")
@@ -55,26 +63,74 @@ def _read_raw(assets_dir: Path, map_id: str):
     raise FileNotFoundError(f"No map file for {map_id!r}")
 
 
+def _spawn_from_layers(
+    layers: List[Tuple[str, List[List[int]]]],
+) -> Optional[tuple]:
+    """First tile of a layer whose name contains "spawn" (ASCII-folded).
+
+    The lobbytrade map marks its /khutraodoi arrival tile with a layer named
+    "spawn(nơi spanwn player khi họ vào lobby)" — data-driven spawn (rule 10).
+    Returns map-space coords BEFORE the bbox origin shift (caller re-shifts).
+    """
+    for name, grid in layers:
+        nl = _normalize_layer_name(name)
+        if "spawn" not in nl:
+            continue
+        for y, row in enumerate(grid):
+            for x, gid in enumerate(row):
+                if gid:
+                    return (x, y)
+    return None
+
+
+def _resolve_tilesets(tilesets, assets_dir: Path) -> List[Dict]:
+    """Resolve EVERY Tiled tileset entry (multi-tileset maps like lobbytrade
+    use one sheet per art pack). GID -> sheet lookup happens at render time by
+    firstgid range."""
+    resolved: List[Dict] = []
+    for ts in tilesets or []:
+        img = ts.get("image")
+        if not img:
+            continue
+        rel = Path(img)
+        candidates = [
+            assets_dir / rel,
+            assets_dir / rel.name,
+            assets_dir / "tilesets" / rel.name,
+            # Converted maps ship tileset paths relative to the PROJECT root
+            # ("assets/tilesets/<name>.png") while ``assets_dir`` is
+            # assets/maps — try every ancestor up to the root too.
+            *[(base / rel) for base in assets_dir.parents],
+        ]
+        resolved_path = next((c for c in candidates if c.exists()), None)
+        if resolved_path is None:
+            # Missing sheet: keep the entry so GID ranges stay correct, but
+            # with no image the renderer falls back to gray blocks for it.
+            resolved.append(
+                {
+                    "image_path": None,
+                    "firstgid": ts.get("firstgid", 1),
+                    "columns": ts.get("columns", 1),
+                    "tilewidth": ts.get("tilewidth", 32),
+                }
+            )
+            continue
+        resolved.append(
+            {
+                "image_path": resolved_path,
+                "firstgid": ts.get("firstgid", 1),
+                "columns": ts.get("columns", 1),
+                "tilewidth": ts.get("tilewidth", 32),
+            }
+        )
+    return resolved
+
+
 def _resolve_tileset(tilesets, assets_dir: Path) -> Optional[Dict]:
     if not tilesets:
         return None
-    ts = tilesets[0]
-    img = ts.get("image")
-    if not img:
-        return None
-    rel = Path(img)
-    candidates = [
-        assets_dir / rel,
-        assets_dir / rel.name,
-        assets_dir / "tilesets" / rel.name,
-    ]
-    resolved = next((c for c in candidates if c.exists()), None)
-    return {
-        "image_path": resolved,
-        "firstgid": ts.get("firstgid", 1),
-        "columns": ts.get("columns", 1),
-        "tilewidth": ts.get("tilewidth", 32),
-    }
+    resolved = _resolve_tilesets(tilesets, assets_dir)
+    return resolved[0] if resolved else None
 
 
 def _layers_from_tiled(data: dict) -> List[Tuple[str, List[List[int]]]]:
@@ -139,17 +195,137 @@ def _remap_layers(
     return out
 
 
+def _is_blocking_layer(nl: str) -> bool:
+    """Data-driven layer-name match for blocking layers (ASCII-folded).
+
+    - explicit "collision"/"va cham" layers;
+    - "tường"/"wall" (the bigmap's hill/mountain blocker);
+    - "tảng đá"/"rock" (boulders block movement like walls do);
+    - "cây"/"tree" (the lobbytrade forest — tree sprites are solid);
+    # NOTE: "cây chết" (bigmap dead trees) stays walkable — the map test pins
+    # that behavior and the bigmap was balanced around it.
+    - "building" (the lobbytrade house walls);
+    - "water"/"nuoc" EXCEPT rain puddles ("vung nuoc" stays walkable).
+    """
+    if "vung nuoc" in nl:  # bigmap rain puddles must stay walkable
+        return False
+    if "tham dat" in nl or ("tham" in nl and "ra vao" in nl):
+        # "thảm đất nơi cửa ra vào" (the interior arrival mat) is a FLOOR,
+        # not a wall — players spawn on it and step off it.
+        return False
+    if "cua" in nl and "tuong tac" in nl:
+        # "cửa ...(tương tác được)" layers are DOORS: portal triggers, not
+        # walls (players teleport when stepping on them).
+        return False
+    return (
+        "collision" in nl
+        or "va cham" in nl
+        or "vacham" in nl
+        or "tuong" in nl  # "tường(...)" normalises to "tuong(...)"
+        or "wall" in nl
+        or "tang đa" in nl  # "tảng đá(...)" ASCII-folds to "tang đa(...)"
+        or "rock" in nl
+        or "cây" in nl  # "cây(...)" layer (lobbytrade trees)
+        # bigmap "cây" folds to "cay" (no diacritics survive NFKD for this
+        # word) — the old diacritic-only check let players walk through every
+        # bigmap tree. Dead trees ("cây chết") and the bridge ("cây cầu")
+        # stay walkable, matching the pinned map-test behavior.
+        or ("cay" in nl and "cay chet" not in nl and "cay cau" not in nl)
+        or nl.startswith("tree")
+        or nl.startswith("building")
+        or "nuoc" in nl  # "nước"/"water" (lobbytrade lake)
+        or "water" in nl
+    )
+
+
 def _collision_from_layers(
     layers: List[Tuple[str, List[List[int]]]], width: int, height: int
 ) -> List[List[int]]:
-    # Prefer an explicit collision layer; otherwise the map is fully walkable.
-    # A "first layer is solid" heuristic is unsafe: a base/ground layer often
-    # covers the whole drawn region, which would make the entire map a wall.
+    # UNION of every blocking layer (collision/tường/tảng đá): several layers
+    # may each contribute blocked tiles, so they are OR-ed together instead of
+    # returning the first match. A map with NO blocking layer stays fully
+    # walkable (the old "first layer is solid" heuristic would wall off the
+    # whole ground layer — never do that).
+    union = [[0 for _ in range(width)] for _ in range(height)]
+    found = False
     for name, grid in layers:
-        nl = (name or "").lower()
-        if "collision" in nl or "va cham" in nl or "vacham" in nl:
-            return [[1 if c != 0 else 0 for c in row] for row in grid]
-    return [[0 for _ in range(width)] for _ in range(height)]
+        nl = _normalize_layer_name(name)
+        if not _is_blocking_layer(nl):
+            continue
+        found = True
+        for y, row in enumerate(grid):
+            if y >= height:
+                break
+            for x, c in enumerate(row):
+                if x < width and c != 0:
+                    union[y][x] = 1
+    return union if found else [[0 for _ in range(width)] for _ in range(height)]
+
+
+def _normalize_layer_name(name: str) -> str:
+    """ASCII-fold a Tiled layer name so diacritic matching is data-driven."""
+    import unicodedata
+
+    nfkd = unicodedata.normalize("NFKD", name or "")
+    return "".join(ch for ch in nfkd if not unicodedata.combining(ch)).lower()
+
+
+def _walkable_overrides(
+    layers: List[Tuple[str, List[List[int]]]], width: int, height: int
+) -> List[Tuple[int, int]]:
+    """Every walk-through carve: staircases ("cau thang"/"stair") AND
+    bridges ("cay cau"/"bridge" — the lobbytrade lake crossing, named
+    "cây cầu(đi qua được)"). Each override tile itself is carved; stairs
+    additionally carve the tiles straight above/below so rungs are always
+    enterable from both sides.
+    """
+    overrides: List[Tuple[int, int]] = []
+    seen = set()
+    for name, grid in layers:
+        nl = _normalize_layer_name(name)
+        is_stair = "cau thang" in nl or "stair" in nl
+        is_bridge = "cay cau" in nl or "bridge" in nl
+        # Doors ("cửa ...(tương tác được)") must be STEPPABLE: they are
+        # portal triggers, not walls (players teleport through them).
+        is_door = "cua" in nl and "tuong tac" in nl
+        if not is_stair and not is_bridge and not is_door:
+            continue
+        if is_door:
+            # Carve exactly the door tiles (no above/below spread).
+            carve_y = False
+        else:
+            carve_y = not is_bridge
+        for y, row in enumerate(grid):
+            for x, gid in enumerate(row):
+                if not gid:
+                    continue
+                if is_door:
+                    carve = ((x, y),)
+                elif is_bridge:
+                    carve = ((x, y),)
+                else:
+                    carve = ((x, y), (x, y - 1), (x, y + 1))
+                for tx, ty in carve:
+                    if 0 <= tx < width and 0 <= ty < height and (tx, ty) not in seen:
+                        seen.add((tx, ty))
+                        overrides.append((tx, ty))
+    return overrides
+
+
+def _stairs_walkable_overrides(
+    layers: List[Tuple[str, List[List[int]]]], width: int, height: int
+) -> List[Tuple[int, int]]:
+    """Backwards-compatible alias: stair/bridge walkable carves."""
+    return _walkable_overrides(layers, width, height)
+
+
+def _apply_walkable_overrides(
+    collision: List[List[int]], overrides: List[Tuple[int, int]]
+) -> None:
+    """Carve stair tiles (in place) as walkable through wall layers."""
+    for x, y in overrides:
+        if 0 <= y < len(collision) and 0 <= x < len(collision[0]):
+            collision[y][x] = 0
 
 
 def _first_walkable(collision: List[List[int]]) -> tuple:
@@ -214,13 +390,25 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         height = my - oy + 1
         tile_layers = _remap_layers(tile_layers, ox, oy, width, height)
     collision = _collision_from_layers(tile_layers, width, height)
-    tileset = _resolve_tileset(data.get("tilesets"), assets_dir)
+    # Staircase layers carve walkable paths through the mountain walls so the
+    # climb works in BOTH directions (up and down the same rungs).
+    stair_overrides = _walkable_overrides(tile_layers, width, height)
+    _apply_walkable_overrides(collision, stair_overrides)
+    tilesets = _resolve_tilesets(data.get("tilesets"), assets_dir)
+    tileset = tilesets[0] if tilesets else None
     spawn_raw = data.get("spawn")
     if isinstance(spawn_raw, dict):
         sx = spawn_raw.get("x", 0)
         sy = spawn_raw.get("y", 0)
         spawn = (sx - ox, sy - oy) if bbox is not None else (sx, sy)
     else:
+        spawn = None
+    if spawn is None:
+        # Data-driven spawn layer ("spawn(...)" tiles), bbox-shifted.
+        layer_spawn = _spawn_from_layers(tile_layers)
+        if layer_spawn is not None:
+            spawn = (layer_spawn[0] - ox, layer_spawn[1] - oy)
+    if spawn is None:
         spawn = _first_walkable(collision)
     if not _walkable_at(collision, spawn[0], spawn[1]):
         spawn = _first_walkable(collision)
@@ -237,6 +425,8 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         spawn=spawn,
         image_path=image_path,
         tileset=tileset,
+        tilesets=tilesets,
         tile_layers=tile_layers,
+        stair_walkable=tuple(stair_overrides),
         display_name=data.get("name", map_id),
     )

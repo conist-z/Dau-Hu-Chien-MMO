@@ -111,5 +111,6 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
+  | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string }
   | { type: "pong"; t: unknown };

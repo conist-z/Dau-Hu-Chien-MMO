@@ -18,6 +18,7 @@ export interface NetHandlers {
   onAssetData: (name: string, b64: string | null) => void;
   onLoginOk: (token: string, displayName: string) => void;
   onLoginFail: (error: string) => void;
+  onHeld: (slot: number, itemId: string | null) => void;
   onConnectionChange: (connected: boolean) => void;
 }
 
@@ -129,6 +130,11 @@ export class Net {
     this.send({ type: "guest_login", guest_id: guestId });
   }
 
+  /** Tell the server which hotbar slot is held (tools resolve from it). */
+  selectSlot(slot: number): void {
+    this.send({ type: "select_slot", slot });
+  }
+
   setInput(dx: number, dy: number, running: boolean): void {
     const p = this.pendingInput;
     p.dx = dx; p.dy = dy; p.running = running; p.dirty = true;
@@ -149,8 +155,11 @@ export class Net {
     }
   }
 
-  action(name: string): void {
-    this.send({ type: "action", name });
+  action(name: string, dx?: number, dy?: number): void {
+    const frame: Record<string, unknown> = { type: "action", name };
+    if (dx !== undefined) frame.dx = dx;
+    if (dy !== undefined) frame.dy = dy;
+    this.send(frame);
   }
 
   inventoryOp(op: "move_to" | "use", payload: { item_id?: string; slot?: number }): void {
@@ -225,6 +234,9 @@ export class Net {
         this.handlers.onAssetData(frame.name, frame.b64);
         break;
       case "pong":
+        break;
+      case "held":
+        this.handlers.onHeld(frame.slot as number, (frame.item_id as string | null) ?? null);
         break;
     }
   }
