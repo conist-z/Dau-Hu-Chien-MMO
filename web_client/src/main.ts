@@ -144,6 +144,30 @@ const net = new Net({
   onHeld: (slot, itemId) => {
     hud.chatLine(itemId ? `Cầm: ${itemId} (ô ${slot + 1})` : `Tay không (ô ${slot + 1})`);
   },
+  onActionResult: (frame) => {
+    if (frame.ok) {
+      if (frame.name === "chop" && frame.drops.length > 0) {
+        const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
+        hud.chatLine(`Đã hạ! Nhặt: ${loot}`);
+      }
+      return;
+    }
+    const REASONS: Record<string, string> = {
+      no_node: "Không có gì để chặt ở ô đó.",
+      regrowing: "Cây đang mọc lại — chờ chút.",
+      too_hard: "Quá cứng — cần cúp từ tầng dirt trở lên.",
+      not_placeable: "Khối này không thể đặt.",
+      blocked_tile: "Không thể đặt ở ô đó.",
+      tile_occupied: "Có người đứng ở ô đó.",
+      no_material: "Không có nguyên liệu trong túi.",
+      own_tile: "Không thể đặt lên chỗ mình đứng.",
+      out_of_range: "Quá xa.",
+      already_block: "Ô đó đã có khối.",
+      no_block: "Không có khối để phá.",
+    };
+    const msg = REASONS[frame.reason];
+    if (msg) hud.toast(msg);
+  },
   onConnectionChange: (connected) => {
     if (!connected) {
       hud.showGate("Mất kết nối — thử lại…");

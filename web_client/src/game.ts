@@ -41,15 +41,21 @@ export class WorldScene extends Phaser.Scene {
   private collision: number[][] = []; // collision[y][x] = 1 blocks
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
-  // --- facing arm + target square (Kaetram-style hover cursor) ---
+  // --- facing arm + hover cursor (Kaetram-style) ---
   private selfDir = "SOUTH";
   private lastMoveX = 0; // last nonzero input (arm points here while idle)
   private lastMoveY = 1;
   private arm: Phaser.GameObjects.Triangle | null = null;
-  private targetSquare: Phaser.GameObjects.Rectangle | null = null;
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
   private aimCursor: { dx: number; dy: number } | null = null;
   private mouseTile: { x: number; y: number } | null = null;
+  private lastHoverUpdate = 0; // throttle hover reposition (perf)
+  // --- resource nodes layer (trees/bushes/ore from the server) ---
+  private resourceLayer: Phaser.GameObjects.Layer | null = null;
+  private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
+  private resourceSig = "";
+  private progressBars = new Map<string, Phaser.GameObjects.Container>();
+  private lastResProgress = "";
   // --- build mode: selected block to place ---
   private selectedBlock = "stone";
 
@@ -92,22 +98,19 @@ export class WorldScene extends Phaser.Scene {
     this.collision = welcome.map.collision ?? [];
     this.selfDir = welcome.self.dir || "SOUTH";
 
-    // Arm (facing indicator) + target square + hover square.
+    // Arm (facing indicator) + hover square. No yellow target frame.
     if (!this.arm) {
-      this.arm = this.add.triangle(0, 0, 0, -7, 6, 5, -6, 5, 0xffffff);
-      this.arm.setDepth(5);
-    }
-    if (!this.targetSquare) {
-      this.targetSquare = this.add.rectangle(0, 0, 32, 32)
-        .setStrokeStyle(2, 0xffd24a, 0.9)
-        .setDepth(4);
+      this.arm = this.add.triangle(0, 0, 0, -6, 5, 4, -5, 4, 0xffffff);
+      this.arm.setDepth(6);
     }
     if (!this.hoverSquare) {
-      this.hoverSquare = this.add.rectangle(0, 0, 32, 32)
-        .setStrokeStyle(2, 0x8fd4ff, 0.55)
+      this.hoverSquare = this.add.rectangle(0, 0, 30, 30)
+        .setStrokeStyle(2, 0x8fd4ff, 0.6)
         .setDepth(3);
       this.hoverSquare.setVisible(false);
     }
+    // Resource tiles from the welcome payload (trees etc.).
+    this.updateResourceLayer(welcome.resources);
 
     // Camera follows the SELF MARKER every frame — the marker itself is
     // driven by prediction in update(), so camera lag = marker lag.
@@ -160,6 +163,13 @@ export class WorldScene extends Phaser.Scene {
     );
     if (usable.length === 0) return;
 
+    // Resource tiles are drawn as a separate dynamic layer (choppable),
+    // so the base bake must EXCLUDE them or chopped trees would leave
+    // ghosts painted into the canvas.
+    const resourceSet = new Set(
+      welcome.resources.map(([x, y]) => `${x},${y}`),
+    );
+
     const canvas = document.createElement("canvas");
     canvas.width = map.width * tw;
     canvas.height = map.height * th;
@@ -172,6 +182,7 @@ export class WorldScene extends Phaser.Scene {
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
+          if (resourceSet.has(`${x},${y}`)) continue; // dynamic layer draws it
           const ts = map.tilesets.find(
             (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
           );
@@ -330,46 +341,92 @@ export class WorldScene extends Phaser.Scene {
     return dy > 0 ? "SOUTH_WEST" : "NORTH_WEST";
   }
 
-  /** Position the arm + the target square it points at (every frame). */
+  /** Arm points at the facing/aim tile; hover square tracks the mouse. */
   private updateAimVisuals(): void {
-    if (!this.arm || !this.targetSquare || !this.selfMarker) return;
-    // Aim cursor (Build Mode) overrides the plain facing tile.
-    let tx: number;
-    let ty: number;
-    if (this.aimCursor) {
-      tx = Math.floor(this.selfX) + this.aimCursor.dx;
-      ty = Math.floor(this.selfY) + this.aimCursor.dy;
-    } else {
-      // Arm direction = last nonzero movement vector (analog 8-way).
-      const len = Math.hypot(this.lastMoveX, this.lastMoveY) || 1;
-      const ux = this.lastMoveX / len;
-      const uy = this.lastMoveY / len;
-      // Target tile: first tile fully crossed by the facing ray.
-      tx = Math.floor(this.selfX + ux * 0.9);
-      ty = Math.floor(this.selfY + uy * 0.9);
-      // Arm graphics: small triangle just outside the player square.
-      this.arm.setPosition(
-        this.selfX * 32 + ux * 22,
-        this.selfY * 32 + uy * 22,
-      );
-      this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
-    }
+    if (!this.arm || !this.selfMarker) return;
+    // Arm direction: Build-Mode cursor when active, else last movement.
+    let ux: number;
+    let uy: number;
     if (this.aimCursor) {
       const len = Math.hypot(this.aimCursor.dx, this.aimCursor.dy) || 1;
-      const ux = this.aimCursor.dx / len;
-      const uy = this.aimCursor.dy / len;
-      this.arm.setPosition(this.selfX * 32 + ux * 22, this.selfY * 32 + uy * 22);
-      this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+      ux = this.aimCursor.dx / len;
+      uy = this.aimCursor.dy / len;
+    } else {
+      const len = Math.hypot(this.lastMoveX, this.lastMoveY) || 1;
+      ux = this.lastMoveX / len;
+      uy = this.lastMoveY / len;
     }
-    this.targetSquare.setPosition(tx * 32 + 16, ty * 32 + 16);
-    // Hover square follows the mouse when it differs from the target.
-    if (this.mouseTile) {
-      const showHover =
-        !this.aimCursor &&
-        (this.mouseTile.x !== tx || this.mouseTile.y !== ty);
-      this.hoverSquare?.setVisible(showHover);
-      if (showHover) {
-        this.hoverSquare?.setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16);
+    this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
+    this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+
+    // Hover square: only reposition on change (throttled) — chasing the
+    // mouse every frame caused the drift/lag the old version had.
+    const now = performance.now();
+    if (this.mouseTile && now - this.lastHoverUpdate > 50) {
+      this.lastHoverUpdate = now;
+      this.hoverSquare?.setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16);
+      this.hoverSquare?.setVisible(true);
+    } else if (!this.mouseTile) {
+      this.hoverSquare?.setVisible(false);
+    }
+  }
+
+  /** Sync the resource layer with the server's visible-tile list. */
+  updateResourceLayer(tiles: [number, number, number][]): void {
+    const sig = tiles.map((t) => t.join(",")).join(";");
+    if (sig === this.resourceSig) return;
+    this.resourceSig = sig;
+    if (this.resourceLayer) {
+      this.resourceLayer.removeAll(true);
+    } else {
+      this.resourceLayer = this.add.layer().setDepth(-5);
+    }
+    this.resourceTiles.clear();
+    for (const [x, y, gid] of tiles) {
+      const texKey = this.textureForGid(gid);
+      if (!texKey) continue;
+      const img = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+      this.resourceLayer.add(img);
+      this.resourceTiles.set(`${x},${y}`, img);
+    }
+    // Progress bars of vanished nodes are stale.
+    this.syncProgressBars({});
+  }
+
+  /** Find the tileset texture a gid belongs to (firstgid ranges). */
+  private textureForGid(gid: number): string | null {
+    const map = this.welcome?.map;
+    if (!map) return null;
+    const ts = map.tilesets.find((t) => gid >= t.firstgid);
+    if (!ts?.image) return null;
+    const key = this.tileTextures.get(ts.image);
+    return key && this.textures.exists(key) ? key : null;
+  }
+
+  /** Draw/update the small progress bar above nodes being harvested. */
+  syncProgressBars(progress: Record<string, number>): void {
+    const sig = JSON.stringify(progress);
+    if (sig === this.lastResProgress) return;
+    this.lastResProgress = sig;
+    const wanted = new Set(Object.keys(progress));
+    for (const [key, bar] of this.progressBars) {
+      if (!wanted.has(key)) {
+        bar.destroy();
+        this.progressBars.delete(key);
+      }
+    }
+    for (const [key, hits] of Object.entries(progress)) {
+      if (hits <= 0) continue;
+      let bar = this.progressBars.get(key);
+      if (!bar) {
+        const [ax, ay] = key.split(",").map(Number);
+        bar = this.add.container(ax * 32 + 16, ay * 32 - 8);
+        const bg = this.add.rectangle(0, 0, 30, 6, 0x000000, 0.55);
+        const fill = this.add.rectangle(-14, 0, Math.max(2, (hits / 4) * 28), 4, 0x6fe26f)
+          .setOrigin(0, 0.5);
+        bar.add([bg, fill]);
+        bar.setDepth(20);
+        this.progressBars.set(key, bar);
       }
     }
   }
@@ -436,6 +493,9 @@ export class WorldScene extends Phaser.Scene {
         this.lastMoveY = v[1];
       }
     }
+    // Resource nodes: chopped trees vanish / regrow, progress bars sync.
+    this.updateResourceLayer(snap.resources);
+    this.syncProgressBars(snap.res_progress);
     for (const p of snap.players) this.upsertPlayer(p);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));

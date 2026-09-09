@@ -48,6 +48,8 @@ export interface WelcomePayload {
   recipes: RecipePayload[];
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
+  resources: [number, number, number][];
+  res_progress: Record<string, number>;
   players: PlayerPayload[];
 }
 
@@ -71,6 +73,8 @@ export interface SnapshotPayload {
     aim: { dx: number; dy: number } | null;
   };
   inventory: InventoryPayload;
+  resources: [number, number, number][];
+  res_progress: Record<string, number>;
 }
 
 export interface PlayerPayload {
@@ -115,6 +119,7 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
+  | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; drops: [string, number][] }
   | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string }
   | { type: "pong"; t: unknown };

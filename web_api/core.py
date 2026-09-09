@@ -328,9 +328,26 @@ class WebHub:
         elif name == "place":  # đặt block (target tile hoặc offset)
             dx = frame.get("dx")
             dy = frame.get("dy")
+            block_id = str(frame.get("block_id", ""))
+            if not block_id:
+                # No explicit block: use the player's selected aim_block
+                # (Build Mode default), else the first placeable material
+                # in the bag — web clients don't manage a block selection
+                # screen yet.
+                rt0 = self.manager.get_runtime_for(sess.channel_id, uid)
+                player0 = rt0.state.get_player(uid) if rt0 else None
+                block_id = getattr(player0, "aim_block", "") if player0 else ""
+                if not block_id and rt0 is not None:
+                    inv = self.manager.get_inventory(sess.channel_id, uid)
+                    from game.blocks import PLACEABLE_BLOCK_IDS
+
+                    for bid in PLACEABLE_BLOCK_IDS:
+                        if inv.count(bid) > 0:
+                            block_id = bid
+                            break
             action = PlaceBlockAction(
                 user_id=uid,
-                block_id=str(frame.get("block_id", "")),
+                block_id=block_id,
                 dx=int(dx) if dx is not None else None,
                 dy=int(dy) if dy is not None else None,
             )
@@ -339,7 +356,19 @@ class WebHub:
                 sess, {"type": MSG_ERROR, "code": "bad_action"}
             )
             return
-        await self.manager.dispatch(sess.channel_id, action)
+        _, result = await self.manager.dispatch(sess.channel_id, action)
+        # Echo the action outcome so the client can show progress/failures.
+        if result is not None:
+            await self.send_to_client_conn(sess, {
+                "type": "action_result",
+                "name": name,
+                "ok": bool(result.state_changed),
+                "reason": result.reason or "",
+                "tx": result.pos[0] if result.pos else None,
+                "ty": result.pos[1] if result.pos else None,
+                "kind": result.block_id or "",
+                "drops": [[i, q] for i, q in (result.drops or [])],
+            })
 
     async def _handle_input(self, sess: WebSession, frame: dict) -> None:
         if not sess.input_allowed():

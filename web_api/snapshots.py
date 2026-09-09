@@ -115,6 +115,10 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # Placeable block catalog (id + emoji + name) for the build UI.
         "blocks_catalog": _blocks_catalog_payload(),
         "blocks": _blocks_payload(rt),
+        # Resource node tiles (trees/bushes/ore) the client renders as a
+        # separate layer so chopped nodes can disappear per node.
+        "resources": _resource_tiles_payload(rt),
+        "res_progress": _resource_progress_payload(rt),
         "players": _players_payload(rt),
     }
 
@@ -163,6 +167,28 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             ),
         },
         "inventory": _inventory_payload(rt, user_id),
+        # Resource nodes (trees/bushes/ore): every VISIBLE tile as (x, y, gid)
+        # plus per-node chop progress "ax,ay" -> hits landed. The client draws
+        # resource tiles from this (so chopped nodes disappear) and shows a
+        # progress bar over the node being harvested.
+        "resources": _resource_tiles_payload(rt),
+        "res_progress": _resource_progress_payload(rt),
+    }
+
+
+def _resource_tiles_payload(rt) -> List[list]:
+    grid = getattr(rt, "resources", None)
+    if grid is None:
+        return []
+    return [[x, y, gid] for x, y, gid in grid.visible_tiles()]
+
+
+def _resource_progress_payload(rt) -> dict:
+    grid = getattr(rt, "resources", None)
+    if grid is None:
+        return {}
+    return {
+        f"{ax},{ay}": hits for (ax, ay), hits in grid.progress.items()
     }
 
 

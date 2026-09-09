@@ -19,6 +19,7 @@ export interface NetHandlers {
   onLoginOk: (token: string, displayName: string) => void;
   onLoginFail: (error: string) => void;
   onHeld: (slot: number, itemId: string | null) => void;
+  onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; drops: [string, number][] }) => void;
   onConnectionChange: (connected: boolean) => void;
 }
 
@@ -239,6 +240,9 @@ export class Net {
         this.handlers.onAssetData(frame.name, frame.b64);
         break;
       case "pong":
+        break;
+      case "action_result":
+        this.handlers.onActionResult(frame);
         break;
       case "held":
         this.handlers.onHeld(frame.slot as number, (frame.item_id as string | null) ?? null);
