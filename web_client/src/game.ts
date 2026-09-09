@@ -46,6 +46,7 @@ export class WorldScene extends Phaser.Scene {
   private lastMoveX = 0; // last nonzero input (arm points here while idle)
   private lastMoveY = 1;
   private arm: Phaser.GameObjects.Triangle | null = null;
+  private armVec: { x: number; y: number } | null = null; // smoothed facing
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
   private aimCursor: { dx: number; dy: number } | null = null;
   private mouseTile: { x: number; y: number } | null = null;
@@ -100,6 +101,10 @@ export class WorldScene extends Phaser.Scene {
     this.lastServerRecv = performance.now();
     this.collision = welcome.map.collision ?? [];
     this.selfDir = welcome.self.dir || "SOUTH";
+    if (!this.armVec) {
+      const v0 = DIR_VECTORS[this.selfDir] ?? DIR_VECTORS.SOUTH;
+      this.armVec = { x: v0[0], y: v0[1] };
+    }
 
     // Arm (facing indicator) + hover square. No yellow target frame.
     if (!this.arm) {
@@ -127,6 +132,11 @@ export class WorldScene extends Phaser.Scene {
     this.inputVec.dx = dx;
     this.inputVec.dy = dy;
     this.inputVec.running = running;
+    // Keep the 8-way facing label in sync with the raw input (used by
+    // getSelfDir for actions); rendering blends the vector separately.
+    if (dx !== 0 || dy !== 0) {
+      this.selfDir = this.dominantDir(dx, dy);
+    }
   }
 
   /** Screen (0..1) -> world tile, through the camera (zoom-safe). */
@@ -242,16 +252,35 @@ export class WorldScene extends Phaser.Scene {
 
   private spawnSelf(welcome: WelcomePayload): void {
     const s = welcome.self;
-    this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
+    if (this.selfMarker) {
+      // Re-welcome (re-login / reconnect without a page reload): reuse the
+      // existing marker — spawning a second one left a frozen "clone" at
+      // the spawn point that looked exactly like the player.
+      this.selfMarker.setPosition(s.x * 32 + 16, s.y * 32 + 16);
+      return;
+    }
+    // Center the avatar INSIDE its tile (tile = 32px, size 22): origin at
+    // the tile center, not the top-left corner — the old +0 offset made
+    // the body and the arm sit visibly off the tile square.
+    this.selfMarker = this.add.rectangle(s.x * 32 + 16, s.y * 32 + 16, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
   }
   private upsertPlayer(p: PlayerPayload): void {
+    // Self server position: reconciliation only (rendering is predicted).
     if (p.id === this.selfId) {
-      // Authoritative self position from the server (reconciliation only —
-      // rendering stays on the predicted position for zero perceived lag).
       this.selfServerPos = { x: p.x, y: p.y };
       this.lastServerRecv = performance.now();
+      // Authoritative 8-way facing while IDLE: blending toward it (instead
+      // of snapping) is what removes the residual jerk on stop.
+      if (p.dir && !this.inputVec.dx && !this.inputVec.dy) {
+        this.selfDir = p.dir;
+        const v = DIR_VECTORS[p.dir];
+        if (v) {
+          this.lastMoveX = v[0];
+          this.lastMoveY = v[1];
+        }
+      }
       return;
     }
     let rp = this.players.get(p.id);
@@ -313,7 +342,9 @@ export class WorldScene extends Phaser.Scene {
       // Arm points where we walk (Kaetram-style: facing follows movement).
       this.lastMoveX = v.dx;
       this.lastMoveY = v.dy;
-      this.selfDir = this.dominantDir(v.dx, v.dy);
+      // Do NOT snap selfDir from the input here: applySnapshot owns the
+      // 8-way facing so the arm never jerks between a diagonal and its
+      // dominant axis (the "giật giật 1 phát" bug).
       // Normalize so diagonal is not faster.
       const len = Math.hypot(v.dx, v.dy) || 1;
       const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors the server
@@ -340,10 +371,14 @@ export class WorldScene extends Phaser.Scene {
         this.selfY += (this.selfServerPos.y - this.selfY) * 0.1;
       }
     }
-    marker.setPosition(this.selfX * 32, this.selfY * 32);
+    marker.setPosition(this.selfX * 32 + 16, this.selfY * 32 + 16);
   }
 
-  /** Dominant 8-way direction name from a movement vector. */
+  /**
+   * Dominant 8-way direction name from a movement vector. Only used to
+   * label the facing for actions (`getSelfDir`) — rendering blends the raw
+   * vector, so pressing a diagonal no longer jerks the arm to a cardinal.
+   */
   private dominantDir(dx: number, dy: number): string {
     if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "EAST" : "WEST";
     if (Math.abs(dy) > Math.abs(dx)) return dy > 0 ? "SOUTH" : "NORTH";
@@ -351,22 +386,36 @@ export class WorldScene extends Phaser.Scene {
     return dy > 0 ? "SOUTH_WEST" : "NORTH_WEST";
   }
 
-  /** Arm points at the facing/aim tile; hover square tracks the mouse. */
+  /**
+   * Arm points at the facing/aim tile; hover square tracks the mouse.
+   * The arm rotates SMOOTHLY: while moving, the direction vector follows
+   * the raw input through a short exponential blend (no discrete 8-way
+   * snap — the "giật 1 phát rồi mới final" bug), and when the server
+   * reports a different facing while idle we blend toward it too.
+   */
   private updateAimVisuals(): void {
     if (!this.arm || !this.selfMarker) return;
-    // Arm direction: Build-Mode cursor when active, else last movement.
-    let ux: number;
-    let uy: number;
+    let targetX = this.lastMoveX;
+    let targetY = this.lastMoveY;
     if (this.aimCursor) {
-      const len = Math.hypot(this.aimCursor.dx, this.aimCursor.dy) || 1;
-      ux = this.aimCursor.dx / len;
-      uy = this.aimCursor.dy / len;
-    } else {
-      const len = Math.hypot(this.lastMoveX, this.lastMoveY) || 1;
-      ux = this.lastMoveX / len;
-      uy = this.lastMoveY / len;
+      targetX = this.aimCursor.dx;
+      targetY = this.aimCursor.dy;
     }
-    this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
+    const targetLen = Math.hypot(targetX, targetY) || 1;
+    targetX /= targetLen;
+    targetY /= targetLen;
+    // Smoothed facing vector: exponential toward the target each frame
+    // (k in 0..1 — 0.25 ≈ settles in ~5 frames, imperceptible but no jerk).
+    if (!this.armVec) this.armVec = { x: targetX, y: targetY };
+    const k = 0.25;
+    this.armVec.x += (targetX - this.armVec.x) * k;
+    this.armVec.y += (targetY - this.armVec.y) * k;
+    const vecLen = Math.hypot(this.armVec.x, this.armVec.y);
+    const ux = vecLen > 0.001 ? this.armVec.x / vecLen : 0;
+    const uy = vecLen > 0.001 ? this.armVec.y / vecLen : 1;
+    // Anchor = the avatar CENTER (tile center, +16) so the arm ring sits
+    // exactly in the middle of the tile square.
+    this.arm.setPosition(this.selfX * 32 + 16 + ux * 20, this.selfY * 32 + 16 + uy * 20);
     this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
 
     // Hover square: only reposition on change (throttled) — chasing the
@@ -534,7 +583,8 @@ export class WorldScene extends Phaser.Scene {
   }
 
   applySnapshot(snap: SnapshotPayload): void {
-    // Build-Mode cursor + server-side facing (authoritative).
+    // Build-Mode cursor + server-side facing (authoritative, only when idle
+    // and blended — see updateAimVisuals; snapping here jerked the arm).
     this.aimCursor = snap.self.aim ?? null;
     if (!this.inputVec.dx && !this.inputVec.dy) {
       this.selfDir = snap.self.dir || this.selfDir;
@@ -574,7 +624,7 @@ export class WorldScene extends Phaser.Scene {
   // Local self position in tile units (for the HUD + camera sanity).
   get selfPos(): { x: number; y: number } {
     if (this.selfMarker) {
-      return { x: this.selfMarker.x / 32, y: this.selfMarker.y / 32 };
+      return { x: this.selfMarker.x / 32 - 0.5, y: this.selfMarker.y / 32 - 0.5 };
     }
     return { x: 0, y: 0 };
   }

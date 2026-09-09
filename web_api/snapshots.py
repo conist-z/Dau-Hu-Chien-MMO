@@ -30,9 +30,11 @@ def _tilesets_payload(rt: ScenarioRuntime) -> List[dict]:
     return out
 
 
-def _players_payload(rt: ScenarioRuntime) -> List[dict]:
+def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict]:
     out = []
     for p in rt.state.get_visible_players():
+        if p.user_id == exclude_user_id:
+            continue  # self is rendered client-side (prediction) — never as a remote body
         out.append({
             "id": p.user_id,
             "name": p.display_name,
@@ -119,7 +121,7 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # separate layer so chopped nodes can disappear per node.
         "resources": _resource_tiles_payload(rt),
         "res_progress": _resource_progress_payload(rt),
-        "players": _players_payload(rt),
+        "players": _players_payload(rt, user_id),
     }
 
 
@@ -146,7 +148,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "map_id": rt.map_data.map_id,
         "clock": ingame_seconds() % 86400,
         "weather": rt.weather_key,
-        "players": _players_payload(rt),
+        "players": _players_payload(rt, user_id),
         "blocks": _blocks_payload(rt),
         "self": {
             "hp": player.hp if player else 0,
