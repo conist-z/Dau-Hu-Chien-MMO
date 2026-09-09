@@ -127,11 +127,13 @@ class WebHub:
             await self._handle_join(conn, frame)
             return
         if ftype == "select_slot":
-            # Hotbar selection mirror (numbers / wheel / click). Tools are
-            # auto-resolved server-side from the bag; this only echoes the
-            # held item so the client can label it.
+            # Hotbar selection mirror (numbers / wheel / click). Stores the
+            # held slot on the session (used by `place` to resolve "cầm gì
+            # đặt nấy") and echoes the held item so the client can label it.
             slot = frame.get("slot")
             sess = conn.session
+            if sess is not None and isinstance(slot, int) and 0 <= slot < 8:
+                sess.selected_slot = slot
             if sess is not None and sess.channel_id:
                 rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
                 if rt is not None:
@@ -330,17 +332,30 @@ class WebHub:
             dy = frame.get("dy")
             block_id = str(frame.get("block_id", ""))
             if not block_id:
-                # No explicit block: use the player's selected aim_block
-                # (Build Mode default), else the first placeable material
-                # in the bag — web clients don't manage a block selection
-                # screen yet.
+                # No explicit block from the client. Resolution order:
+                # 1. the HELD hotbar item when it is a placeable block —
+                #    "cầm gỗ thì đặt gỗ";
+                # 2. the selected aim_block, but ONLY while the bag still
+                #    has stock (the default "stone" used to short-circuit
+                #    the fallback and report no_material with wood in bag);
+                # 3. the first placeable material actually in the bag.
                 rt0 = self.manager.get_runtime_for(sess.channel_id, uid)
                 player0 = rt0.state.get_player(uid) if rt0 else None
-                block_id = getattr(player0, "aim_block", "") if player0 else ""
-                if not block_id and rt0 is not None:
-                    inv = self.manager.get_inventory(sess.channel_id, uid)
-                    from game.blocks import PLACEABLE_BLOCK_IDS
+                inv = (
+                    self.manager.get_inventory(sess.channel_id, uid)
+                    if rt0 is not None else None
+                )
+                from game.blocks import PLACEABLE_BLOCK_IDS, get_block
 
+                if player0 is not None and inv is not None:
+                    held = inv.hotbar().get(sess.selected_slot)
+                    if held and get_block(held) is not None:
+                        block_id = held
+                if not block_id and player0 is not None and inv is not None:
+                    candidate = getattr(player0, "aim_block", "")
+                    if candidate and inv.count(candidate) > 0:
+                        block_id = candidate
+                if not block_id and inv is not None:
                     for bid in PLACEABLE_BLOCK_IDS:
                         if inv.count(bid) > 0:
                             block_id = bid
