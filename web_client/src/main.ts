@@ -7,6 +7,7 @@ import { KeyboardInput } from "./input";
 import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
+import { weatherFx } from "./weather";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
@@ -29,6 +30,10 @@ function guestLogin(net: Net): void {
 
 const hud = new Hud();
 const scene = new WorldScene();
+// Animated weather overlay (rain/snow/storm...) — plain canvas above the
+// Phaser canvas, below the HUD. Mounts once; the weather key arrives in
+// every snapshot (and the welcome default below).
+weatherFx.mount(document.getElementById("game-root")!);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -82,6 +87,9 @@ const net = new Net({
     hud.setItemEmojis(frame.item_emojis ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
     hud.setClock(0);
+    // Welcome carries no weather of its own — prime the overlay with the
+    // map default; the first snapshot sets the real key ~50ms later.
+    weatherFx.setWeather(null);
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -89,6 +97,7 @@ const net = new Net({
     scene.applySnapshot(frame);
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
+    weatherFx.setWeather(frame.weather);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
     applyInventory(frame.inventory);
   },

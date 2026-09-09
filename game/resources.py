@@ -329,7 +329,9 @@ def apply_chop(state: GameState,
     rng = rng if rng is not None else random
     grid.progress[node.anchor] = grid.progress_at(node.anchor) + 1
     if grid.progress[node.anchor] < hits:
-        return ActionResult(True, state_changed=True, pos=(tx, ty), block_id=node.kind)
+        return ActionResult(
+            True, state_changed=True, pos=(tx, ty), block_id=node.kind, needed=hits,
+        )
 
     grid.chop(node.anchor, now)
     drops: List[Tuple[str, int]] = []
@@ -338,7 +340,8 @@ def apply_chop(state: GameState,
             inventory.add(item_id, qty)
             drops.append((item_id, qty))
     return ActionResult(
-        True, state_changed=True, pos=(tx, ty), block_id=node.kind, drops=drops
+        True, state_changed=True, pos=(tx, ty), block_id=node.kind, drops=drops,
+        needed=hits,
     )
 
 
