@@ -8,6 +8,13 @@ import type { PlayerPayload, SnapshotPayload, WelcomePayload } from "./protocol"
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 
+// Direction name -> unit vector (mirrors game.state.Direction).
+const DIR_VECTORS: Record<string, [number, number]> = {
+  NORTH: [0, -1], SOUTH: [0, 1], EAST: [1, 0], WEST: [-1, 0],
+  NORTH_EAST: [1, -1], NORTH_WEST: [-1, -1],
+  SOUTH_EAST: [1, 1], SOUTH_WEST: [-1, 1],
+};
+
 interface RemotePlayer {
   container: Phaser.GameObjects.Container;
   label: Phaser.GameObjects.Text;
@@ -34,6 +41,17 @@ export class WorldScene extends Phaser.Scene {
   private collision: number[][] = []; // collision[y][x] = 1 blocks
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
+  // --- facing arm + target square (Kaetram-style hover cursor) ---
+  private selfDir = "SOUTH";
+  private lastMoveX = 0; // last nonzero input (arm points here while idle)
+  private lastMoveY = 1;
+  private arm: Phaser.GameObjects.Triangle | null = null;
+  private targetSquare: Phaser.GameObjects.Rectangle | null = null;
+  private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
+  private aimCursor: { dx: number; dy: number } | null = null;
+  private mouseTile: { x: number; y: number } | null = null;
+  // --- build mode: selected block to place ---
+  private selectedBlock = "stone";
 
   constructor() {
     super("world");
@@ -61,7 +79,7 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
-    this.cameras.main.setZoom(0.6); // 60% zoom — see more world per screen
+    this.cameras.main.setZoom(1.6); // zoom IN — close-up view
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
@@ -72,6 +90,24 @@ export class WorldScene extends Phaser.Scene {
     this.selfServerPos = { x: welcome.self.x, y: welcome.self.y };
     this.lastServerRecv = performance.now();
     this.collision = welcome.map.collision ?? [];
+    this.selfDir = welcome.self.dir || "SOUTH";
+
+    // Arm (facing indicator) + target square + hover square.
+    if (!this.arm) {
+      this.arm = this.add.triangle(0, 0, 0, -7, 6, 5, -6, 5, 0xffffff);
+      this.arm.setDepth(5);
+    }
+    if (!this.targetSquare) {
+      this.targetSquare = this.add.rectangle(0, 0, 32, 32)
+        .setStrokeStyle(2, 0xffd24a, 0.9)
+        .setDepth(4);
+    }
+    if (!this.hoverSquare) {
+      this.hoverSquare = this.add.rectangle(0, 0, 32, 32)
+        .setStrokeStyle(2, 0x8fd4ff, 0.55)
+        .setDepth(3);
+      this.hoverSquare.setVisible(false);
+    }
 
     // Camera follows the SELF MARKER every frame — the marker itself is
     // driven by prediction in update(), so camera lag = marker lag.
@@ -253,6 +289,10 @@ export class WorldScene extends Phaser.Scene {
     if (!marker || !this.welcome) return;
     const v = this.inputVec;
     if (v.dx !== 0 || v.dy !== 0) {
+      // Arm points where we walk (Kaetram-style: facing follows movement).
+      this.lastMoveX = v.dx;
+      this.lastMoveY = v.dy;
+      this.selfDir = this.dominantDir(v.dx, v.dy);
       // Normalize so diagonal is not faster.
       const len = Math.hypot(v.dx, v.dy) || 1;
       const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors the server
@@ -263,6 +303,7 @@ export class WorldScene extends Phaser.Scene {
       const ny = this.tryMoveAxis(this.selfX, this.selfY, 0, stepY);
       this.selfY = ny.y;
     }
+    this.updateAimVisuals();
     // Gentle server reconciliation: pull toward the authoritative position
     // only when drifting far (teleport/collision mismatch), never fight
     // normal prediction — that would re-introduce input lag.
@@ -279,6 +320,80 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     marker.setPosition(this.selfX * 32, this.selfY * 32);
+  }
+
+  /** Dominant 8-way direction name from a movement vector. */
+  private dominantDir(dx: number, dy: number): string {
+    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "EAST" : "WEST";
+    if (Math.abs(dy) > Math.abs(dx)) return dy > 0 ? "SOUTH" : "NORTH";
+    if (dx > 0) return dy > 0 ? "SOUTH_EAST" : "NORTH_EAST";
+    return dy > 0 ? "SOUTH_WEST" : "NORTH_WEST";
+  }
+
+  /** Position the arm + the target square it points at (every frame). */
+  private updateAimVisuals(): void {
+    if (!this.arm || !this.targetSquare || !this.selfMarker) return;
+    // Aim cursor (Build Mode) overrides the plain facing tile.
+    let tx: number;
+    let ty: number;
+    if (this.aimCursor) {
+      tx = Math.floor(this.selfX) + this.aimCursor.dx;
+      ty = Math.floor(this.selfY) + this.aimCursor.dy;
+    } else {
+      // Arm direction = last nonzero movement vector (analog 8-way).
+      const len = Math.hypot(this.lastMoveX, this.lastMoveY) || 1;
+      const ux = this.lastMoveX / len;
+      const uy = this.lastMoveY / len;
+      // Target tile: first tile fully crossed by the facing ray.
+      tx = Math.floor(this.selfX + ux * 0.9);
+      ty = Math.floor(this.selfY + uy * 0.9);
+      // Arm graphics: small triangle just outside the player square.
+      this.arm.setPosition(
+        this.selfX * 32 + ux * 22,
+        this.selfY * 32 + uy * 22,
+      );
+      this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+    }
+    if (this.aimCursor) {
+      const len = Math.hypot(this.aimCursor.dx, this.aimCursor.dy) || 1;
+      const ux = this.aimCursor.dx / len;
+      const uy = this.aimCursor.dy / len;
+      this.arm.setPosition(this.selfX * 32 + ux * 22, this.selfY * 32 + uy * 22);
+      this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+    }
+    this.targetSquare.setPosition(tx * 32 + 16, ty * 32 + 16);
+    // Hover square follows the mouse when it differs from the target.
+    if (this.mouseTile) {
+      const showHover =
+        !this.aimCursor &&
+        (this.mouseTile.x !== tx || this.mouseTile.y !== ty);
+      this.hoverSquare?.setVisible(showHover);
+      if (showHover) {
+        this.hoverSquare?.setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16);
+      }
+    }
+  }
+
+  /** Track the mouse tile for the hover highlight (from main.ts). */
+  setMouseTile(tile: { x: number; y: number } | null): void {
+    this.mouseTile = tile;
+  }
+
+  /** Set the active Build-Mode cursor offset (from the server snapshot). */
+  setAimCursor(aim: { dx: number; dy: number } | null): void {
+    this.aimCursor = aim;
+  }
+
+  getSelfDir(): string {
+    return this.selfDir;
+  }
+
+  getSelectedBlock(): string {
+    return this.selectedBlock;
+  }
+
+  setSelectedBlock(id: string): void {
+    this.selectedBlock = id;
   }
 
   /** Axis-separated movement against the tile collision grid. */
@@ -311,6 +426,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   applySnapshot(snap: SnapshotPayload): void {
+    // Build-Mode cursor + server-side facing (authoritative).
+    this.aimCursor = snap.self.aim ?? null;
+    if (!this.inputVec.dx && !this.inputVec.dy) {
+      this.selfDir = snap.self.dir || this.selfDir;
+      const v = DIR_VECTORS[this.selfDir];
+      if (v) {
+        this.lastMoveX = v[0];
+        this.lastMoveY = v[1];
+      }
+    }
     for (const p of snap.players) this.upsertPlayer(p);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));

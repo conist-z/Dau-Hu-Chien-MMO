@@ -42,9 +42,11 @@ export interface WelcomePayload {
     coins: number;
     walk_speed: number;
     run_speed: number;
+    dir: string;
   };
   inventory: InventoryPayload;
   recipes: RecipePayload[];
+  blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
   players: PlayerPayload[];
 }
@@ -65,6 +67,8 @@ export interface SnapshotPayload {
     coins: number;
     x: number;
     y: number;
+    dir: string;
+    aim: { dx: number; dy: number } | null;
   };
   inventory: InventoryPayload;
 }

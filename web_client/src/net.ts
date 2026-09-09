@@ -162,6 +162,11 @@ export class Net {
     this.send(frame);
   }
 
+  /** Turn the player to an 8-way direction (server updates facing). */
+  turn(dir: string): void {
+    this.send({ type: "action", name: "turn", dir });
+  }
+
   inventoryOp(op: "move_to" | "use", payload: { item_id?: string; slot?: number }): void {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }

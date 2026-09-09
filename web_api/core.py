@@ -304,20 +304,28 @@ class WebHub:
             ChopAction,
             PlaceBlockAction,
             ShovelAction,
+            TurnAction,
         )
+        from game.state import Direction
 
         name = frame.get("name")
         uid = sess.user_id
         action = None
         if name == "attack":
             action = AttackAction(user_id=uid)
-        elif name == "chop":  # chặt cây (facing tile)
+        elif name == "chop":  # chặt cây (target tile)
             action = ChopAction(user_id=uid)
-        elif name == "break":  # đập block (facing tile)
+        elif name == "break":  # đập block (target tile)
             action = BreakBlockAction(user_id=uid)
-        elif name == "shovel":  # xúc cỏ/đất (facing tile)
+        elif name == "shovel":  # xúc cỏ/đất (target tile)
             action = ShovelAction(user_id=uid)
-        elif name == "place":  # đặt block (facing tile hoặc offset)
+        elif name == "turn":  # quay hướng nhìn (8-way)
+            try:
+                direction = Direction[str(frame.get("dir", "SOUTH")).upper()]
+                action = TurnAction(user_id=uid, direction=direction)
+            except KeyError:
+                action = None
+        elif name == "place":  # đặt block (target tile hoặc offset)
             dx = frame.get("dx")
             dy = frame.get("dy")
             action = PlaceBlockAction(

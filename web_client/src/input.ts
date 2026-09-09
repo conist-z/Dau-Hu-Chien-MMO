@@ -11,6 +11,8 @@ export interface InputHooks {
   onChatFocus: () => boolean; // true while the chat input has focus
   /** Canvas clicks: "primary" = chop/break/mine, "secondary" = place block. */
   onCanvasAction?: (kind: "primary" | "secondary", sx: number, sy: number) => void;
+  /** Mouse hover over the canvas (normalized; -1,-1 = left). */
+  onCanvasHover?: (sx: number, sy: number) => void;
 }
 
 const MOVE_KEYS: Record<string, [number, number]> = {
@@ -108,7 +110,7 @@ export class KeyboardInput {
     this.hooks.onVector(dx, dy, this.running);
   }
 
-  /** Left click on canvas: contextual action (chop/break/mine). */
+  /** Canvas mouse bindings: click actions + hover tracking. */
   bindCanvas(canvas: HTMLCanvasElement): void {
     canvas.addEventListener("mousedown", (e) => {
       if (this.isChatFocused() || !this.enabled) return;
@@ -121,6 +123,14 @@ export class KeyboardInput {
         this.hooks.onCanvasAction?.("secondary", sx, sy);
       }
     });
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      this.hooks.onCanvasHover?.(
+        (e.clientX - rect.left) / rect.width,
+        (e.clientY - rect.top) / rect.height,
+      );
+    });
+    canvas.addEventListener("mouseleave", () => this.hooks.onCanvasHover?.(-1, -1));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 }

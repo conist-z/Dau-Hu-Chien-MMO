@@ -161,7 +161,7 @@ hud.setHooks(
 );
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held
-// tool only (the server echoes back a `held` frame; no auto-use).
+// tool only. Silent on purpose: no chat spam.
 hud.onSlotSelect((slot) => net.selectSlot(slot));
 
 const input = new KeyboardInput({
@@ -175,16 +175,24 @@ const input = new KeyboardInput({
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
-  onCanvasAction: (kind, sx, sy) => {
-    const tile = scene.screenToTile(sx, sy);
+  onCanvasAction: (kind, _sx, _sy) => {
     if (kind === "primary") {
-      // Contextual harvest on the clicked tile (server resolves chop vs
-      // mine vs block by what stands there + the held/best tool).
+      // Chop/mine the AIM TARGET (the yellow square the arm points at) —
+      // matching Discord Build-Mode semantics: click acts on the target.
       net.action("chop");
     } else {
-      const off = scene.offsetFromSelf(tile);
-      net.action("place", off.dx, off.dy);
+      // Place the selected block on the AIM TARGET too (predictable):
+      // right click uses the tile the arm/target square shows, not a far
+      // mouse tile — the server clamps to AIM_RANGE around the player.
+      net.action("place");
     }
+  },
+  onCanvasHover: (sx, sy) => {
+    if (sx < 0) {
+      scene.setMouseTile(null);
+      return;
+    }
+    scene.setMouseTile(scene.screenToTile(sx, sy));
   },
 });
 
