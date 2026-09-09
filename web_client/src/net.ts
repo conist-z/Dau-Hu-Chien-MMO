@@ -19,7 +19,7 @@ export interface NetHandlers {
   onLoginOk: (token: string, displayName: string) => void;
   onLoginFail: (error: string) => void;
   onHeld: (slot: number, itemId: string | null) => void;
-  onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; drops: [string, number][] }) => void;
+  onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; needed: number | null; drops: [string, number][] }) => void;
   onConnectionChange: (connected: boolean) => void;
 }
 
@@ -159,6 +159,11 @@ export class Net {
   /** Actions target an ABSOLUTE tile (tx,ty) — no client position math. */
   actionAt(name: string, tx: number, ty: number): void {
     this.send({ type: "action", name, tx, ty });
+  }
+
+  /** Place at an absolute tile, explicitly naming the block to place. */
+  placeAt(tx: number, ty: number, blockId?: string): void {
+    this.send({ type: "action", name: "place", tx, ty, block_id: blockId ?? "" });
   }
 
   action(name: string, dx?: number, dy?: number): void {

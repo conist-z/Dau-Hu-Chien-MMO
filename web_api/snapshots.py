@@ -210,12 +210,26 @@ def _resource_tiles_payload(rt) -> List[list]:
 
 
 def _resource_progress_payload(rt) -> dict:
+    """Chop progress per node in HARVEST: "ax,ay" -> [hits, needed, bbox].
+
+    ``needed`` is the BASE hit count (bare hands); ``bbox`` is the node's
+    full tile list (a big tree covers 2x2) so the client centres the progress
+    bar over the WHOLE node — never just the anchor tile — and knows which
+    tiles to animate when the tree falls. The action_result echo carries the
+    tool-adjusted needed count, which the client prefers when present.
+    """
     grid = getattr(rt, "resources", None)
     if grid is None:
         return {}
-    return {
-        f"{ax},{ay}": hits for (ax, ay), hits in grid.progress.items()
-    }
+    from game.resources import NODE_DEFS
+
+    out = {}
+    for (ax, ay), hits in grid.progress.items():
+        node = grid.nodes.get((ax, ay))
+        if node is None or hits <= 0:
+            continue
+        out[f"{ax},{ay}"] = [hits, NODE_DEFS[node.kind].hits, node.tiles]
+    return out
 
 
 def _walk_speed() -> float:

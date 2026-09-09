@@ -327,6 +327,19 @@ class WebHub:
         ):
             abs_dx = int(raw_tx) - player_a.x
             abs_dy = int(raw_ty) - player_a.y
+            # Lag tolerance: the client targets from a snapshot that can lag
+            # the server tick while walking — clamp into AIM_RANGE (toward
+            # the player) instead of rejecting with out_of_range. Only a
+            # click genuinely beyond AIM_RANGE+1 is refused.
+            from config import WEB_AIM_RANGE_TOLERANCE
+
+            lim = 3 + WEB_AIM_RANGE_TOLERANCE
+            if max(abs(abs_dx), abs(abs_dy)) > lim:
+                abs_dx = abs_dy = None  # genuinely too far: facing-tile fallback
+            elif max(abs(abs_dx), abs(abs_dy)) > 3:
+                # Truncate each axis into range (preserves direction).
+                abs_dx = max(-3, min(3, abs_dx)) if abs(abs_dx) > 3 else abs_dx
+                abs_dy = max(-3, min(3, abs_dy)) if abs(abs_dy) > 3 else abs_dy
         if name == "attack":
             action = AttackAction(user_id=uid)
         elif name == "chop":  # chặt cây (mouse tile nếu có)
@@ -357,30 +370,17 @@ class WebHub:
                 dy = frame.get("dy")
             block_id = str(frame.get("block_id", ""))
             if not block_id:
-                # No explicit block from the client. Resolution order:
-                # 1. the HELD hotbar item when it is a placeable block —
-                #    "cầm gỗ thì đặt gỗ";
-                # 2. the selected aim_block, but ONLY while the bag still
-                #    has stock (the default "stone" used to short-circuit
-                #    the fallback and report no_material with wood in bag);
-                # 3. the first placeable material actually in the bag.
-                rt0 = self.manager.get_runtime_for(sess.channel_id, uid)
-                player0 = rt0.state.get_player(uid) if rt0 else None
-                inv = (
-                    self.manager.get_inventory(sess.channel_id, uid)
-                    if rt0 is not None else None
-                )
+                # Client sent no block id. Resolution: the HELD hotbar item
+                # when placeable, else the first placeable material actually
+                # in the bag. (The old aim_block-"stone" fallback reported
+                # no_material with wood sitting in the bag.)
+                inv = self.manager.get_inventory(sess.channel_id, uid)
                 from game.blocks import PLACEABLE_BLOCK_IDS, get_block
 
-                if player0 is not None and inv is not None:
-                    held = inv.hotbar().get(sess.selected_slot)
-                    if held and get_block(held) is not None:
-                        block_id = held
-                if not block_id and player0 is not None and inv is not None:
-                    candidate = getattr(player0, "aim_block", "")
-                    if candidate and inv.count(candidate) > 0:
-                        block_id = candidate
-                if not block_id and inv is not None:
+                held = inv.hotbar().get(sess.selected_slot)
+                if held and get_block(held) is not None:
+                    block_id = held
+                if not block_id:
                     for bid in PLACEABLE_BLOCK_IDS:
                         if inv.count(bid) > 0:
                             block_id = bid
@@ -407,6 +407,7 @@ class WebHub:
                 "tx": result.pos[0] if result.pos else None,
                 "ty": result.pos[1] if result.pos else None,
                 "kind": result.block_id or "",
+                "needed": result.needed,
                 "drops": [[i, q] for i, q in (result.drops or [])],
             })
 

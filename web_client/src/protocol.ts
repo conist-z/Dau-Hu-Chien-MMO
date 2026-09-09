@@ -51,7 +51,8 @@ export interface WelcomePayload {
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
   resources: [number, number, number][];
-  res_progress: Record<string, number>;
+  // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
+  res_progress: Record<string, [number, number, number[][]]>;
   players: PlayerPayload[];
 }
 
@@ -76,7 +77,8 @@ export interface SnapshotPayload {
   };
   inventory: InventoryPayload;
   resources: [number, number, number][];
-  res_progress: Record<string, number>;
+  // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
+  res_progress: Record<string, [number, number, number[][]]>;
 }
 
 export interface PlayerPayload {
@@ -121,7 +123,7 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
-  | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; drops: [string, number][] }
+  | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; needed: number | null; drops: [string, number][] }
   | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string }
   | { type: "pong"; t: unknown };

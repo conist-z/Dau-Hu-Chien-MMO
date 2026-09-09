@@ -298,4 +298,13 @@ export class Hud {
   onSlotSelect(cb: (slot: number) => void): void {
     this.onSelectSlot = cb;
   }
+
+  /** The item in the currently selected hotbar slot (for explicit place). */
+  get heldItem(): string | null {
+    return this.inventory.hotbar[this.activeSlot] ?? null;
+  }
+
+  get currentSlot(): number {
+    return this.activeSlot;
+  }
 }

@@ -76,6 +76,10 @@ const net = new Net({
     hud.hideGate();
     hud.setInventory(frame.inventory);
     hud.setRecipes(frame.recipes);
+    // Re-sync the server's held slot after (re)login — the session was
+    // recreated server-side and defaults to slot 0.
+    net.selectSlot(hud.currentSlot);
+    hud.setItemEmojis(frame.item_emojis ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
     hud.setClock(0);
     hud.setWeather("sun_clouds");
@@ -145,6 +149,7 @@ const net = new Net({
     hud.chatLine(itemId ? `Cầm: ${itemId} (ô ${slot + 1})` : `Tay không (ô ${slot + 1})`);
   },
   onActionResult: (frame) => {
+    if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);
     if (frame.ok) {
       if (frame.name === "chop" && frame.drops.length > 0) {
         const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
@@ -214,7 +219,9 @@ const input = new KeyboardInput({
       // Contextual: placed block under cursor -> break; else chop.
       net.actionAt(scene.isBlockAt(tile.x, tile.y) ? "break" : "chop", tile.x, tile.y);
     } else {
-      net.actionAt("place", tile.x, tile.y);
+      // Explicit block id from the client's OWN inventory view — no server
+      // slot desync after re-logins ("cầm gỗ đặt gỗ" always holds).
+      net.placeAt(tile.x, tile.y, hud.heldItem ?? undefined);
     }
   },
   onCanvasHover: (sx, sy) => {

@@ -55,8 +55,20 @@ export class WorldScene extends Phaser.Scene {
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
+  // Progress bar PER NODE: one bar centred over the node's whole bbox
+  // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
+  private progressFills = new Map<string, Phaser.GameObjects.Rectangle>();
   private lastResProgress = "";
+  // Per-node hit counts from the latest action_result echo (tool-adjusted
+  // needed total — more accurate than the snapshot's base value).
+  private neededByAnchor = new Map<string, number>();
+  // Raw latest snapshot progress: anchor -> [hits, needed, bbox] — kept for
+  // node grouping + fall animation of nodes that vanish.
+  private lastProgressRaw = new Map<string, [number, number, number[][]]>();
+  private lastProgressBbox = new Map<string, number[][]>();
+  // Falling-tree animation state is derived per sync (collectNodesFromTiles
+  // + playFallAnimation) — no persistent bookkeeping needed.
   // Placed blocks (x,y -> id): solid for the local prediction too.
   private blockSet = new Set<string>();
   private lastBlocksSig = "";
@@ -425,11 +437,26 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Sync the resource layer with the server's visible-tile list. */
+  /**
+   * Sync the resource layer with the server's visible-tile list.
+   *
+   * Nodes that VANISHED since the previous sync (felled) play a falling
+   * animation: shake -> tilt -> fade on the whole node's tile images.
+   * The anchor of each node is derived from the known node map the server
+   * also sends in res_progress's bbox — a vanished tile belongs to the node
+   * whose bbox contained it in the previous snapshot.
+   */
   updateResourceLayer(tiles: [number, number, number][]): void {
     const sig = tiles.map((t) => t.join(",")).join(";");
     if (sig === this.resourceSig) return;
     this.resourceSig = sig;
+
+    // Remember the previous tile->node grouping for the fall animation:
+    // any node whose bbox tiles disappeared entirely just got felled.
+    const prevNodes = this.collectNodesFromTiles(
+      [...this.resourceTiles.entries()].map(([k]) => k),
+    );
+
     if (this.resourceLayer) {
       this.resourceLayer.removeAll(true);
     } else {
@@ -443,8 +470,88 @@ export class WorldScene extends Phaser.Scene {
       this.resourceLayer.add(img);
       this.resourceTiles.set(`${x},${y}`, img);
     }
+
+    // Felled nodes: their tiles were present before, gone now -> animate.
+    const nowKeys = new Set([...this.resourceTiles.keys()]);
+    for (const [, imgs] of prevNodes) {
+      const stillThere = imgs.every((img) => nowKeys.has(this.keyOf(img)));
+      if (imgs.length > 0 && !stillThere) {
+        this.playFallAnimation(imgs);
+      }
+    }
     // Progress bars of vanished nodes are stale.
     this.syncProgressBars({});
+  }
+
+  /** World key of a resource image ("x,y" from its centre position). */
+  private keyOf(img: Phaser.GameObjects.Image): string {
+    return `${Math.round((img.x - 16) / 32)},${Math.round((img.y - 16) / 32)}`;
+  }
+
+  /**
+   * Group tile keys into nodes using the res_progress bboxes the server
+   * sends ("ax,ay" -> [hits, needed, [[x,y],...]]). Falls back to singletons
+   * when no bbox is known yet (first snapshot before any swing).
+   */
+  private collectNodesFromTiles(
+    keys: string[],
+  ): Map<string, Phaser.GameObjects.Image[]> {
+    const out = new Map<string, Phaser.GameObjects.Image[]>();
+    const claimed = new Set<string>();
+    for (const [anchor, _p] of this.lastProgressRaw) {
+      const bbox = this.lastProgressBbox.get(anchor);
+      if (!bbox) continue;
+      const imgs: Phaser.GameObjects.Image[] = [];
+      for (const [bx, by] of bbox) {
+        const img = this.resourceTiles.get(`${bx},${by}`);
+        if (img) {
+          imgs.push(img);
+          claimed.add(`${bx},${by}`);
+        }
+      }
+      if (imgs.length > 0) out.set(anchor, imgs);
+    }
+    for (const k of keys) {
+      if (!claimed.has(k)) {
+        const img = this.resourceTiles.get(k);
+        if (img) out.set(k, [img]);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Kaetram-style fell: the whole tree shakes, tilts ~14deg around its
+   * base, and fades — 450ms, then the images are destroyed.
+   */
+  private playFallAnimation(imgs: Phaser.GameObjects.Image[]): void {
+    if (imgs.length === 0) return;
+    // Base line = lowest row of the node (trees tip over from the stump).
+    const baseY = Math.max(...imgs.map((i) => i.y));
+    for (const img of imgs) {
+      // Bring above everything so the fall reads clearly.
+      this.resourceLayer?.add(img);
+      img.setDepth(8);
+      this.tweens.add({
+        targets: img,
+        x: img.x + (Math.random() < 0.5 ? -2 : 2),
+        duration: 60,
+        yoyo: true,
+        repeat: 2,
+        ease: "Sine.InOut",
+        onComplete: () => {
+          this.tweens.add({
+            targets: img,
+            angle: img.x < this.selfX * 32 ? 12 : -12,
+            y: baseY + 4,
+            alpha: 0,
+            duration: 280,
+            ease: "Quad.In",
+            onComplete: () => img.destroy(),
+          });
+        },
+      });
+    }
   }
 
   /**
@@ -484,32 +591,93 @@ export class WorldScene extends Phaser.Scene {
     return cacheKey;
   }
 
-  /** Draw/update the small progress bar above nodes being harvested. */
-  syncProgressBars(progress: Record<string, number>): void {
+  /**
+   * Sync the per-node progress bars.
+   *
+   * progress: "ax,ay" -> [hits, base_needed, bbox]. The bar spans the
+   * node's WHOLE bbox (a 2x2 tree -> 64px wide bar centred on the tree,
+   * not a 30px sliver on one tile), and the fill width animates to
+   * hits/needed each update (needed prefers the tool-adjusted count from
+   * the action_result echo).
+   */
+  syncProgressBars(
+    progress: Record<string, [number, number, number[][]]>,
+  ): void {
+    this.lastProgressRaw = new Map(Object.entries(progress));
+    this.lastProgressBbox.clear();
+    for (const [anchor, entry] of this.lastProgressRaw) {
+      this.lastProgressBbox.set(anchor, entry[2]);
+    }
     const sig = JSON.stringify(progress);
     if (sig === this.lastResProgress) return;
     this.lastResProgress = sig;
+
     const wanted = new Set(Object.keys(progress));
     for (const [key, bar] of this.progressBars) {
       if (!wanted.has(key)) {
         bar.destroy();
         this.progressBars.delete(key);
+        this.progressFills.delete(key);
       }
     }
-    for (const [key, hits] of Object.entries(progress)) {
+    for (const [key, entry] of Object.entries(progress)) {
+      const hits = entry[0];
       if (hits <= 0) continue;
+      const bbox = entry[2];
+      // Node bbox in pixels -> bar spans the whole sprite, centred.
+      const xs = bbox.map(([bx]) => bx);
+      const ys = bbox.map(([, by]) => by);
+      const minX = Math.min(...xs) * 32;
+      const maxX = (Math.max(...xs) + 1) * 32;
+      const maxY = (Math.max(...ys) + 1) * 32;
+      const cx = (minX + maxX) / 2;
+      const width = Math.min(72, Math.max(30, maxX - minX - 8));
+      const needed = this.neededByAnchor.get(key) ?? entry[1] ?? 4;
+      const ratio = Math.max(0, Math.min(1, hits / Math.max(1, needed)));
+
       let bar = this.progressBars.get(key);
-      if (!bar) {
-        const [ax, ay] = key.split(",").map(Number);
-        bar = this.add.container(ax * 32 + 16, ay * 32 - 8);
-        const bg = this.add.rectangle(0, 0, 30, 6, 0x000000, 0.55);
-        const fill = this.add.rectangle(-14, 0, Math.max(2, (hits / 4) * 28), 4, 0x6fe26f)
+      let fill = this.progressFills.get(key);
+      if (!bar || !fill) {
+        bar = this.add.container(cx, maxY - 6);
+        fill = this.add.rectangle(-width / 2, 0, width - 4, 5, 0x6fe26f)
           .setOrigin(0, 0.5);
-        bar.add([bg, fill]);
+        const bg = this.add.rectangle(0, 0, width, 7, 0x000000, 0.6);
+        const border = this.add.rectangle(0, 0, width, 7)
+          .setStrokeStyle(1, 0xffffff, 0.35);
+        bar.add([bg, fill, border]);
         bar.setDepth(20);
         this.progressBars.set(key, bar);
+        this.progressFills.set(key, fill);
+      }
+      // Smooth fill toward the new ratio (no snap on each swing).
+      this.tweens.add({
+        targets: fill,
+        width: Math.max(2, (width - 4) * ratio),
+        duration: 120,
+        ease: "Sine.Out",
+      });
+      // One-shot "thunk" bounce of the bar on each landed hit.
+      this.tweens.add({
+        targets: bar,
+        scaleY: { from: 1.25, to: 1 },
+        duration: 110,
+        ease: "Quad.Out",
+      });
+    }
+  }
+
+  /** Remember the tool-adjusted needed count from an action_result echo. */
+  noteChopNeeded(tx: number | null, ty: number | null, needed: number | null): void {
+    if (tx === null || ty === null || !needed) return;
+    // The echo lands on the clicked tile; resolve it to the node anchor via
+    // the known bboxes (any bbox containing the tile claims it).
+    for (const [anchor, bbox] of this.lastProgressBbox) {
+      if (bbox.some(([bx, by]) => bx === tx && by === ty)) {
+        this.neededByAnchor.set(anchor, needed);
+        return;
       }
     }
+    this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
   /** Track the mouse tile for the hover highlight (from main.ts). */

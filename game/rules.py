@@ -273,6 +273,7 @@ def apply_place_block(
         tx, ty = player.x + dx, player.y + dy
     else:
         tx, ty = _facing_tile(player)
+    # (clamp handled at the hub layer: see web_api.core clamp_offset)
 
     if not collision.is_walkable(tx, ty) or blocks.solid_at(tx, ty):
         return ActionResult(False, "blocked_tile")
