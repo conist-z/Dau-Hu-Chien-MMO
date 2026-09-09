@@ -263,33 +263,17 @@ export class WorldScene extends Phaser.Scene {
       // Re-welcome (re-login / reconnect without a page reload): reuse the
       // existing marker — spawning a second one left a frozen "clone" at
       // the spawn point that looked exactly like the player.
-      this.selfMarker.setPosition(s.x * 32 + 16, s.y * 32 + 16);
+      this.selfMarker.setPosition(s.x * 32, s.y * 32);
       return;
     }
-    // Center the avatar INSIDE its tile (tile = 32px, size 22): origin at
-    // the tile center, not the top-left corner — the old +0 offset made
-    // the body and the arm sit visibly off the tile square.
-    this.selfMarker = this.add.rectangle(s.x * 32 + 16, s.y * 32 + 16, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
+    // NOTE: server positions are already TILE-CENTER based (x_f = x + 0.5),
+    // so x*32 lands exactly in the middle of the tile. Never add +16 here —
+    // that shifts the avatar half a tile off the collision grid.
+    this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
   }
   private upsertPlayer(p: PlayerPayload): void {
-    // Self server position: reconciliation only (rendering is predicted).
-    if (p.id === this.selfId) {
-      this.selfServerPos = { x: p.x, y: p.y };
-      this.lastServerRecv = performance.now();
-      // Authoritative 8-way facing while IDLE: blending toward it (instead
-      // of snapping) is what removes the residual jerk on stop.
-      if (p.dir && !this.inputVec.dx && !this.inputVec.dy) {
-        this.selfDir = p.dir;
-        const v = DIR_VECTORS[p.dir];
-        if (v) {
-          this.lastMoveX = v[0];
-          this.lastMoveY = v[1];
-        }
-      }
-      return;
-    }
     let rp = this.players.get(p.id);
     const now = performance.now();
     if (!rp) {
@@ -378,7 +362,7 @@ export class WorldScene extends Phaser.Scene {
         this.selfY += (this.selfServerPos.y - this.selfY) * 0.1;
       }
     }
-    marker.setPosition(this.selfX * 32 + 16, this.selfY * 32 + 16);
+    marker.setPosition(this.selfX * 32, this.selfY * 32);
   }
 
   /**
@@ -420,9 +404,9 @@ export class WorldScene extends Phaser.Scene {
     const vecLen = Math.hypot(this.armVec.x, this.armVec.y);
     const ux = vecLen > 0.001 ? this.armVec.x / vecLen : 0;
     const uy = vecLen > 0.001 ? this.armVec.y / vecLen : 1;
-    // Anchor = the avatar CENTER (tile center, +16) so the arm ring sits
-    // exactly in the middle of the tile square.
-    this.arm.setPosition(this.selfX * 32 + 16 + ux * 20, this.selfY * 32 + 16 + uy * 20);
+    // Anchor = the avatar center (server pos IS the tile center — see
+    // spawnSelf; adding +16 here would offset the arm off the body).
+    this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
     this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
 
     // Hover square: only reposition on change (throttled) — chasing the
@@ -590,17 +574,15 @@ export class WorldScene extends Phaser.Scene {
   }
 
   applySnapshot(snap: SnapshotPayload): void {
-    // Build-Mode cursor + server-side facing (authoritative, only when idle
-    // and blended — see updateAimVisuals; snapping here jerked the arm).
+    // Authoritative self position for reconciliation. Self is NOT in the
+    // players payload anymore (the clone fix), so take it from snap.self.
+    this.selfServerPos = { x: snap.self.x, y: snap.self.y };
+    this.lastServerRecv = performance.now();
+    // Build-Mode cursor. Deliberately do NOT take snap.self.dir as the arm
+    // target: the server reports the dominant-axis 8-way name (SE -> E),
+    // and blending toward it on every key release re-introduced the arm
+    // jerk. The last raw input vector IS the true facing — keep it.
     this.aimCursor = snap.self.aim ?? null;
-    if (!this.inputVec.dx && !this.inputVec.dy) {
-      this.selfDir = snap.self.dir || this.selfDir;
-      const v = DIR_VECTORS[this.selfDir];
-      if (v) {
-        this.lastMoveX = v[0];
-        this.lastMoveY = v[1];
-      }
-    }
     // Resource nodes: chopped trees vanish / regrow, progress bars sync.
     this.updateResourceLayer(snap.resources);
     this.syncProgressBars(snap.res_progress);
@@ -631,7 +613,7 @@ export class WorldScene extends Phaser.Scene {
   // Local self position in tile units (for the HUD + camera sanity).
   get selfPos(): { x: number; y: number } {
     if (this.selfMarker) {
-      return { x: this.selfMarker.x / 32 - 0.5, y: this.selfMarker.y / 32 - 0.5 };
+      return { x: this.selfMarker.x / 32, y: this.selfMarker.y / 32 };
     }
     return { x: 0, y: 0 };
   }
