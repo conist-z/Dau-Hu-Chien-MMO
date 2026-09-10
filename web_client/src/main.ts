@@ -8,10 +8,10 @@ import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
+import { dayNightFx } from "./daynight";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
-void welcome;
 let quickPlayArmed = false;
 
 // Quick-play guest login: derive a stable pseudo user_id from localStorage
@@ -34,6 +34,9 @@ const scene = new WorldScene();
 // Phaser canvas, below the HUD. Mounts once; the weather key arrives in
 // every snapshot (and the welcome default below).
 weatherFx.mount(document.getElementById("game-root")!);
+// Day/night lighting overlay — full-screen multiply tint sampled from the
+// same 24h gradient as the Discord client; the clock arrives per snapshot.
+dayNightFx.mount(document.getElementById("game-root")!);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -90,6 +93,7 @@ const net = new Net({
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
     weatherFx.setWeather(null);
+    dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -98,6 +102,7 @@ const net = new Net({
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
     weatherFx.setWeather(frame.weather);
+    dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
     applyInventory(frame.inventory);
   },
@@ -154,8 +159,9 @@ const net = new Net({
     hud.setLoginButton(true);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
-  onHeld: (slot, itemId) => {
-    hud.chatLine(itemId ? `Cầm: ${itemId} (ô ${slot + 1})` : `Tay không (ô ${slot + 1})`);
+  onHeld: (_slot, _itemId) => {
+    // Hotbar switches are SILENT on purpose: changing hands must not spam
+    // chat with "Cầm: … / Tay không …" (bug report 11/09).
   },
   onActionResult: (frame) => {
     if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);
@@ -167,7 +173,8 @@ const net = new Net({
       return;
     }
     const REASONS: Record<string, string> = {
-      no_node: "Không có gì để chặt ở ô đó.",
+      // no_node / no_block: intentionally SILENT — punching air / empty tile
+      // must not show any message (bug report 11/09).
       // regrowing: intentionally silent — the player must NOT think of the
       // spot as a pot that regrows; the tree just quietly comes back later
       // (nothing visible, nothing blocking in the meantime).
@@ -179,7 +186,6 @@ const net = new Net({
       own_tile: "Không thể đặt lên chỗ mình đứng.",
       out_of_range: "Quá xa.",
       already_block: "Ô đó đã có khối.",
-      no_block: "Không có khối để phá.",
     };
     const msg = REASONS[frame.reason];
     if (msg) hud.toast(msg);
@@ -219,18 +225,23 @@ const input = new KeyboardInput({
     // Resolve the tile from the CLICK's own coordinates — always the cell
     // under the cursor at this exact instant, never a cached value.
     const tile = scene.screenToTile(sx, sy);
-    if (!tile) {
-      net.action(kind === "primary" ? "chop" : "place");
-      return;
-    }
     if (kind === "primary") {
+      if (!tile) {
+        net.action("chop");
+        return;
+      }
       // Contextual: placed block under cursor -> break; else chop.
       net.actionAt(scene.isBlockAt(tile.x, tile.y) ? "break" : "chop", tile.x, tile.y);
-    } else {
-      // Explicit block id from the client's OWN inventory view — no server
-      // slot desync after re-logins ("cầm gỗ đặt gỗ" always holds).
-      net.placeAt(tile.x, tile.y, hud.heldItem ?? undefined);
+      return;
     }
+    // Secondary (right-click): scope follows the HELD hotbar slot ONLY —
+    // place the block actually in hand. If the active slot holds a tool,
+    // an unplaceable item, or nothing, nothing happens at all (no action,
+    // no message). The client never sends place with a non-block held.
+    const placeable = new Set((welcome?.blocks_catalog ?? []).map((b) => b.id));
+    const held = hud.heldItem;
+    if (!tile || !held || !placeable.has(held)) return;
+    net.placeAt(tile.x, tile.y, held);
   },
   onCanvasHover: (sx, sy) => {
     // Store the raw cursor position; the scene re-derives the tile every

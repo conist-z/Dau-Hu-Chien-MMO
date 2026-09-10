@@ -370,21 +370,17 @@ class WebHub:
                 dy = frame.get("dy")
             block_id = str(frame.get("block_id", ""))
             if not block_id:
-                # Client sent no block id. Resolution: the HELD hotbar item
-                # when placeable, else the first placeable material actually
-                # in the bag. (The old aim_block-"stone" fallback reported
-                # no_material with wood sitting in the bag.)
+                # Client sent no block id. Resolution: ONLY the HELD hotbar
+                # item — right-click scope follows the active slot exactly.
+                # NO bag fallback: if the held item isn't a placeable block
+                # the action simply fails (the client already refuses to
+                # send place when the active slot holds no block).
                 inv = self.manager.get_inventory(sess.channel_id, uid)
-                from game.blocks import PLACEABLE_BLOCK_IDS, get_block
+                from game.blocks import get_block
 
                 held = inv.hotbar().get(sess.selected_slot)
                 if held and get_block(held) is not None:
                     block_id = held
-                if not block_id:
-                    for bid in PLACEABLE_BLOCK_IDS:
-                        if inv.count(bid) > 0:
-                            block_id = bid
-                            break
             action = PlaceBlockAction(
                 user_id=uid,
                 block_id=block_id,
