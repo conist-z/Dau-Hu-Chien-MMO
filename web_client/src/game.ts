@@ -435,24 +435,42 @@ export class WorldScene extends Phaser.Scene {
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);
       this.selfY += this.freeY(this.selfX, this.selfY, stepY);
     }
-    // Reconciliation — SNAP ONLY, never a per-frame pull.
-    // The prediction now mirrors the server's integration exactly (same
-    // speed, same real dt, same slide collision), so during normal play the
-    // drift stays within the snapshot echo lag (~0.3-0.9 tiles) and
-    // self-heals the moment input stops. Correcting that echo lag every
-    // frame (blend at drift > 0.4) pulled the avatar back WHILE it walked
-    // and made it visibly stutter (giật); the hard leash yanked it to a
-    // circle every frame during lag for the same stutter. The ONLY
-    // correction is a one-time snap for genuine divergence against RECENT
-    // authority: teleport / respawn / catch-up right after a lag spike.
+    // Reconciliation against the LATEST authority (never a stale echo) — a
+    // collision-aware GLIDE, not a teleport. The prediction mirrors the
+    // server's integration exactly (same speed, same real dt, same slide
+    // collision), so normal-play drift stays within the snapshot echo lag
+    // (~0.3-0.9 tiles) and self-heals when input stops — correcting that
+    // echo lag every frame is what made the avatar stutter (giật). Real
+    // divergence (server freeze, direction change mid-lag) is eased back
+    // THROUGH the collision grid (freeX/freeY), so the marker can NEVER
+    // visually pass through a block: the old instant snap teleported the
+    // avatar across walls whenever the server froze for half a second
+    // ("đi xuyên khối"). A > 20-tile gap is a portal/respawn — an instant
+    // jump is the correct feel there.
     const age = performance.now() - this.lastServerRecv;
-    const drift = Math.hypot(
-      this.selfX - this.selfServerPos.x,
-      this.selfY - this.selfServerPos.y,
-    );
-    if (age < 600 && drift > 2.5) {
-      this.selfX = this.selfServerPos.x;
-      this.selfY = this.selfServerPos.y;
+    if (age < 600) {
+      const drift = Math.hypot(
+        this.selfX - this.selfServerPos.x,
+        this.selfY - this.selfServerPos.y,
+      );
+      if (drift > 20) {
+        this.selfX = this.selfServerPos.x;
+        this.selfY = this.selfServerPos.y;
+      } else if (drift > 1.0) {
+        // Ease toward the authority. Pull rate is time-scaled and capped so
+        // the correction reads as a brisk glide (~18 tiles/s max), never a
+        // jump, and the move goes through the same swept slide collision as
+        // normal movement — a block in the way stops the marker dead.
+        const pull = Math.min(
+          0.3 * 60 * this.frameDtSec,
+          (drift - 1.0) * 0.15 + 0.05,
+        );
+        const k = pull / Math.max(1e-6, drift);
+        const dx = (this.selfServerPos.x - this.selfX) * k;
+        const dy = (this.selfServerPos.y - this.selfY) * k;
+        this.selfX += this.freeX(this.selfX, this.selfY, dx);
+        this.selfY += this.freeY(this.selfX, this.selfY, dy);
+      }
     }
     this.updateAimVisuals();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
