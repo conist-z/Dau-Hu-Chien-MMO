@@ -33,6 +33,11 @@ export class WorldScene extends Phaser.Scene {
   private blockLayer: Phaser.GameObjects.Layer | null = null;
   private mapBake: Phaser.GameObjects.Image | null = null;
   private lastBlockSig = "";
+  // Real block faces (assets/blocks/<id>.png fetched via asset_request).
+  // Pending ids get a plain rectangle until the texture arrives, then the
+  // next updateBlocks redraws them with the sprite.
+  private blockTextures = new Set<string>();
+  private pendingFetch: ((id: string) => void) | null = null;
   private selfId = 0;
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
@@ -41,6 +46,7 @@ export class WorldScene extends Phaser.Scene {
   private collision: number[][] = []; // collision[y][x] = 1 blocks
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
+  private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
   // --- facing arm + hover cursor (Kaetram-style) ---
   private selfDir = "SOUTH";
   private lastMoveX = 0; // last nonzero input (arm points here while idle)
@@ -91,6 +97,7 @@ export class WorldScene extends Phaser.Scene {
   // asset_data frames (tilesets fetched through the relay, license-safe).
 
   buildWorld(welcome: WelcomePayload, fetchAsset: (name: string) => void): void {
+    this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
     this.selfId = welcome.self.id;
     const map = welcome.map;
@@ -102,6 +109,10 @@ export class WorldScene extends Phaser.Scene {
         this.tileTextures.set(ts.image, ts.image.replace(/\.png$/i, ""));
         fetchAsset(ts.image);
       }
+    }
+    // Request every DISTINCT block face once (blocks payload may repeat ids).
+    for (const id of new Set(welcome.blocks.map(([, , bid]) => bid))) {
+      if (!this.blockTextures.has(id)) fetchAsset(`blocks/${id}.png`);
     }
     this.buildBlocks(welcome.blocks);
     this.bakeMapIfReady();
@@ -277,17 +288,36 @@ export class WorldScene extends Phaser.Scene {
 
   private buildBlocks(blocks: [number, number, string][]): void {
     if (this.blockLayer) this.blockLayer.removeAll(true);
-    const list: Phaser.GameObjects.Rectangle[] = [];
-    for (const [x, y, _id] of blocks) {
-      const r = this.add.rectangle(x * 32 + 16, y * 32 + 16, 30, 30, 0x6b5a3e);
-      r.setStrokeStyle(2, 0x8a7550);
-      list.push(r);
+    const list: Phaser.GameObjects.GameObject[] = [];
+    for (const [x, y, id] of blocks) {
+      const key = `block-${id}`;
+      if (this.blockTextures.has(id) && this.textures.exists(key)) {
+        const img = this.add.image(x * 32 + 16, y * 32 + 16, key);
+        list.push(img);
+      } else {
+        // Placeholder until the face texture arrives (see onBlockTexture).
+        const r = this.add.rectangle(x * 32 + 16, y * 32 + 16, 30, 30, 0x6b5a3e);
+        r.setStrokeStyle(2, 0x8a7550);
+        list.push(r);
+      }
     }
     this.blockLayer = this.add.layer();
     this.blockLayer.add(list);
   }
 
+  /** A block face PNG arrived: register + redraw with the real sprite. */
+  onBlockTexture(id: string): void {
+    this.blockTextures.add(id);
+    if (this.welcome) this.updateBlocks(this.welcome.blocks);
+  }
+
   updateBlocks(blocks: [number, number, string][]): void {
+    for (const id of new Set(blocks.map(([, , bid]) => bid))) {
+      if (!this.blockTextures.has(id)) {
+        this.blockTextures.add(id); // request once per session
+        this.pendingFetch?.(id);
+      }
+    }
     this.buildBlocks(blocks);
   }
 
@@ -330,7 +360,14 @@ export class WorldScene extends Phaser.Scene {
 
   // ---- per-frame update (60fps) ----
 
-  update(_time: number): void {
+  update(_time: number, delta?: number): void {
+    // Real frame delta (ms). The server integrates movement from REAL wall
+    // time at 20 Hz — the prediction must do the same or it silently runs
+    // 2x fast on 120 Hz displays (the old hardcoded 1/60 per frame) and the
+    // avatar outruns the server until every position/click drifts apart.
+    // Clamp to 0.2s like the server's dt clamp so a stalled tab can never
+    // teleport the player through walls on resume.
+    this.frameDtSec = Math.min(0.2, Math.max(0.001, (delta ?? 16.7) / 1000));
     // Mouse tile + hover box derive FRESH each frame from the last cursor
     // position: the camera moves under a still cursor (follow lerp, tab
     // switch) and a tile cached at mousemove time would be stale.
@@ -367,44 +404,65 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** One frame of predicted local movement with tile collision. */
+  /** One frame of predicted local movement, mirroring the server exactly. */
   private stepSelf(): void {
     const marker = this.selfMarker;
     if (!marker || !this.welcome) return;
     const v = this.inputVec;
-    if (v.dx !== 0 || v.dy !== 0) {
+    const dt = this.frameDtSec;
+    if ((v.dx !== 0 || v.dy !== 0) && dt > 0) {
       // Arm points where we walk (Kaetram-style: facing follows movement).
       this.lastMoveX = v.dx;
       this.lastMoveY = v.dy;
       // Do NOT snap selfDir from the input here: applySnapshot owns the
       // 8-way facing so the arm never jerks between a diagonal and its
       // dominant axis (the "giật giật 1 phát" bug).
-      // Normalize so diagonal is not faster.
-      const len = Math.hypot(v.dx, v.dy) || 1;
-      const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors the server
-      const stepX = (v.dx / len) * speed * (1 / 60);
-      const stepY = (v.dy / len) * speed * (1 / 60);
-      const nx = this.tryMoveAxis(this.selfX, this.selfY, stepX, 0);
-      this.selfX = nx.x;
-      const ny = this.tryMoveAxis(this.selfX, this.selfY, 0, stepY);
-      this.selfY = ny.y;
+      // Mirror the server's continuous integration (game/manager.
+      // _web_tick_runtime) EXACTLY: same speed constants, the same raw
+      // (already-normalized) input vector, real wall-clock dt, and the same
+      // swept per-axis SLIDE collision. Any divergence here accumulates
+      // every frame and the avatar silently walks away from the server.
+      const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors config WEB_*_SPEED
+      const stepX = v.dx * speed * dt;
+      const stepY = v.dy * speed * dt;
+      this.selfX += this.freeX(this.selfX, this.selfY, stepX);
+      this.selfY += this.freeY(this.selfX, this.selfY, stepY);
     }
-    this.updateAimVisuals();
-    // Gentle server reconciliation: pull toward the authoritative position
-    // only when drifting far (teleport/collision mismatch), never fight
-    // normal prediction — that would re-introduce input lag.
+    // Reconciliation against the LATEST authority — never a stale echo.
+    // The old gate corrected only when NO snapshot arrived for 500 ms
+    // (i.e. it pulled toward an OUTDATED position exactly when authority
+    // was most stale) and never corrected during normal play, so small
+    // per-frame drift accumulated silently until clicks missed entirely.
     const age = performance.now() - this.lastServerRecv;
-    if (age > 500) {
+    if (age < 1000) {
       const drift = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
-      if (drift > 2) {
-        // Hard correction: prediction diverged (teleport/trap).
+      if (drift > 3.0) {
+        // Large mismatch (teleport / server-side correction): snap once.
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > 0.1 && age > 1000) {
-        this.selfX += (this.selfServerPos.x - this.selfX) * 0.1;
-        this.selfY += (this.selfServerPos.y - this.selfY) * 0.1;
+      } else if (drift > 0.4) {
+        // Persistent small mismatch: blend toward authority so drift can
+        // never accumulate across minutes of play (the threshold is above
+        // the normal one-tick echo lag of ~0.2 tiles, so it never fights
+        // honest dead reckoning).
+        const k = Math.min(0.6, (drift - 0.4) * 0.5);
+        this.selfX += (this.selfServerPos.x - this.selfX) * k;
+        this.selfY += (this.selfServerPos.y - this.selfY) * k;
       }
     }
+    // Leash: the prediction may never run more than LEASH tiles from the
+    // last server truth. Bounds click-target error during lag spikes so
+    // actions stay inside the server's AIM_RANGE tolerance.
+    const ldx = this.selfX - this.selfServerPos.x;
+    const ldy = this.selfY - this.selfServerPos.y;
+    const ldist = Math.hypot(ldx, ldy);
+    const LEASH = 2.5;
+    if (ldist > LEASH) {
+      const k = LEASH / ldist;
+      this.selfX = this.selfServerPos.x + ldx * k;
+      this.selfY = this.selfServerPos.y + ldy * k;
+    }
+    this.updateAimVisuals();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
   }
 
@@ -782,30 +840,66 @@ export class WorldScene extends Phaser.Scene {
     this.selectedBlock = id;
   }
 
-  /** Axis-separated movement against the tile collision grid. */
-  private tryMoveAxis(
-    x: number, y: number, dx: number, dy: number,
-  ): { x: number; y: number } {
-    let nx = x + dx;
-    let ny = y + dy;
-    const half = 0.35; // player half-width in tiles (a bit smaller than 0.5)
-    if (dx !== 0) {
-      const edge = nx + Math.sign(dx) * half;
-      const tx = Math.floor(edge);
-      const tyA = Math.floor(y - half + 0.02);
-      const tyB = Math.floor(y + half - 0.02);
-      if (this.solidAt(tx, tyA) || this.solidAt(tx, tyB)) nx = x;
+  /** Tile rows/columns the player box overlaps on one axis — a direct port
+   * of game/collision._overlapped_rows (FLOAT_BOX_HALF = 0.3). The prediction
+   * must agree with the server's swept collision or drift accumulates. */
+  private overlappedRows(v: number): number[] {
+    const r = 0.3;
+    const out: number[] = [];
+    for (const t of [Math.floor(v - r), Math.floor(v + r)]) {
+      if (!out.includes(t) && v - r < t + 1 && v + r > t) out.push(t);
     }
-    if (dy !== 0) {
-      const edge = ny + Math.sign(dy) * half;
-      const ty = Math.floor(edge);
-      const txA = Math.floor(x - half + 0.02);
-      const txB = Math.floor(x + half - 0.02);
-      if (this.solidAt(txA, ty) || this.solidAt(txB, ty)) ny = y;
-    }
-    return { x: nx, y: ny };
+    return out;
   }
 
+  /** Movement allowed along x, clamped EXACTLY to the blocking wall so the
+   * player SLIDES along it — a direct port of game/collision._free_x (the
+   * old client collision STOPPED at the wall while the server slid, so the
+   * prediction fell behind on every wall-hug). */
+  private freeX(x: number, y: number, dx: number): number {
+    if (dx === 0) return 0;
+    const r = 0.3;
+    const rows = this.overlappedRows(y);
+    if (dx > 0) {
+      const start = Math.floor(x + r) + 1;
+      const end = Math.floor(x + dx + r);
+      for (let c = start; c <= end; c++) {
+        if (rows.some((t) => this.solidAt(c, t))) return Math.min(dx, c - r - x);
+      }
+      return dx;
+    }
+    const start = Math.floor(x - r) - 1;
+    const end = Math.floor(x + dx - r);
+    for (let c = start; c >= end; c--) {
+      if (rows.some((t) => this.solidAt(c, t))) return Math.max(dx, c + 1 + r - x);
+    }
+    return dx;
+  }
+
+  /** Movement allowed along y (mirror of game/collision._free_y). */
+  private freeY(x: number, y: number, dy: number): number {
+    if (dy === 0) return 0;
+    const r = 0.3;
+    const cols = this.overlappedRows(x);
+    if (dy > 0) {
+      const start = Math.floor(y + r) + 1;
+      const end = Math.floor(y + dy + r);
+      for (let t = start; t <= end; t++) {
+        if (cols.some((c) => this.solidAt(c, t))) return Math.min(dy, t - r - y);
+      }
+      return dy;
+    }
+    const start = Math.floor(y - r) - 1;
+    const end = Math.floor(y + dy - r);
+    for (let t = start; t >= end; t--) {
+      if (cols.some((c) => this.solidAt(c, t))) return Math.max(dy, t + 1 + r - y);
+    }
+    return dy;
+  }
+
+  /** True when the tile blocks movement for the local prediction. Mirrors
+   * the server's ``is_walkable`` (inverted): out-of-bounds, static collision,
+   * placed blocks and standing resource nodes block; felled nodes don't. */
   private solidAt(tx: number, ty: number): boolean {
     // A FELLED node's tile walks free even though the static grid still
     // lists it as blocked (the standing-tree blocker): server parity.

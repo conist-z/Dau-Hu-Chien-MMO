@@ -65,6 +65,11 @@ function applyTexture(name: string, b64: string): void {
     if (game.textures.exists(key)) game.textures.remove(key);
     game.textures.addImage(key, img);
     URL.revokeObjectURL(url);
+    if (name.startsWith("blocks/")) {
+      // Block face arrived: redraw the block layer with the real sprite.
+      scene.onBlockTexture(name.slice("blocks/".length).replace(/\.png$/i, ""));
+      return;
+    }
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
     // rebuilding duplicated players and reset the camera).
     scene.onTilesetLoaded(name);

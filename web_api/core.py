@@ -335,7 +335,26 @@ class WebHub:
 
             lim = 3 + WEB_AIM_RANGE_TOLERANCE
             if max(abs(abs_dx), abs(abs_dy)) > lim:
-                abs_dx = abs_dy = None  # genuinely too far: facing-tile fallback
+                # GENUINELY too far: REJECT. The old "facing-tile fallback"
+                # silently placed the held block in front of the player and
+                # ate a block on every far click (blocks kept appearing where
+                # nobody clicked; "vị trí bị cập nhật sai"). The client's
+                # prediction is now leashed to the server, so a far click is
+                # a far click — answer honestly, never redirect it.
+                if name in ("chop", "break", "place"):
+                    await self.send_to_client_conn(sess, {
+                        "type": "action_result",
+                        "name": name,
+                        "ok": False,
+                        "reason": "out_of_range",
+                        "tx": int(raw_tx),
+                        "ty": int(raw_ty),
+                        "kind": "",
+                        "needed": None,
+                        "drops": [],
+                    })
+                    return
+                abs_dx = abs_dy = None
             elif max(abs(abs_dx), abs(abs_dy)) > 3:
                 # Truncate each axis into range (preserves direction).
                 abs_dx = max(-3, min(3, abs_dx)) if abs(abs_dx) > 3 else abs_dx
@@ -532,10 +551,12 @@ class WebHub:
     # ----- assets -----
 
     async def _handle_asset_request(self, cid: int, name: str) -> None:
-        """Serve one tileset PNG by BASENAME from the maps assets dir.
+        """Serve one PNG by BASENAME from the maps assets dir.
 
         Basename-only + directory confinement = no traversal; no filesystem
         paths ever reach the client (license-safe: assets stay on the bot).
+        ``blocks/<id>.png`` is served from ``assets/blocks`` so the web client
+        draws the same real block faces as the Discord renderer.
         """
         from config import ASSETS_DIR
 
@@ -543,10 +564,15 @@ class WebHub:
         if not safe.lower().endswith(".png"):
             await self.send_to_client(cid, {"type": "asset_data", "name": name, "b64": None})
             return
-        path = ASSETS_DIR / safe
-        # Defence in depth: resolved path must stay inside ASSETS_DIR.
+        base_dir = (
+            ASSETS_DIR.parent / "blocks"
+            if name.startswith("blocks/")
+            else ASSETS_DIR
+        )
+        path = base_dir / safe
+        # Defence in depth: resolved path must stay inside the chosen dir.
         try:
-            path.resolve().relative_to(ASSETS_DIR.resolve())
+            path.resolve().relative_to(base_dir.resolve())
         except ValueError:
             path = None  # type: ignore[assignment]
         b64 = None
