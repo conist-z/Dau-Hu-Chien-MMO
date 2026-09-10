@@ -57,6 +57,20 @@ export function tintFactor(sec: number): [number, number, number] {
 // with ~1.0 factors would still cost a fillRect per frame for nothing).
 const SKIP_ABOVE = 0.995;
 
+// Restraint: on web the multiply hits EVERYTHING on screen (sprites, hover
+// box, progress bars) — unlike Discord where entities keep 65% brightness and
+// torches restore light. Blend the raw gradient factor toward white so dusk
+// and night stay moody but readable (a raw night factor ~0.15 turned the
+// whole screen near-black/blue: "màn xanh lè").
+const STRENGTH = 0.45;
+function gentle(r: number, g: number, b: number): [number, number, number] {
+  return [
+    1 - STRENGTH * (1 - r),
+    1 - STRENGTH * (1 - g),
+    1 - STRENGTH * (1 - b),
+  ];
+}
+
 export class DayNightFx {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -139,19 +153,19 @@ export class DayNightFx {
   private draw(): void {
     const sec = this.currentSec();
     if (sec < 0) return;
-    const [r, g, b] = tintFactor(sec);
+    const [rf, gf, bf] = gentle(...tintFactor(sec));
     // Midday (or any near-full-brightness stop): nothing to draw, stop the
     // rAF loop until the next snapshot drags the clock toward dusk/night.
-    if (r >= SKIP_ABOVE && g >= SKIP_ABOVE && b >= SKIP_ABOVE) {
+    if (rf >= SKIP_ABOVE && gf >= SKIP_ABOVE && bf >= SKIP_ABOVE) {
       this.stop();
       return;
     }
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.w, this.h);
-    // globalCompositeOperation "multiply" = the exact CanvasModulate
-    // semantics the Discord client replicates with PIL LUTs.
+    // globalCompositeOperation "multiply" = the CanvasModulate semantics,
+    // softened by gentle() above (see STRENGTH note).
     ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+    ctx.fillStyle = `rgb(${Math.round(rf * 255)},${Math.round(gf * 255)},${Math.round(bf * 255)})`;
     ctx.fillRect(0, 0, this.w, this.h);
     ctx.globalCompositeOperation = "source-over";
   }
