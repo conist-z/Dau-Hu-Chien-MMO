@@ -4,13 +4,19 @@
 // (night -> dawn -> day -> dusk -> night, ported from the Godot
 // daynightcycle2d addon). Zero game-logic deps (rules 2/3): pure visual.
 //
-// The tint is two layers painted on a plain canvas ABOVE the Phaser canvas
-// (below the HUD, same slot as the weather layer): a monochrome ambient
-// multiply (brightness only — never desaturates) plus a saturated period hue
-// overlay (violet dawn / gold noon / orange dusk / indigo night). The in-game
-// clock second-of-day arrives in every 20 Hz snapshot (snap.clock) and is
-// interpolated locally so the lighting drifts smoothly instead of stepping
-// 20 times per second.
+// The tint is two TRANSLUCENT fills painted on a plain canvas ABOVE the
+// Phaser canvas (below the HUD, same slot as the weather layer): a black
+// brightness fill plus a saturated period hue wash (violet dawn / gold noon /
+// orange dusk / indigo night). The in-game clock second-of-day arrives in
+// every 20 Hz snapshot (snap.clock) and is interpolated locally so the
+// lighting drifts smoothly instead of stepping 20 times per second.
+//
+// WHY NO "multiply" COMPOSITE: multiply only blends against pixels inside
+// THIS canvas — which starts fully transparent — so every fill painted an
+// OPAQUE wall over the whole game (map + players invisible, only the DOM HUD
+// on top remained visible). Translucent source-over is safe by construction
+// (alpha < 1 always) and a black fill at alpha a darkens EXACTLY like a
+// multiply by (1 - a):  out = C * (1 - a) + black * a = C * (1 - a).
 
 export const SECONDS_PER_DAY = 86400;
 
@@ -58,22 +64,19 @@ export function tintFactor(sec: number): [number, number, number] {
 // the rAF loop is stopped entirely until the clock drifts toward dusk/night.
 const SKIP_AMBIENT = 0.97;
 
-// --- Two-layer lighting (why not a plain colored multiply?) -----------------
-// A raw colored multiply was tried twice and failed both ways:
-//   - full strength: dusk/night crushed the screen ("màn xanh lè"), and
-//   - blended toward white: the hue died with it, so the long dawn->noon
-//     gradient segment painted a desaturated lavender-gray over the morning
-//     ("buổi sáng màu xám").
-// Fix: SEPARATE brightness from mood.
-//   1. AMBIENT multiply — a MONOCHROME gray derived from the gradient's
-//      luminance. Scaling every channel equally never desaturates; the scene
-//      just gets darker (floored so night stays readable).
-//   2. CAST overlay — the period's HUE, pushed far from gray (saturate()),
-//      painted source-over with an alpha that fades out as the day brightens.
-// Violet dawn, warm gold noon, orange dusk, indigo night — no gray anywhere.
+// --- Two-layer lighting (why not a colored multiply?) -----------------------
+// Brightness and mood are SEPARATE fills:
+//   1. AMBIENT — a BLACK fill at alpha (1 - luminance). Scaling brightness
+//      equally on every channel never desaturates the scene (a colored
+//      multiply did: the dawn->noon gradient segment multiplied the screen
+//      with desaturated lavender-gray — "buổi sáng màu xám").
+//   2. CAST — the period's HUE, pushed away from gray (saturate), painted as
+//      a translucent wash whose alpha fades out as the day brightens. Violet
+//      dawn, warm gold noon, orange dusk, indigo night — no gray anywhere.
 const DARK_STRENGTH = 0.55; // 0..1 — how much of the gradient darkness applies
 const MIN_AMBIENT = 0.45;   // floor: night never darker than this
-const CAST_ALPHA = 0.30;    // overlay alpha at full night (fades to ~0 at noon)
+const CAST_ALPHA = 0.28;    // wash alpha at full night (fades to ~0 at noon)
+const SATURATE = 1.7;       // hue boost for the cast stops (1 = Godot raw)
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
@@ -92,9 +95,9 @@ function saturateStop(r: number, g: number, b: number, k = 2.2): [number, number
 }
 
 // Same fraction-of-day knots as GRADIENT, but each stop hue-boosted for the
-// cast overlay.
+// cast wash.
 const CAST_GRADIENT: [number, [number, number, number]][] = GRADIENT.map(
-  ([f, c]) => [f, saturateStop(c[0], c[1], c[2])],
+  ([f, c]) => [f, saturateStop(c[0], c[1], c[2], SATURATE)],
 );
 
 /** Saturated cast colour for the given second-of-day (interpolated). */
@@ -198,7 +201,7 @@ export class DayNightFx {
     const sec = this.currentSec();
     if (sec < 0) return;
     const [r, g, b] = tintFactor(sec);
-    // 1. Ambient: monochrome brightness from the gradient's luminance.
+    // 1. Ambient: brightness from the gradient's luminance.
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const ambient = Math.max(MIN_AMBIENT, 1 - DARK_STRENGTH * (1 - lum));
     // 2. Cast: saturated period hue, fading out as the day brightens.
@@ -211,16 +214,18 @@ export class DayNightFx {
     }
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.w, this.h);
-    const v = Math.round(ambient * 255);
-    ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = `rgb(${v},${v},${v})`;
-    ctx.fillRect(0, 0, this.w, this.h);
+    // 1. Black brightness fill: alpha (1-ambient) darkens exactly like a
+    //    multiply by `ambient` — and can NEVER cover the screen (alpha < 1).
+    const darkA = 1 - ambient;
+    if (darkA > 0.004) {
+      ctx.fillStyle = `rgba(0,0,0,${darkA.toFixed(3)})`;
+      ctx.fillRect(0, 0, this.w, this.h);
+    }
+    // 2. Period hue wash (also translucent — never opaque).
     if (castA > 0.004) {
-      ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = `rgba(${Math.round(cast[0])},${Math.round(cast[1])},${Math.round(cast[2])},${castA.toFixed(3)})`;
       ctx.fillRect(0, 0, this.w, this.h);
     }
-    ctx.globalCompositeOperation = "source-over";
   }
 }
 
