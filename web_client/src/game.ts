@@ -436,17 +436,18 @@ export class WorldScene extends Phaser.Scene {
       this.selfY += this.freeY(this.selfX, this.selfY, stepY);
     }
     // Reconciliation against the LATEST authority (never a stale echo) — a
-    // collision-aware GLIDE, not a teleport. The prediction mirrors the
-    // server's integration exactly (same speed, same real dt, same slide
-    // collision), so normal-play drift stays within the snapshot echo lag
-    // (~0.3-0.9 tiles) and self-heals when input stops — correcting that
-    // echo lag every frame is what made the avatar stutter (giật). Real
-    // divergence (server freeze, direction change mid-lag) is eased back
-    // THROUGH the collision grid (freeX/freeY), so the marker can NEVER
-    // visually pass through a block: the old instant snap teleported the
-    // avatar across walls whenever the server froze for half a second
-    // ("đi xuyên khối"). A > 20-tile gap is a portal/respawn — an instant
-    // jump is the correct feel there.
+    // collision-aware GLIDE that only ever fires on REAL divergence. The
+    // prediction mirrors the server's integration exactly (same speed, same
+    // real dt, same slide collision), so normal-play drift is just the
+    // snapshot echo lag: speed x (tick interval + network one-way latency).
+    // On a high-latency link (VN -> Railway can be 150-300ms RTT) that lag
+    // reaches ~1.5-2 tiles at run speed — correcting it per-frame is what
+    // made the avatar stutter (giật). The glide threshold (3.0) sits ABOVE
+    // that worst case, so normal play is NEVER corrected. Real divergence
+    // (server freeze, direction change mid-lag) is eased back THROUGH the
+    // collision grid (freeX/freeY), so the marker can never visually pass
+    // through a block (the old instant snap teleported across walls).
+    // A > 20-tile gap is a portal/respawn — an instant jump is correct.
     const age = performance.now() - this.lastServerRecv;
     if (age < 600) {
       const drift = Math.hypot(
@@ -456,14 +457,14 @@ export class WorldScene extends Phaser.Scene {
       if (drift > 20) {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > 1.0) {
+      } else if (drift > 3.0) {
         // Ease toward the authority. Pull rate is time-scaled and capped so
         // the correction reads as a brisk glide (~18 tiles/s max), never a
         // jump, and the move goes through the same swept slide collision as
         // normal movement — a block in the way stops the marker dead.
         const pull = Math.min(
           0.3 * 60 * this.frameDtSec,
-          (drift - 1.0) * 0.15 + 0.05,
+          (drift - 3.0) * 0.2 + 0.05,
         );
         const k = pull / Math.max(1e-6, drift);
         const dx = (this.selfServerPos.x - this.selfX) * k;
