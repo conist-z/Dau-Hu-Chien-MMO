@@ -422,45 +422,37 @@ export class WorldScene extends Phaser.Scene {
       // (already-normalized) input vector, real wall-clock dt, and the same
       // swept per-axis SLIDE collision. Any divergence here accumulates
       // every frame and the avatar silently walks away from the server.
-      const speed = v.running ? 6.0 : 4.0; // tiles/s, mirrors config WEB_*_SPEED
+      // Speed from the SERVER's welcome payload (config.WEB_*_SPEED — the
+      // panel can tune them per deployment). Hardcoding 4/6 here made the
+      // prediction walk a different speed than the server, so drift grew
+      // every second and the snap correction fired repeatedly (= giật).
+      const s = this.welcome.self;
+      const speed = v.running
+        ? (s?.run_speed ?? 6.0)
+        : (s?.walk_speed ?? 4.0);
       const stepX = v.dx * speed * dt;
       const stepY = v.dy * speed * dt;
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);
       this.selfY += this.freeY(this.selfX, this.selfY, stepY);
     }
-    // Reconciliation against the LATEST authority — never a stale echo.
-    // The old gate corrected only when NO snapshot arrived for 500 ms
-    // (i.e. it pulled toward an OUTDATED position exactly when authority
-    // was most stale) and never corrected during normal play, so small
-    // per-frame drift accumulated silently until clicks missed entirely.
+    // Reconciliation — SNAP ONLY, never a per-frame pull.
+    // The prediction now mirrors the server's integration exactly (same
+    // speed, same real dt, same slide collision), so during normal play the
+    // drift stays within the snapshot echo lag (~0.3-0.9 tiles) and
+    // self-heals the moment input stops. Correcting that echo lag every
+    // frame (blend at drift > 0.4) pulled the avatar back WHILE it walked
+    // and made it visibly stutter (giật); the hard leash yanked it to a
+    // circle every frame during lag for the same stutter. The ONLY
+    // correction is a one-time snap for genuine divergence against RECENT
+    // authority: teleport / respawn / catch-up right after a lag spike.
     const age = performance.now() - this.lastServerRecv;
-    if (age < 1000) {
-      const drift = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
-      if (drift > 3.0) {
-        // Large mismatch (teleport / server-side correction): snap once.
-        this.selfX = this.selfServerPos.x;
-        this.selfY = this.selfServerPos.y;
-      } else if (drift > 0.4) {
-        // Persistent small mismatch: blend toward authority so drift can
-        // never accumulate across minutes of play (the threshold is above
-        // the normal one-tick echo lag of ~0.2 tiles, so it never fights
-        // honest dead reckoning).
-        const k = Math.min(0.6, (drift - 0.4) * 0.5);
-        this.selfX += (this.selfServerPos.x - this.selfX) * k;
-        this.selfY += (this.selfServerPos.y - this.selfY) * k;
-      }
-    }
-    // Leash: the prediction may never run more than LEASH tiles from the
-    // last server truth. Bounds click-target error during lag spikes so
-    // actions stay inside the server's AIM_RANGE tolerance.
-    const ldx = this.selfX - this.selfServerPos.x;
-    const ldy = this.selfY - this.selfServerPos.y;
-    const ldist = Math.hypot(ldx, ldy);
-    const LEASH = 2.5;
-    if (ldist > LEASH) {
-      const k = LEASH / ldist;
-      this.selfX = this.selfServerPos.x + ldx * k;
-      this.selfY = this.selfServerPos.y + ldy * k;
+    const drift = Math.hypot(
+      this.selfX - this.selfServerPos.x,
+      this.selfY - this.selfServerPos.y,
+    );
+    if (age < 600 && drift > 2.5) {
+      this.selfX = this.selfServerPos.x;
+      this.selfY = this.selfServerPos.y;
     }
     this.updateAimVisuals();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
