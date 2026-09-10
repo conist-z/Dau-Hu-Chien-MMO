@@ -237,7 +237,12 @@ const input = new KeyboardInput({
     scene.setLocalInput(dx, dy, running);
     net.setInput(dx, dy, running);
   },
-  onAttack: () => net.action("attack"),
+  onAttack: () => {
+    // Cheap melee: attack IN PLACE + swing the hand at once (the swing is
+    // client-optimistic; a landed server hit re-triggers it via the echo).
+    net.action("attack");
+    scene.swingSelfHand();
+  },
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => hud.selectSlot(index),
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
@@ -250,9 +255,12 @@ const input = new KeyboardInput({
         net.action("chop");
         return;
       }
-      // Contextual: placed block under cursor -> break; else chop.
+      // Contextual: placed block under cursor -> break; else chop. The hand
+      // swings AT ONCE (client-optimistic); the server echo (res_progress
+      // grows) re-swings it on each LANDED hit for the multi-hit rhythm.
       const breaking = scene.isBlockAt(tile.x, tile.y);
       net.actionAt(breaking ? "break" : "chop", tile.x, tile.y);
+      scene.swingSelfHand();
       if (breaking) {
         // Optimistic local collision: the block stops blocking movement NOW
         // (the next snapshot reconciles if the server rejected the break).

@@ -26,6 +26,7 @@ interface RemotePlayer {
   // Tool/weapon icon over the hand (emoji Text). Empty text = bare hand.
   toolIcon: Phaser.GameObjects.Text;
   held: string | null;
+  swingT0: number; // performance.now() of the last swing (0 = never)
   // interpolation buffer: [t_recv, x, y]
   buf: [number, number, number][];
   dir: string;
@@ -35,6 +36,10 @@ interface RemotePlayer {
 // self hand (not in a container) shares the exact same geometry.
 export const HAND_ORBIT = 20;
 export const HAND_RADIUS = 5;
+// Swing: on every harvest hit the hand thrusts out by SWING_EXTRA and back
+// over SWING_MS (sin curve), for self AND remote hands alike.
+const SWING_MS = 220;
+const SWING_EXTRA = 12;
 
 export class WorldScene extends Phaser.Scene {
   private welcome: WelcomePayload | null = null;
@@ -58,6 +63,7 @@ export class WorldScene extends Phaser.Scene {
   private selfHand: Phaser.GameObjects.Arc | null = null;
   private selfToolIcon: Phaser.GameObjects.Text | null = null;
   private selfHeld: string | null = null;
+  private selfSwingT0 = 0; // performance.now() of the last self swing
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
   private itemEmojis: Record<string, string> = {};
@@ -69,12 +75,11 @@ export class WorldScene extends Phaser.Scene {
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
-  // --- facing arm + hover cursor (Kaetram-style) ---
+  // --- facing + hover cursor: the HAND dot is the direction indicator ---
   private selfDir = "SOUTH";
-  private lastMoveX = 0; // last nonzero input (arm points here while idle)
+  private lastMoveX = 0; // last nonzero input (hand points here while idle)
   private lastMoveY = 1;
-  private arm: Phaser.GameObjects.Triangle | null = null;
-  private armVec: { x: number; y: number } | null = null; // smoothed facing
+  private faceVec: { x: number; y: number } | null = null; // smoothed facing
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
   private phaserPointerBound = false;
   private aimCursor: { dx: number; dy: number } | null = null;
@@ -162,16 +167,12 @@ export class WorldScene extends Phaser.Scene {
     this.lastServerRecv = performance.now();
     this.collision = welcome.map.collision ?? [];
     this.selfDir = welcome.self.dir || "SOUTH";
-    if (!this.armVec) {
+    if (!this.faceVec) {
       const v0 = DIR_VECTORS[this.selfDir] ?? DIR_VECTORS.SOUTH;
-      this.armVec = { x: v0[0], y: v0[1] };
+      this.faceVec = { x: v0[0], y: v0[1] };
     }
 
-    // Arm (facing indicator) + hover square. No yellow target frame.
-    if (!this.arm) {
-      this.arm = this.add.triangle(0, 0, 0, -6, 5, 4, -5, 4, 0xffffff);
-      this.arm.setDepth(6);
-    }
+    // Hover square only — the hand dot is the facing indicator now.
     this.ensureHoverSquare();
     // Second, independent cursor source: Phaser's own canvas listeners.
     // If the DOM mousemove chain ever misses (listener on the wrong canvas,
@@ -422,7 +423,7 @@ export class WorldScene extends Phaser.Scene {
       container.add(hand);
       container.add(toolIcon);
       container.add(label);
-      rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, buf: [], dir: p.dir };
+      rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
       this.players.set(p.id, rp);
     }
     rp.buf.push([now, p.x * 32, p.y * 32]);
@@ -458,9 +459,9 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
-    // Plan A hand orbit: self hand + icon follow the SMOOTHED facing vector
-    // (same armVec math as the arm) so the dot + tool rotate WITH the avatar.
-    this.updateAimVisuals();
+    // Hand orbit: self hand + icon follow the smoothed facing vector so the
+    // dot + tool rotate WITH the avatar. updateFacing() must run first.
+    this.updateFacing();
     this.updateSelfHand();
 
     const now = performance.now() - INTERP_BUFFER_MS;
@@ -484,10 +485,11 @@ export class WorldScene extends Phaser.Scene {
       const y = prev[2] + (next[2] - prev[2]) * t;
       rp.container.setPosition(x, y);
       // Remote hand orbits the facing dir (8-way, no smoothing needed — the
-      // dir changes at most a few times per second).
+      // dir changes at most a few times per second) + swing thrust.
       const dv = DIR_VECTORS[rp.dir] ?? DIR_VECTORS.SOUTH;
       const len = Math.hypot(dv[0], dv[1]) || 1;
-      rp.hand.setPosition((dv[0] / len) * HAND_ORBIT, (dv[1] / len) * HAND_ORBIT);
+      const reach = HAND_ORBIT + this.swingExtra(rp.swingT0, performance.now());
+      rp.hand.setPosition((dv[0] / len) * reach, (dv[1] / len) * reach);
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
     }
   }
@@ -499,7 +501,7 @@ export class WorldScene extends Phaser.Scene {
     const v = this.inputVec;
     const dt = this.frameDtSec;
     if ((v.dx !== 0 || v.dy !== 0) && dt > 0) {
-      // Arm points where we walk (Kaetram-style: facing follows movement).
+      // Hand points where we walk: facing follows movement.
       this.lastMoveX = v.dx;
       this.lastMoveY = v.dy;
       // Do NOT snap selfDir from the input here: applySnapshot owns the
@@ -568,7 +570,7 @@ export class WorldScene extends Phaser.Scene {
     // the box out along the axis of least penetration instead of letting it
     // keep running through the block.
     this.resolveSolidOverlap();
-    this.updateAimVisuals();
+    this.updateFacing();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
   }
 
@@ -667,14 +669,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /**
-   * Arm points at the facing/aim tile; hover square tracks the mouse.
-   * The arm rotates SMOOTHLY: while moving, the direction vector follows
-   * the raw input through a short exponential blend (no discrete 8-way
-   * snap — the "giật 1 phát rồi mới final" bug), and when the server
-   * reports a different facing while idle we blend toward it too.
+   * Facing smoothing: while moving, the direction vector follows the raw
+   * input through a short exponential blend (no discrete 8-way snap — the
+   * "giật 1 phát rồi mới final" bug), and when the server reports a
+   * different facing while idle we blend toward it too. The HAND dot reads
+   * this vector, so it rotates smoothly with the avatar (no arrow needed).
    */
-  private updateAimVisuals(): void {
-    if (!this.arm || !this.selfMarker) return;
+  private updateFacing(): void {
+    if (!this.selfMarker) return;
     let targetX = this.lastMoveX;
     let targetY = this.lastMoveY;
     if (this.aimCursor) {
@@ -686,34 +688,66 @@ export class WorldScene extends Phaser.Scene {
     targetY /= targetLen;
     // Smoothed facing vector: exponential toward the target each frame
     // (k in 0..1 — 0.25 ≈ settles in ~5 frames, imperceptible but no jerk).
-    if (!this.armVec) this.armVec = { x: targetX, y: targetY };
+    if (!this.faceVec) this.faceVec = { x: targetX, y: targetY };
     const k = 0.25;
-    this.armVec.x += (targetX - this.armVec.x) * k;
-    this.armVec.y += (targetY - this.armVec.y) * k;
-    const vecLen = Math.hypot(this.armVec.x, this.armVec.y);
-    const ux = vecLen > 0.001 ? this.armVec.x / vecLen : 0;
-    const uy = vecLen > 0.001 ? this.armVec.y / vecLen : 1;
-    // Anchor = the avatar center (server pos IS the tile center — see
-    // spawnSelf; adding +16 here would offset the arm off the body).
-    this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
-    this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+    this.faceVec.x += (targetX - this.faceVec.x) * k;
+    this.faceVec.y += (targetY - this.faceVec.y) * k;
+  }
+
+  /** Extra hand reach (px) for a swing started at t0, sampled at now. */
+  private swingExtra(t0: number, now: number): number {
+    if (!t0) return 0;
+    const t = (now - t0) / SWING_MS;
+    if (t < 0 || t >= 1) return 0;
+    return Math.sin(t * Math.PI) * SWING_EXTRA;
   }
 
   /**
-   * Self hand orbit (plan A): the dot + tool icon ride the SAME smoothed
-   * facing vector as the arm, so hand and triangle never disagree. Runs
-   * right after updateAimVisuals every frame (armVec guaranteed fresh).
+   * Self hand orbit (plan A): the dot + tool icon ride the smoothed facing
+   * vector, so the hand rotates WITH the avatar. A swing thrusts the hand
+   * out and back (dig/chop feedback). Runs right after updateFacing().
    */
   private updateSelfHand(): void {
     if (!this.selfHand || !this.selfToolIcon || !this.selfMarker) return;
-    const v = this.armVec ?? { x: this.lastMoveX, y: this.lastMoveY || 1 };
+    const v = this.faceVec ?? { x: this.lastMoveX, y: this.lastMoveY || 1 };
     const len = Math.hypot(v.x, v.y) || 1;
     const ux = v.x / len;
     const uy = v.y / len;
-    const hx = this.selfX * 32 + ux * HAND_ORBIT;
-    const hy = this.selfY * 32 + uy * HAND_ORBIT;
+    const reach = HAND_ORBIT + this.swingExtra(this.selfSwingT0, performance.now());
+    const hx = this.selfX * 32 + ux * reach;
+    const hy = this.selfY * 32 + uy * reach;
     this.selfHand.setPosition(hx, hy);
     this.selfToolIcon.setPosition(hx, hy);
+  }
+
+  /** Swing the SELF hand at once (optimistic — no server wait). */
+  swingSelfHand(): void {
+    this.selfSwingT0 = performance.now();
+  }
+
+  /** Swing one REMOTE hand when its harvest progress grows (20 Hz echo). */
+  swingRemoteHand(id: number): void {
+    const rp = this.players.get(id);
+    if (rp) rp.swingT0 = performance.now();
+  }
+
+  /**
+   * Swing the remote hand standing closest to a tile (chop/break confirm).
+   * The harvester is whoever works that node — no server id needed.
+   */
+  swingRemoteHandNear(tx: number, ty: number): void {
+    const px = tx * 32 + 16;
+    const py = ty * 32 + 16;
+    let best: RemotePlayer | null = null;
+    let bestD = 3.5 * 32; // ignore hands further than a harvest reach away
+    for (const rp of this.players.values()) {
+      const d = Math.hypot(rp.container.x - px, rp.container.y - py);
+      if (d < bestD) {
+        bestD = d;
+        best = rp;
+      }
+    }
+    if (best) best.swingT0 = performance.now();
   }
 
   /**
@@ -871,7 +905,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /**
-   * Sync the per-node progress bars.
+   * Sync the per-node progress bars (+ hand swings on new hits).
    *
    * progress: "ax,ay" -> [hits, base_needed, bbox]. The bar spans the
    * node's WHOLE bbox (a 2x2 tree -> 64px wide bar centred on the tree,
@@ -881,7 +915,34 @@ export class WorldScene extends Phaser.Scene {
    */
   syncProgressBars(
     progress: Record<string, [number, number, number[][]]>,
+    selfTile?: { x: number; y: number },
   ): void {
+    // Any node whose hit count GREW since the last sync = a landed swing:
+    // swing the nearest hand (self when selfTile is at/near the node, else
+    // the closest remote). This IS the dig/chop animation, driven by the
+    // 20 Hz server echo — no extra protocol needed.
+    for (const [key, entry] of Object.entries(progress)) {
+      const prev = this.lastProgressRaw.get(key)?.[0] ?? 0;
+      const hits = entry[0] ?? 0;
+      if (hits > prev && hits > 0) {
+        const bbox = entry[2] ?? [];
+        const nearSelf =
+          !!selfTile &&
+          bbox.some(
+            ([bx, by]) =>
+              Math.abs(bx - selfTile.x) <= 2 && Math.abs(by - selfTile.y) <= 2,
+          );
+        if (nearSelf) {
+          this.swingSelfHand();
+        } else if (bbox.length > 0) {
+          const cx =
+            bbox.reduce((a, [bx]) => a + bx, 0) / bbox.length;
+          const cy =
+            bbox.reduce((a, [, by]) => a + by, 0) / bbox.length;
+          this.swingRemoteHandNear(Math.round(cx), Math.round(cy));
+        }
+      }
+    }
     this.lastProgressRaw = new Map(Object.entries(progress));
     this.lastProgressBbox.clear();
     for (const [anchor, entry] of this.lastProgressRaw) {
@@ -1109,14 +1170,19 @@ export class WorldScene extends Phaser.Scene {
     // Self held echo (20 Hz): converges the local instant hand with the
     // server truth (reconnect / bag change from another client / use).
     if (snap.self.held !== undefined) this.setSelfHeld(snap.self.held ?? null);
-    // Build-Mode cursor. Deliberately do NOT take snap.self.dir as the arm
+    // Build-Mode cursor. Deliberately do NOT take snap.self.dir as the hand
     // target: the server reports the dominant-axis 8-way name (SE -> E),
-    // and blending toward it on every key release re-introduced the arm
+    // and blending toward it on every key release re-introduced the facing
     // jerk. The last raw input vector IS the true facing — keep it.
     this.aimCursor = snap.self.aim ?? null;
     // Resource nodes: chopped trees vanish / regrow, progress bars sync.
+    // Pass the authoritative self tile so grown hit counts swing OUR hand
+    // (not some remote's) when we are the harvester.
     this.updateResourceLayer(snap.resources);
-    this.syncProgressBars(snap.res_progress);
+    this.syncProgressBars(snap.res_progress, {
+      x: Math.floor(snap.self.x),
+      y: Math.floor(snap.self.y),
+    });
     // Felled tiles: walkable in prediction until the node regrows.
     this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
     for (const p of snap.players) this.upsertPlayer(p);
