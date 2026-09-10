@@ -108,6 +108,21 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - Diagonal chuẩn hóa; `_web_direction` server dùng dominant-axis 8-way —
   client `dominantDir` mirror y hệt.
 
+### Chết / hồi sinh (hp 0) — "bị nhốt ở vòng tròn vô hình"
+- `Player.alive` = `hp > 0 AND dead_until is None`. `dead_until` là **EPHEMERAL,
+  KHÔNG persist** và respawn 5s do một task in-memory giữ → bot restart / runtime
+  bị dẹp / chết trong **side world** đều để lại `hp 0` + không deadline + không
+  task ⇒ `alive` False VĨNH VIỄN: đứng chôn chân, mọi action trả `"dead"`, overlay
+  web đếm từ 0. Đã fix bằng `Player.revive_if_expired(now)` gọi ở 3 chỗ: boot
+  (`bot.py`, cứu mọi row hp<=0), `GameManager.dispatch` (action kế tiếp tự hồi) và
+  `_web_tick_runtime` (tự hồi trong 1 tick khi đang di chuyển). **Thêm chỗ chết
+  mới ⇒ gọi helper này**, đừng chỉ dựa vào task respawn.
+- `_respawn_after` phải tìm world bằng `runtime_of(channel_id, user_id)`: tìm
+  `runtimes[channel_id]` không thấy player trong side runtime → return, chết luôn.
+- Phía client: snapshot có `self.dead`/`respawn_s` → `stepSelf` đóng băng
+  prediction tại vị trí authority + `hud.setDead` (đừng để ghost tự đi rồi bị
+  reconcile kéo về — đó chính là "vòng tròn vô hình").
+
 ### Tương tác (chặt/đập/đặt)
 - Mô hình học từ **Kaetram-Open** (MPL2.0, chỉ học mô hình không copy code):
   hover cursor theo ngữ cảnh, target = ô facing/aim, resource có progress +
