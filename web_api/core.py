@@ -129,11 +129,19 @@ class WebHub:
         if ftype == "select_slot":
             # Hotbar selection mirror (numbers / wheel / click). Stores the
             # held slot on the session (used by `place` to resolve "cầm gì
-            # đặt nấy") and echoes the held item so the client can label it.
+            # đặt nấy") AND on the runtime's held_slots map (so every OTHER
+            # client sees this player's hand update in their next snapshot),
+            # then echoes the held item so the client can label it.
             slot = frame.get("slot")
             sess = conn.session
             if sess is not None and isinstance(slot, int) and 0 <= slot < 8:
                 sess.selected_slot = slot
+                rt0 = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
+                if rt0 is not None:
+                    try:
+                        rt0.held_slots[sess.user_id] = slot
+                    except Exception:  # noqa: BLE001 — UI-only mirror, never fail selection
+                        log.warning("[WEB] held_slots mirror failed for %s", sess.user_id)
             if sess is not None and sess.channel_id:
                 rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
                 if rt is not None:

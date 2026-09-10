@@ -84,6 +84,9 @@ function applyTexture(name: string, b64: string): void {
 
 function applyInventory(inv: InventoryPayload): void {
   hud.setInventory(inv);
+  // Plan A instant hand: self tool icon follows the LOCAL hotbar at once
+  // (no 20 Hz wait) — snapshot.held converges it with server truth after.
+  scene.setSelfHeldFromHotbar(inv.hotbar ?? [], hud.currentSlot);
 }
 
 const net = new Net({
@@ -94,7 +97,9 @@ const net = new Net({
     hud.setInventory(frame.inventory);
     hud.setRecipes(frame.recipes);
     // Re-sync the server's held slot after (re)login — the session was
-    // recreated server-side and defaults to slot 0.
+    // recreated server-side and defaults to slot 0. Self hand shows the
+    // server echo at once (welcome.held), hotbar may still be resolving.
+    scene.setSelfHeld(frame.held ?? null);
     net.selectSlot(hud.currentSlot);
     hud.setItemEmojis(frame.item_emojis ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
@@ -168,9 +173,11 @@ const net = new Net({
     hud.setLoginButton(true);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
-  onHeld: (_slot, _itemId) => {
+  onHeld: (_slot, itemId) => {
     // Hotbar switches are SILENT on purpose: changing hands must not spam
-    // chat with "Cầm: … / Tay không …" (bug report 11/09).
+    // chat with "Cầm: … / Tay không …" (bug report 11/09). The hand itself
+    // is the feedback: server echo converges the self tool icon here.
+    scene.setSelfHeld(itemId ?? null);
   },
   onActionResult: (frame) => {
     if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);
@@ -216,8 +223,12 @@ hud.setHooks(
 );
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held
-// tool only. Silent on purpose: no chat spam.
-hud.onSlotSelect((slot) => net.selectSlot(slot));
+// tool only. Silent on purpose: no chat spam. The self hand updates
+// INSTANTLY from the local hotbar; the server echo/snapshot converge it.
+hud.onSlotSelect((slot) => {
+  net.selectSlot(slot);
+  scene.setSelfHeldFromHotbar(hud.inventoryHotbar, slot);
+});
 
 const input = new KeyboardInput({
   onVector: (dx, dy, running) => {

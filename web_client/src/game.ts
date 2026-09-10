@@ -17,12 +17,24 @@ const DIR_VECTORS: Record<string, [number, number]> = {
 
 interface RemotePlayer {
   container: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   webBadge: Phaser.GameObjects.Arc | null;
+  // Plan A hand: small circle same colour as the body, orbiting with facing.
+  hand: Phaser.GameObjects.Arc;
+  handColor: number;
+  // Tool/weapon icon over the hand (emoji Text). Empty text = bare hand.
+  toolIcon: Phaser.GameObjects.Text;
+  held: string | null;
   // interpolation buffer: [t_recv, x, y]
   buf: [number, number, number][];
   dir: string;
 }
+
+// Hand orbit: distance from the body centre + dot radius. Exported so the
+// self hand (not in a container) shares the exact same geometry.
+export const HAND_ORBIT = 20;
+export const HAND_RADIUS = 5;
 
 export class WorldScene extends Phaser.Scene {
   private welcome: WelcomePayload | null = null;
@@ -39,6 +51,16 @@ export class WorldScene extends Phaser.Scene {
   private blockTextures = new Set<string>();
   private pendingFetch: ((id: string) => void) | null = null;
   private selfId = 0;
+  // --- plan A "tay cầm tool": self hand = small circle same colour as the
+  // body (0x5865f2) + tool emoji from the HELD hotbar slot. Mirrors the
+  // remote hand geometry (HAND_ORBIT/HAND_RADIUS) but lives in world space
+  // next to selfMarker (self is predicted, not in a container).
+  private selfHand: Phaser.GameObjects.Arc | null = null;
+  private selfToolIcon: Phaser.GameObjects.Text | null = null;
+  private selfHeld: string | null = null;
+  // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
+  // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
+  private itemEmojis: Record<string, string> = {};
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
   private selfX = 0; // predicted float position, TILE units
@@ -100,6 +122,14 @@ export class WorldScene extends Phaser.Scene {
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
     this.selfId = welcome.self.id;
+    // Server item emojis FIRST: hand icons (self + remote) resolve through
+    // this map, so it must be fresh before any setText call below.
+    this.itemEmojis = welcome.item_emojis ?? {};
+    // Rebuild existing hand icons with the fresh map (same ids, new glyphs).
+    this.setSelfHeld(this.selfHeld);
+    for (const rp of this.players.values()) {
+      rp.toolIcon.setText(this.emojiFor(rp.held));
+    }
     const map = welcome.map;
 
     // --- tilesets: request each PNG through the relay (license-safe) ---
@@ -328,6 +358,8 @@ export class WorldScene extends Phaser.Scene {
       // existing marker — spawning a second one left a frozen "clone" at
       // the spawn point that looked exactly like the player.
       this.selfMarker.setPosition(s.x * 32, s.y * 32);
+      this.ensureSelfHand();
+      this.setSelfHeld(welcome.held ?? null);
       return;
     }
     // NOTE: server positions are already TILE-CENTER based (x_f = x + 0.5),
@@ -336,6 +368,39 @@ export class WorldScene extends Phaser.Scene {
     this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
+    this.ensureSelfHand();
+    this.setSelfHeld(welcome.held ?? null);
+  }
+
+  /** Create the self hand dot + tool icon once (world-space siblings). */
+  private ensureSelfHand(): void {
+    if (!this.selfHand || !this.selfHand.active) {
+      this.selfHand = this.add.circle(0, 0, HAND_RADIUS, 0x5865f2);
+      this.selfHand.setStrokeStyle(2, 0xffffff, 0.9);
+      this.selfHand.setDepth(7);
+    }
+    if (!this.selfToolIcon || !this.selfToolIcon.active) {
+      this.selfToolIcon = this.add.text(0, 0, "", { fontSize: "13px" }).setOrigin(0.5);
+      this.selfToolIcon.setDepth(8);
+    }
+  }
+
+  /** Emoji for a held item id (server map first, "?" never — empty when unknown). */
+  private emojiFor(itemId: string | null): string {
+    if (!itemId) return "";
+    return this.itemEmojis[itemId] ?? "";
+  }
+
+  /** Update the SELF hand icon (called on held echo + inventory + snapshot). */
+  setSelfHeld(itemId: string | null): void {
+    this.selfHeld = itemId;
+    if (this.selfToolIcon) this.selfToolIcon.setText(this.emojiFor(itemId));
+  }
+
+  /** Update the SELF hand from the local hotbar (instant, no server wait). */
+  setSelfHeldFromHotbar(hotbar: (string | null)[], slot: number): void {
+    const held = hotbar[slot] ?? null;
+    this.setSelfHeld(held);
   }
   private upsertPlayer(p: PlayerPayload): void {
     let rp = this.players.get(p.id);
@@ -348,14 +413,27 @@ export class WorldScene extends Phaser.Scene {
         fontSize: "10px", color: "#ffffff",
         stroke: "#000000", strokeThickness: 3,
       }).setOrigin(0.5);
+      // Plan A hand: same-colour dot + tool icon, BOTH inside the container
+      // so interpolation moves them for free (no per-frame sync needed).
+      const hand = this.add.circle(HAND_ORBIT, 0, HAND_RADIUS, color);
+      hand.setStrokeStyle(2, 0xffffff, 0.9);
+      const toolIcon = this.add.text(HAND_ORBIT, 0, "", { fontSize: "13px" }).setOrigin(0.5);
       container.add(body);
+      container.add(hand);
+      container.add(toolIcon);
       container.add(label);
-      rp = { container, label, webBadge: null, buf: [], dir: p.dir };
+      rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, buf: [], dir: p.dir };
       this.players.set(p.id, rp);
     }
     rp.buf.push([now, p.x * 32, p.y * 32]);
     if (rp.buf.length > 12) rp.buf.shift();
     rp.dir = p.dir;
+    // Held item changed -> refresh the tool icon (empty = bare hand dot).
+    const held = p.held ?? null;
+    if (held !== rp.held) {
+      rp.held = held;
+      rp.toolIcon.setText(this.emojiFor(held));
+    }
   }
 
   // ---- per-frame update (60fps) ----
@@ -380,6 +458,10 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
+    // Plan A hand orbit: self hand + icon follow the SMOOTHED facing vector
+    // (same armVec math as the arm) so the dot + tool rotate WITH the avatar.
+    this.updateAimVisuals();
+    this.updateSelfHand();
 
     const now = performance.now() - INTERP_BUFFER_MS;
     for (const rp of this.players.values()) {
@@ -401,6 +483,12 @@ export class WorldScene extends Phaser.Scene {
       const x = prev[1] + (next[1] - prev[1]) * t;
       const y = prev[2] + (next[2] - prev[2]) * t;
       rp.container.setPosition(x, y);
+      // Remote hand orbits the facing dir (8-way, no smoothing needed — the
+      // dir changes at most a few times per second).
+      const dv = DIR_VECTORS[rp.dir] ?? DIR_VECTORS.SOUTH;
+      const len = Math.hypot(dv[0], dv[1]) || 1;
+      rp.hand.setPosition((dv[0] / len) * HAND_ORBIT, (dv[1] / len) * HAND_ORBIT);
+      rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
     }
   }
 
@@ -561,6 +649,23 @@ export class WorldScene extends Phaser.Scene {
     // spawnSelf; adding +16 here would offset the arm off the body).
     this.arm.setPosition(this.selfX * 32 + ux * 20, this.selfY * 32 + uy * 20);
     this.arm.setRotation(Math.atan2(uy, ux) + Math.PI / 2);
+  }
+
+  /**
+   * Self hand orbit (plan A): the dot + tool icon ride the SAME smoothed
+   * facing vector as the arm, so hand and triangle never disagree. Runs
+   * right after updateAimVisuals every frame (armVec guaranteed fresh).
+   */
+  private updateSelfHand(): void {
+    if (!this.selfHand || !this.selfToolIcon || !this.selfMarker) return;
+    const v = this.armVec ?? { x: this.lastMoveX, y: this.lastMoveY || 1 };
+    const len = Math.hypot(v.x, v.y) || 1;
+    const ux = v.x / len;
+    const uy = v.y / len;
+    const hx = this.selfX * 32 + ux * HAND_ORBIT;
+    const hy = this.selfY * 32 + uy * HAND_ORBIT;
+    this.selfHand.setPosition(hx, hy);
+    this.selfToolIcon.setPosition(hx, hy);
   }
 
   /**
@@ -929,6 +1034,9 @@ export class WorldScene extends Phaser.Scene {
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
     this.lastServerRecv = performance.now();
+    // Self held echo (20 Hz): converges the local instant hand with the
+    // server truth (reconnect / bag change from another client / use).
+    if (snap.self.held !== undefined) this.setSelfHeld(snap.self.held ?? null);
     // Build-Mode cursor. Deliberately do NOT take snap.self.dir as the arm
     // target: the server reports the dominant-axis 8-way name (SE -> E),
     // and blending toward it on every key release re-introduced the arm

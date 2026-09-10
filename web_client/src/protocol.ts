@@ -56,6 +56,9 @@ export interface WelcomePayload {
   // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
   res_felled: [number, number, number, number][];
   players: PlayerPayload[];
+  // Item id currently held by self (hotbar slot -> item). Null = empty hand
+  // (the hand dot still renders — plan A — just without a tool icon).
+  held: string | null;
 }
 
 export interface SnapshotPayload {
@@ -76,6 +79,8 @@ export interface SnapshotPayload {
     y: number;
     dir: string;
     aim: { dx: number; dy: number } | null;
+    // Item id currently held by self (mirrors welcome.held, 20 Hz echo).
+    held: string | null;
   };
   inventory: InventoryPayload;
   resources: [number, number, number][];
@@ -94,6 +99,8 @@ export interface PlayerPayload {
   dir: string;
   sprite: string;
   web: boolean;
+  // Item id currently held (hotbar slot -> item). Null = empty hand.
+  held: string | null;
 }
 
 export interface InventoryPayload {

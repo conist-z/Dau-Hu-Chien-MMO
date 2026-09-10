@@ -322,6 +322,11 @@ export class Hud {
     return this.inventory.hotbar[this.activeSlot] ?? null;
   }
 
+  /** Raw hotbar item ids (for the instant self-hand preview on slot switch). */
+  get inventoryHotbar(): (string | null)[] {
+    return this.inventory.hotbar ?? [];
+  }
+
   get currentSlot(): number {
     return this.activeSlot;
   }

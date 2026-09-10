@@ -30,6 +30,28 @@ def _tilesets_payload(rt: ScenarioRuntime) -> List[dict]:
     return out
 
 
+def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
+    """Item id currently HELD by ``user_id`` (hotbar slot they point at).
+
+    Read-only projection: the held slot comes from ``rt.held_slots`` (mirrored
+    from web select_slot frames, default 0); the item is that slot of the
+    ordered-bag hotbar projection. None = empty hand (still renders the hand
+    dot, just no tool icon — plan A).
+    """
+    slot = 0
+    try:
+        slot = int(getattr(rt, "held_slots", {}).get(user_id, 0) or 0)
+    except (TypeError, ValueError):
+        slot = 0
+    inv = rt.inventories.get(user_id)
+    if inv is None:
+        return None
+    try:
+        return inv.hotbar().get(max(0, slot))
+    except Exception:
+        return None
+
+
 def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict]:
     out = []
     for p in rt.state.get_visible_players():
@@ -44,6 +66,7 @@ def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict
             "dir": p.direction,
             "sprite": p.sprite_id,
             "web": p.is_web,
+            "held": _held_of(rt, p.user_id),
         })
     return out
 
@@ -134,6 +157,10 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "recipes": _recipes_payload(),
         # Item id -> emoji for the client's inventory/hotbar icons.
         "item_emojis": _item_emojis_payload(),
+        # What THIS player holds right now (hotbar slot -> item id). The
+        # client renders its own hand instantly from the local hotbar, but
+        # the echo + snapshot copy keep reconnects/welcome in sync.
+        "held": _held_of(rt, user_id),
         # Placeable block catalog (id + emoji + name) for the build UI.
         "blocks_catalog": _blocks_catalog_payload(),
         "blocks": _blocks_payload(rt),
@@ -192,6 +219,9 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
                 if player is not None and player.aim_active
                 else None
             ),
+            # What I hold (echo of the hotbar slot). Remote hands come from
+            # each entry of `players[].held`; self uses this (no clone entry).
+            "held": _held_of(rt, user_id),
         },
         "inventory": _inventory_payload(rt, user_id),
         # Resource nodes (trees/bushes/ore): every VISIBLE tile as (x, y, gid)
