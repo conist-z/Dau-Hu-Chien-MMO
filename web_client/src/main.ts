@@ -251,7 +251,13 @@ const input = new KeyboardInput({
         return;
       }
       // Contextual: placed block under cursor -> break; else chop.
-      net.actionAt(scene.isBlockAt(tile.x, tile.y) ? "break" : "chop", tile.x, tile.y);
+      const breaking = scene.isBlockAt(tile.x, tile.y);
+      net.actionAt(breaking ? "break" : "chop", tile.x, tile.y);
+      if (breaking) {
+        // Optimistic local collision: the block stops blocking movement NOW
+        // (the next snapshot reconciles if the server rejected the break).
+        scene.optimisticBreak(tile.x, tile.y);
+      }
       return;
     }
     // Secondary (right-click): scope follows the HELD hotbar slot ONLY —
@@ -262,6 +268,10 @@ const input = new KeyboardInput({
     const held = hud.heldItem;
     if (!tile || !held || !placeable.has(held)) return;
     net.placeAt(tile.x, tile.y, held);
+    // Optimistic local collision: the block is solid IMMEDIATELY so a fast
+    // run cannot pass through a block we just placed before the snapshot
+    // arrives (the snapshot reconciles if the server rejected it).
+    scene.optimisticPlace(tile.x, tile.y);
   },
   onCanvasHover: (sx, sy) => {
     // Store the raw cursor position; the scene re-derives the tile every

@@ -61,14 +61,21 @@ class Collision:
         r = FLOAT_BOX_HALF
         rows = self._overlapped_rows(y_f)
         if dx > 0:
-            # Columns whose left edge the box's RIGHT edge crosses.
-            start = math.floor(x_f + r) + 1
+            # Columns whose interior the box's RIGHT edge passes through
+            # during the move. Start at floor(edge0) — NOT floor(edge0)+1:
+            # when the edge rests EXACTLY on a tile boundary (wall slide
+            # stops it there), the +1 skipped the boundary column and the
+            # box crept INTO the wall on the next inward step (the web
+            # "đi xuyên khối" bug, reproduced by brute force).
+            start = math.floor(x_f + r)
             end = math.floor(x_f + dx + r)
             for c in range(start, end + 1):
                 if any(not self.is_walkable(c, t) for t in rows):
                     return min(dx, c - r - x_f)  # right edge touches column c
             return dx
-        start = math.floor(x_f - r) - 1
+        # Moving left: same boundary rule on the LEFT edge (floor(x_f - r),
+        # not floor(x_f - r) - 1).
+        start = math.floor(x_f - r)
         end = math.floor(x_f + dx - r)
         for c in range(start, end - 1, -1):
             if any(not self.is_walkable(c, t) for t in rows):
@@ -82,13 +89,14 @@ class Collision:
         r = FLOAT_BOX_HALF
         cols = self._overlapped_rows(x_f)
         if dy > 0:
-            start = math.floor(y_f + r) + 1
+            # Same boundary fix as _free_x: floor(y_f + r), not +1.
+            start = math.floor(y_f + r)
             end = math.floor(y_f + dy + r)
             for t in range(start, end + 1):
                 if any(not self.is_walkable(c, t) for c in cols):
                     return min(dy, t - r - y_f)
             return dy
-        start = math.floor(y_f - r) - 1
+        start = math.floor(y_f - r)
         end = math.floor(y_f + dy - r)
         for t in range(start, end - 1, -1):
             if any(not self.is_walkable(c, t) for c in cols):

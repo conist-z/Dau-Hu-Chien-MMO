@@ -561,8 +561,56 @@ export class WorldScene extends Phaser.Scene {
         this.selfY += this.freeY(this.selfX, this.selfY, dy);
       }
     }
+    // Invariant guard: the collision box must NEVER sit inside a solid tile.
+    // Movement, glide and the snap are all collision-aware so this only fires
+    // when a block APPEARS under the player between snapshots (another
+    // player's place, a regrown tree) while the local grid was stale — push
+    // the box out along the axis of least penetration instead of letting it
+    // keep running through the block.
+    this.resolveSolidOverlap();
     this.updateAimVisuals();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
+  }
+
+  /** Push the box out of any solid tile it currently overlaps (least-
+   * penetration axis, iterated). Guarantees the "never inside a block"
+   * invariant regardless of how the position got there. */
+  private resolveSolidOverlap(): void {
+    const r = 0.3;
+    const E = 1e-6;
+    for (let pass = 0; pass < 4; pass++) {
+      let bestShiftX = 0;
+      let bestShiftY = 0;
+      let bestDist = Infinity;
+      for (let ty = Math.floor(this.selfY - r); ty <= Math.floor(this.selfY + r); ty++) {
+        for (let tx = Math.floor(this.selfX - r); tx <= Math.floor(this.selfX + r); tx++) {
+          if (!this.solidAt(tx, ty)) continue;
+          const left = this.selfX - r;
+          const right = this.selfX + r;
+          const top = this.selfY - r;
+          const bottom = this.selfY + r;
+          // Skip tiles the box merely touches (edge on the boundary).
+          if (right <= tx + E || left >= tx + 1 - E ||
+              bottom <= ty + E || top >= ty + 1 - E) continue;
+          const cand = [
+            { x: tx + 1 + r - this.selfX, y: 0, d: Math.abs(tx + 1 + r - this.selfX) },  // left edge to tile right
+            { x: tx - r - this.selfX, y: 0, d: Math.abs(tx - r - this.selfX) },            // right edge to tile left
+            { x: 0, y: ty + 1 + r - this.selfY, d: Math.abs(ty + 1 + r - this.selfY) },  // top edge to tile bottom
+            { x: 0, y: ty - r - this.selfY, d: Math.abs(ty - r - this.selfY) },            // bottom edge to tile top
+          ];
+          for (const c of cand) {
+            if (c.d < bestDist) {
+              bestDist = c.d;
+              bestShiftX = c.x;
+              bestShiftY = c.y;
+            }
+          }
+        }
+      }
+      if (bestDist === Infinity) return; // legal: nothing overlapping
+      this.selfX += bestShiftX;
+      this.selfY += bestShiftY;
+    }
   }
 
   /**
@@ -939,6 +987,22 @@ export class WorldScene extends Phaser.Scene {
     return this.blockSet.has(`${x},${y}`);
   }
 
+  /** Optimistic local collision: a block WE just placed is solid IMMEDIATELY
+   * — no waiting for the next snapshot. On a high-RTT link the snapshot
+   * staleness window (~0.3-2 tiles of travel at run speed) used to let the
+   * player run through their own fresh block. The next snapshot reconciles:
+   * if the server rejected the place, the rebuilt blockSet drops it again. */
+  optimisticPlace(x: number, y: number): void {
+    this.blockSet.add(`${x},${y}`);
+  }
+
+  /** Optimistic local collision for a break we just sent: the block stops
+   * blocking movement right away; the next snapshot re-adds it if the server
+   * rejected the break (out of range etc.). */
+  optimisticBreak(x: number, y: number): void {
+    this.blockSet.delete(`${x},${y}`);
+  }
+
   /** Set the active Build-Mode cursor offset (from the server snapshot). */
   setAimCursor(aim: { dx: number; dy: number } | null): void {
     this.aimCursor = aim;
@@ -971,20 +1035,28 @@ export class WorldScene extends Phaser.Scene {
   /** Movement allowed along x, clamped EXACTLY to the blocking wall so the
    * player SLIDES along it — a direct port of game/collision._free_x (the
    * old client collision STOPPED at the wall while the server slid, so the
-   * prediction fell behind on every wall-hug). */
+   * prediction fell behind on every wall-hug). MUST stay byte-identical to
+   * the server or the prediction drifts.
+   *
+   * Boundary rule (the "đi xuyên khối" fix): the sweep starts at
+   * floor(edge0), NOT floor(edge0)+1. A wall slide stops the box edge
+   * EXACTLY on the tile boundary; the old +1 skipped that boundary column
+   * on the next inward step and the box crept into the wall — reproduced
+   * by brute force on the server (30k+ tunnels out of 155k cases).
+   */
   private freeX(x: number, y: number, dx: number): number {
     if (dx === 0) return 0;
     const r = 0.3;
     const rows = this.overlappedRows(y);
     if (dx > 0) {
-      const start = Math.floor(x + r) + 1;
+      const start = Math.floor(x + r);
       const end = Math.floor(x + dx + r);
       for (let c = start; c <= end; c++) {
         if (rows.some((t) => this.solidAt(c, t))) return Math.min(dx, c - r - x);
       }
       return dx;
     }
-    const start = Math.floor(x - r) - 1;
+    const start = Math.floor(x - r);
     const end = Math.floor(x + dx - r);
     for (let c = start; c >= end; c--) {
       if (rows.some((t) => this.solidAt(c, t))) return Math.max(dx, c + 1 + r - x);
@@ -998,14 +1070,14 @@ export class WorldScene extends Phaser.Scene {
     const r = 0.3;
     const cols = this.overlappedRows(x);
     if (dy > 0) {
-      const start = Math.floor(y + r) + 1;
+      const start = Math.floor(y + r);
       const end = Math.floor(y + dy + r);
       for (let t = start; t <= end; t++) {
         if (cols.some((c) => this.solidAt(c, t))) return Math.min(dy, t - r - y);
       }
       return dy;
     }
-    const start = Math.floor(y - r) - 1;
+    const start = Math.floor(y - r);
     const end = Math.floor(y + dy - r);
     for (let t = start; t >= end; t--) {
       if (cols.some((c) => this.solidAt(c, t))) return Math.max(dy, t + 1 + r - y);
