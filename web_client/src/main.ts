@@ -53,7 +53,11 @@ const game = new Phaser.Game({
 game.scene.add("world", scene, true);
 
 function applyTexture(name: string, b64: string): void {
-  const key = name.replace(/\.png$/i, "");
+  // Block faces register under "block-<id>" — the key game.ts looks up in
+  // buildBlocks. Tilesets keep their basename key.
+  const key = name.startsWith("blocks/")
+    ? `block-${name.slice("blocks/".length).replace(/\.png$/i, "")}`
+    : name.replace(/\.png$/i, "");
   if (assetTextures.has(key) || !game.textures) return;
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
