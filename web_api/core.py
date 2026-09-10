@@ -427,6 +427,8 @@ class WebHub:
             return
         _, result = await self.manager.dispatch(sess.channel_id, action)
         # Echo the action outcome so the client can show progress/failures.
+        # Zombie kills ride here too: target_id/defeated drive the death
+        # animation + loot pop on web (same pack as Discord).
         if result is not None:
             await self.send_to_client_conn(sess, {
                 "type": "action_result",
@@ -435,7 +437,12 @@ class WebHub:
                 "reason": result.reason or "",
                 "tx": result.pos[0] if result.pos else None,
                 "ty": result.pos[1] if result.pos else None,
-                "kind": result.block_id or "",
+                "kind": (
+                    "zombie" if getattr(result, "target_id", None)
+                    else (result.block_id or "")
+                ),
+                "target_id": getattr(result, "target_id", None),
+                "target_defeated": bool(getattr(result, "target_defeated", False)),
                 "needed": result.needed,
                 "drops": [[i, q] for i, q in (result.drops or [])],
             })
@@ -574,6 +581,8 @@ class WebHub:
         paths ever reach the client (license-safe: assets stay on the bot).
         ``blocks/<id>.png`` is served from ``assets/blocks`` so the web client
         draws the same real block faces as the Discord renderer.
+        ``mobs/<id>.png`` (the Kaetram zombie sheet) is served from
+        ``assets/mobs`` the same way.
         """
         from config import ASSETS_DIR
 
@@ -581,11 +590,12 @@ class WebHub:
         if not safe.lower().endswith(".png"):
             await self.send_to_client(cid, {"type": "asset_data", "name": name, "b64": None})
             return
-        base_dir = (
-            ASSETS_DIR.parent / "blocks"
-            if name.startswith("blocks/")
-            else ASSETS_DIR
-        )
+        if name.startswith("blocks/"):
+            base_dir = ASSETS_DIR.parent / "blocks"
+        elif name.startswith("mobs/"):
+            base_dir = ASSETS_DIR.parent / "mobs"
+        else:
+            base_dir = ASSETS_DIR
         path = base_dir / safe
         # Defence in depth: resolved path must stay inside the chosen dir.
         try:

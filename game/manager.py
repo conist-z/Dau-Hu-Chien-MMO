@@ -533,6 +533,7 @@ class GameManager:
     async def _web_tick_runtime(self, rt: ScenarioRuntime,
                                 sessions: Dict[int, WebSession], now: float) -> None:
         moved_any = False
+        zombie_touched = False
         async with rt.lock:
             for user_id, sess in list(sessions.items()):
                 player = rt.state.get_player(user_id)
@@ -558,8 +559,39 @@ class GameManager:
                     player.direction = _web_direction(sess.dx, sess.dy)
                     moved_any = True
                     self._schedule_save(rt, player)
+            # Web players share the zombie pack with Discord (same chase/bite
+            # rules on the int tiles). The 20 Hz tick drives their share of
+            # zombie turns HERE — every web session's own view rect counts,
+            # cooldown-gated bites included (Kaetram combat-loop parity).
+            if sessions:
+                from game.zombies import world_tick as _z_world_tick
+
+                from rendering.daynight import ingame_seconds as _ingame_s
+                from game.zombies import is_night as _is_night
+
+                view_rects = self.zombie_view_rects(rt)
+                w, h = rt.map_data.width, rt.map_data.height
+                for uid in sessions:
+                    if uid not in view_rects:
+                        p = rt.state.get_player(uid)
+                        if p is None:
+                            continue
+                        vw = min(DEFAULT_VIEW_W, w)
+                        vh = min(DEFAULT_VIEW_H, h)
+                        x0 = max(0, min(w - vw, p.x - vw // 2))
+                        y0 = max(0, min(h - vh, p.y - vh // 2))
+                        view_rects[uid] = (x0, y0, x0 + vw, y0 + vh)
+                zres = _z_world_tick(
+                    rt.state, rt.collision, view_rects,
+                    _is_night(_ingame_s()),
+                    rng=self.zombie_rng,
+                )
+                if zres.changed:
+                    zombie_touched = True
         if moved_any:
             self._touch_web_activity(rt)
+        if zombie_touched:
+            self._schedule_zombie_updates(rt)
 
     def _touch_web_activity(self, rt: ScenarioRuntime) -> None:
         """Hook for the web layer (set by bot.py): notify snapshot consumers

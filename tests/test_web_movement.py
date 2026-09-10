@@ -2,7 +2,8 @@
 
 Covers: float/int sync invariants, wall slide, blocked axes, the Discord
 render-tile floor rule (a web player always shows one specific tile), speed
-caps in the tick integration, and zombie lock (web players never targeted).
+caps in the tick integration, and the shared zombie pack (web + Discord
+chung một bầy — cùng bị dí, cùng đánh).
 """
 import asyncio
 import pathlib
@@ -198,9 +199,9 @@ def test_drop_web_session_freezes_tile():
     assert 11 not in rt.web_sessions
 
 
-# ----- zombie lock (web players are invisible to the zombie AI) -----
+# ----- zombie lock (web + Discord share ONE pack) -----
 
-def test_zombies_never_target_web_players():
+def test_zombies_target_web_players_too():
     from game.zombies import _players
 
     p_web = Player(user_id=1, display_name="web", x=5, y=5)
@@ -215,10 +216,10 @@ def test_zombies_never_target_web_players():
             return [p_web, p_discord]
 
     targets = _players(_State())
-    assert p_web not in targets and p_discord in targets
+    assert p_web in targets and p_discord in targets
 
 
-def test_zombie_bite_skips_web_player():
+def test_zombie_bite_hits_web_player():
     from game.zombies import advance_visible_zombies
     from game.zombies import Zombie
 
@@ -235,7 +236,6 @@ def test_zombie_bite_skips_web_player():
             return [web_p]
 
     result = advance_visible_zombies(_State(), Collision(_map()), {1: (0, 0, 10, 10)})
-    # The adjacent zombie must not bite (or even move toward) the web player.
-    assert 1 not in result.damaged_player_ids
-    assert 1 not in result.died_player_ids
-    assert z.x == 6 and z.y == 5  # never stepped toward the web player
+    # Web + Discord chung một bầy: zombie dí + cắn web player như thường.
+    assert 1 in result.damaged_player_ids
+    assert z.x == 6 and z.y == 5  # adjacent: bites in place, no step

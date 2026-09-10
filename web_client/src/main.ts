@@ -54,10 +54,13 @@ game.scene.add("world", scene, true);
 
 function applyTexture(name: string, b64: string): void {
   // Block faces register under "block-<id>" — the key game.ts looks up in
-  // buildBlocks. Tilesets keep their basename key.
+  // buildBlocks. Mob sheets register under "mob-<id>". Tilesets keep their
+  // basename key.
   const key = name.startsWith("blocks/")
     ? `block-${name.slice("blocks/".length).replace(/\.png$/i, "")}`
-    : name.replace(/\.png$/i, "");
+    : name.startsWith("mobs/")
+      ? `mob-${name.slice("mobs/".length).replace(/\.png$/i, "")}`
+      : name.replace(/\.png$/i, "");
   if (assetTextures.has(key) || !game.textures) return;
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -72,6 +75,11 @@ function applyTexture(name: string, b64: string): void {
     if (name.startsWith("blocks/")) {
       // Block face arrived: redraw the block layer with the real sprite.
       scene.onBlockTexture(name.slice("blocks/".length).replace(/\.png$/i, ""));
+      return;
+    }
+    if (name.startsWith("mobs/")) {
+      // Mob sheet arrived: upgrade zombie placeholders to the sprite.
+      scene.onMobTexture(name);
       return;
     }
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
@@ -181,6 +189,15 @@ const net = new Net({
   },
   onActionResult: (frame) => {
     if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);
+    // Zombie kill echo (shared pack with Discord): death anim + loot pop.
+    if (frame.kind === "zombie") {
+      scene.noteZombieKill(frame.target_id, frame.target_defeated);
+      if (frame.ok && frame.drops.length > 0) {
+        const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
+        hud.chatLine(`Hạ zombie! Nhặt: ${loot}`);
+      }
+      if (frame.ok) return;
+    }
     if (frame.ok) {
       if (frame.name === "chop" && frame.drops.length > 0) {
         const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");

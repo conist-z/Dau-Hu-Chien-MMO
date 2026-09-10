@@ -81,8 +81,8 @@ class Player:
     # path derives int x/y from the float instead of trusting stale ints.
     float_moved: bool = False
     # True while the player is connected through the web client. Web players
-    # are VISIBLE to Discord clients but invisible to the zombie AI (locked
-    # on web): never targeted, never bitten, never counted for spawn areas.
+    # share the SAME zombie pack as Discord players (chased + bitten alike);
+    # their int x/y stays synced from the float so the grid AI works.
     is_web: bool = False
     sprite_id: str = ""
     visible: bool = True

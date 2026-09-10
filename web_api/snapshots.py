@@ -10,6 +10,7 @@ from typing import Dict, List
 
 from game.crafting import RECIPE_REGISTRY
 from game.manager import ScenarioRuntime
+from game.zombies import iter_zombies
 from rendering.daynight import ingame_seconds
 
 
@@ -50,6 +51,28 @@ def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
         return inv.hotbar().get(max(0, slot))
     except Exception:
         return None
+
+
+def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
+    """Zombies for the web client: [id, x, y, hp, max_hp, kind/hunter].
+
+    Float positions (tile units, centre-based) so the client interpolates
+    smoothly at 60 fps — mirrors the players payload convention.
+    """
+    out = []
+    for z in iter_zombies(rt.state):
+        try:
+            out.append([
+                z.zombie_id,
+                round(z.x + 0.5, 3),
+                round(z.y + 0.5, 3),
+                int(z.hp),
+                int(z.max_hp),
+                "hunter" if getattr(z, "hunter", False) else "walker",
+            ])
+        except Exception:
+            continue
+    return out
 
 
 def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict]:
@@ -170,6 +193,7 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "res_progress": _resource_progress_payload(rt),
         "res_felled": _resource_felled_payload(rt),
         "players": _players_payload(rt, user_id),
+        "zombies": _zombies_payload(rt),
     }
 
 
@@ -231,6 +255,10 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "resources": _resource_tiles_payload(rt),
         "res_progress": _resource_progress_payload(rt),
         "res_felled": _resource_felled_payload(rt),
+        # Night zombies (Kaetram-style mob): [id, x, y, hp, max_hp, kind].
+        # Client interpolates + draws the sprite sheet (mobs/zombie.png via
+        # asset_request) with walk/attack/death animation by state.
+        "zombies": _zombies_payload(rt),
     }
 
 

@@ -3,7 +3,7 @@
 // 60 fps rendering, follows the camera on the local player.
 
 import Phaser from "phaser";
-import type { PlayerPayload, SnapshotPayload, WelcomePayload } from "./protocol";
+import type { PlayerPayload, SnapshotPayload, WelcomePayload, ZombiePayload } from "./protocol";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -48,6 +48,11 @@ export class WorldScene extends Phaser.Scene {
   private players = new Map<number, RemotePlayer>();
   private selfMarker: Phaser.GameObjects.Rectangle | null = null;
   private blockLayer: Phaser.GameObjects.Layer | null = null;
+  // Diff cache for the block overlay: tile key -> sprite. Rapid place/break
+  // used to tear down and rebuild EVERY block rectangle on each snapshot sig
+  // change (~20 Hz while building) — the create/destroy churn was a real
+  // source of stutter. Now only added/removed tiles touch the scene.
+  private blockSprites = new Map<string, Phaser.GameObjects.GameObject>();
   private mapBake: Phaser.GameObjects.Image | null = null;
   private lastBlockSig = "";
   // Real block faces (assets/blocks/<id>.png fetched via asset_request).
@@ -92,6 +97,29 @@ export class WorldScene extends Phaser.Scene {
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
+  // --- night zombies (Kaetram-style mob, shared pack with Discord) ---
+  // One entry per live zombie id: interpolated 20 Hz -> 60 fps like players,
+  // sprite = the Kaetram zombie sheet (mobs/zombie.png via asset_request),
+  // animation = Kaetram mob rows (atk 5f / walk 4f / idle 2f), attack anim
+  // fires when a zombie steps onto the player's tile (server bite tick),
+  // death anim = flash + sink + fade, then despawn.
+  private zombieLayer: Phaser.GameObjects.Layer | null = null;
+  private zombies = new Map<string, {
+    container: Phaser.GameObjects.Container;
+    body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+    label: Phaser.GameObjects.Text;
+    hpBg: Phaser.GameObjects.Rectangle;
+    hpFill: Phaser.GameObjects.Rectangle;
+    buf: [number, number, number][];
+    lastX: number; lastY: number;
+    lastMoveT: number;
+    atkT0: number; // performance.now() of the last attack anim (0 = none)
+    dieT0: number; // performance.now() when the kill echo landed (0 = alive)
+    hunter: boolean;
+  }>();
+  private zombieTextureKey = "mob-zombie";
+  private zombieTextureReady = false;
+  private zombieFetchAsked = false;
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
@@ -110,9 +138,11 @@ export class WorldScene extends Phaser.Scene {
   private lastProgressBbox = new Map<string, number[][]>();
   // Falling-tree animation state is derived per sync (collectNodesFromTiles
   // + playFallAnimation) — no persistent bookkeeping needed.
-  // Placed blocks (x,y -> id): solid for the local prediction too.
+  // Placed blocks (x,y -> id): solid for the local prediction too. Rebuilt
+  // from EVERY snapshot (cheap Set) — a sig-guarded rebuild let a rejected
+  // or clamped own-action leave a phantom solid/walkable tile until some
+  // OTHER block happened to change (the "đặt rồi xóa rồi chạy xuyên" bug).
   private blockSet = new Set<string>();
-  private lastBlocksSig = "";
   // --- build mode: selected block to place ---
   private selectedBlock = "stone";
 
@@ -148,6 +178,13 @@ export class WorldScene extends Phaser.Scene {
     // Request every DISTINCT block face once (blocks payload may repeat ids).
     for (const id of new Set(welcome.blocks.map(([, , bid]) => bid))) {
       if (!this.blockTextures.has(id)) fetchAsset(`blocks/${id}.png`);
+    }
+    // Night zombie sprite sheet (Kaetram 160x288, 5 cols x 9 rows of 32px):
+    // requested once per session through the same relay pipe (license-safe —
+    // the PNG stays on the bot, only this client receives the bytes).
+    if (!this.zombieTextureReady && !this.zombieFetchAsked) {
+      this.zombieFetchAsked = true;
+      fetchAsset("mobs/zombie.png");
     }
     this.buildBlocks(welcome.blocks);
     this.bakeMapIfReady();
@@ -318,22 +355,40 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private buildBlocks(blocks: [number, number, string][]): void {
-    if (this.blockLayer) this.blockLayer.removeAll(true);
-    const list: Phaser.GameObjects.GameObject[] = [];
+    if (!this.blockLayer) this.blockLayer = this.add.layer();
+    const seen = new Set<string>();
     for (const [x, y, id] of blocks) {
-      const key = `block-${id}`;
-      if (this.blockTextures.has(id) && this.textures.exists(key)) {
-        const img = this.add.image(x * 32 + 16, y * 32 + 16, key);
-        list.push(img);
-      } else {
-        // Placeholder until the face texture arrives (see onBlockTexture).
-        const r = this.add.rectangle(x * 32 + 16, y * 32 + 16, 30, 30, 0x6b5a3e);
-        r.setStrokeStyle(2, 0x8a7550);
-        list.push(r);
+      const tileKey = `${x},${y}`;
+      seen.add(tileKey);
+      const texKey = `block-${id}`;
+      const hasTex = this.blockTextures.has(id) && this.textures.exists(texKey);
+      let go = this.blockSprites.get(tileKey);
+      if (!go) {
+        // New block: sprite (or placeholder rectangle until the face
+        // texture arrives — see onBlockTexture).
+        if (hasTex) {
+          go = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+        } else {
+          const r = this.add.rectangle(x * 32 + 16, y * 32 + 16, 30, 30, 0x6b5a3e);
+          r.setStrokeStyle(2, 0x8a7550);
+          go = r;
+        }
+        this.blockLayer.add(go);
+        this.blockSprites.set(tileKey, go);
+      } else if (hasTex && go instanceof Phaser.GameObjects.Rectangle) {
+        // Texture arrived: upgrade the placeholder in place (no churn).
+        const img = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+        this.blockLayer.add(img);
+        this.blockSprites.set(tileKey, img);
+        go.destroy();
       }
     }
-    this.blockLayer = this.add.layer();
-    this.blockLayer.add(list);
+    for (const [tileKey, go] of this.blockSprites) {
+      if (!seen.has(tileKey)) {
+        go.destroy();
+        this.blockSprites.delete(tileKey);
+      }
+    }
   }
 
   /** A block face PNG arrived: register + redraw with the real sprite. */
@@ -491,6 +546,80 @@ export class WorldScene extends Phaser.Scene {
       const reach = HAND_ORBIT + this.swingExtra(rp.swingT0, performance.now());
       rp.hand.setPosition((dv[0] / len) * reach, (dv[1] / len) * reach);
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
+    }
+    this.updateZombies();
+  }
+
+  /** Per-frame zombie interpolation + walk/attack/death animation (60 fps). */
+  private updateZombies(): void {
+    const now = performance.now();
+    for (const [id, z] of this.zombies) {
+      const buf = z.buf;
+      if (buf.length > 0) {
+        const t = now - INTERP_BUFFER_MS;
+        let prev = buf[0];
+        let next = buf[buf.length - 1];
+        for (let i = 0; i < buf.length - 1; i++) {
+          if (buf[i][0] <= t && t <= buf[i + 1][0]) {
+            prev = buf[i];
+            next = buf[i + 1];
+            break;
+          }
+        }
+        const span = next[0] - prev[0];
+        const k = span > 0 ? Math.min(1, (t - prev[0]) / span) : 1;
+        const x = prev[1] + (next[1] - prev[1]) * k;
+        const y = prev[2] + (next[2] - prev[2]) * k;
+        z.container.setPosition(x, y);
+        const moved = Math.hypot(x - z.lastX, y - z.lastY);
+        if (moved > 0.75) {
+          z.lastX = x;
+          z.lastY = y;
+          z.lastMoveT = now;
+          const selfT = this.selfPos;
+          if (
+            Math.floor(x / 32) === Math.floor(selfT.x) &&
+            Math.floor(y / 32) === Math.floor(selfT.y)
+          ) {
+            z.atkT0 = now;
+          }
+        }
+      }
+      const walking = now - z.lastMoveT < 250;
+      const attacking = now - z.atkT0 < 450;
+      if (z.dieT0 !== 0) {
+        const age = now - z.dieT0;
+        const k = Math.min(1, age / 500);
+        z.container.setAlpha(1 - k);
+        z.container.y += 10 * k * 0.016;
+        if (z.body instanceof Phaser.GameObjects.Image) z.body.setTintFill(0xffffff);
+        if (k >= 1) {
+          z.container.destroy();
+          this.zombies.delete(id);
+        }
+        continue;
+      }
+      if (z.body instanceof Phaser.GameObjects.Image) {
+        if (attacking) {
+          const f = Math.floor(((now - z.atkT0) / 450) * 5) % 5;
+          z.body.setScale(1 + f * 0.04);
+          z.body.setTint(0xffb0a0);
+          z.body.setAngle(f % 2 === 0 ? -6 : 6);
+        } else if (walking) {
+          z.body.clearTint();
+          z.body.setScale(1);
+          z.body.setAngle(0);
+          z.body.y = Math.sin(now / 90) * 1.2;
+        } else {
+          z.body.clearTint();
+          z.body.setScale(1);
+          z.body.setAngle(0);
+          z.body.y = Math.sin(now / 500) * 1.5;
+        }
+      } else if (z.body instanceof Phaser.GameObjects.Rectangle) {
+        if (attacking) z.body.setScale(1.35, 0.85);
+        else z.body.setScale(1, 1);
+      }
     }
   }
 
@@ -1028,6 +1157,75 @@ export class WorldScene extends Phaser.Scene {
     this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
+  /** A mob sprite PNG arrived via the relay: mark ready for upgrade. */
+  onMobTexture(name: string): void {
+    if (name !== "mobs/zombie.png" || this.zombieTextureReady) return;
+    if (!this.textures.exists(this.zombieTextureKey)) return;
+    this.zombieTextureReady = true;
+  }
+
+  /** Sync the zombie layer from one snapshot payload (20 Hz). */
+  private syncZombies(list: ZombiePayload[]): void {
+    const seen = new Set<string>();
+    for (const [id, x, y, hp, maxHp, kind] of list) {
+      seen.add(id);
+      let z = this.zombies.get(id);
+      if (!z) {
+        if (!this.zombieLayer) this.zombieLayer = this.add.layer();
+        const container = this.add.container(x * 32, y * 32);
+        const body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle =
+          this.zombieTextureReady && this.textures.exists(this.zombieTextureKey)
+            ? this.add.image(0, 0, this.zombieTextureKey)
+            : this.add.rectangle(0, 0, 22, 26, 0x3a7d2c);
+        const label = this.add.text(0, 24, kind === "hunter" ? "🧟‍♂️!" : "🧟", {
+          fontSize: "10px", color: "#ffffff",
+          stroke: "#000000", strokeThickness: 3,
+        }).setOrigin(0.5);
+        const hpBg = this.add.rectangle(0, -22, 28, 4, 0x000000, 0.6);
+        const hpFill = this.add.rectangle(0, -22, 28, 4, 0x6fe26f).setOrigin(0.5);
+        container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);
+        container.setDepth(5);
+        this.zombieLayer.add(container);
+        z = {
+          container, body, label, hpBg, hpFill,
+          buf: [], lastX: x * 32, lastY: y * 32, lastMoveT: 0,
+          atkT0: 0, dieT0: 0, hunter: kind === "hunter",
+        };
+        this.zombies.set(id, z);
+      }
+      const now = performance.now();
+      z.buf.push([now, x * 32, y * 32]);
+      if (z.buf.length > 12) z.buf.shift();
+      z.hunter = kind === "hunter";
+      const ratio = Math.max(0, Math.min(1, maxHp > 0 ? hp / maxHp : 0));
+      z.hpFill.setSize(28 * ratio, 4);
+      z.hpFill.setFillStyle(ratio > 0.5 ? 0x6fe26f : ratio > 0.25 ? 0xf2c14e : 0xe5484d);
+      if (
+        this.zombieTextureReady &&
+        z.body instanceof Phaser.GameObjects.Rectangle &&
+        this.textures.exists(this.zombieTextureKey)
+      ) {
+        const img = this.add.image(0, 0, this.zombieTextureKey);
+        z.container.add(img);
+        z.container.sendToBack(img);
+        z.body.destroy();
+        z.body = img;
+      }
+    }
+    for (const [id, z] of this.zombies) {
+      if (!seen.has(id) && z.dieT0 === 0) {
+        z.dieT0 = performance.now() - 400;
+      }
+    }
+  }
+
+  /** Kill echo from action_result: play the death animation for one zombie. */
+  noteZombieKill(targetId: string | null | undefined, defeated: boolean | undefined): void {
+    if (!targetId || !defeated) return;
+    const z = this.zombies.get(targetId);
+    if (z && z.dieT0 === 0) z.dieT0 = performance.now();
+  }
+
   /** Track the raw cursor position (normalized 0..1 from DOM events);
    * the TILE is derived fresh every frame from it — the camera moves under
    * a still cursor, so caching the tile itself goes stale. */
@@ -1186,6 +1384,8 @@ export class WorldScene extends Phaser.Scene {
     // Felled tiles: walkable in prediction until the node regrows.
     this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
     for (const p of snap.players) this.upsertPlayer(p);
+    // Night zombies (shared pack with Discord): interpolate + animate.
+    this.syncZombies(snap.zombies ?? []);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));
     for (const [id, rp] of this.players) {
@@ -1202,11 +1402,7 @@ export class WorldScene extends Phaser.Scene {
       this.updateBlocks(snap.blocks);
     }
     // Keep the local solid set in sync with placed blocks.
-    const bsig = sig;
-    if (bsig !== this.lastBlocksSig) {
-      this.lastBlocksSig = bsig;
-      this.blockSet = new Set(snap.blocks.map((b) => `${b[0]},${b[1]}`));
-    }
+    this.blockSet = new Set(snap.blocks.map((b) => `${b[0]},${b[1]}`));
   }
 
   // Local self position in tile units (for the HUD + camera sanity).
