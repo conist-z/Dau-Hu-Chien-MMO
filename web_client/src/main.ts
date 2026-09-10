@@ -126,6 +126,10 @@ const net = new Net({
     weatherFx.setWeather(frame.weather);
     dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
+    // Death veil: server ignores our inputs while dead; the scene freezes
+    // prediction and this overlay explains why (5s respawn).
+    hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
+    if (frame.self.dead) input.clearKeys();
     applyInventory(frame.inventory);
   },
   onScenarioList: (items) => {
@@ -397,6 +401,9 @@ async function boot(): Promise<void> {
     quickPlayArmed = true;
   }
 }
+
+// (input declared below onSnapshot's usage — hoisted const reference is
+// fine because the handler only RUNS after boot.)
 
 hud.onLoginClick(() => {
   if (quickPlayArmed) {

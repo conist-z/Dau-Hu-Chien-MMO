@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-CT-uJxHu.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Yb99CLt0.css">
+    <script type="module" crossorigin src="./assets/index-BXctmDf7.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DF3FKf6i.css">
   </head>
   <body>
     <div id="game-root">
@@ -38,6 +38,14 @@
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>
+        <!-- Death overlay (hp 0): full-screen veil + respawn countdown -->
+        <div id="death-overlay" class="hidden">
+          <div class="death-panel">
+            <h2>Bạn đã gục</h2>
+            <p id="death-reason">Bị zombie tấn công</p>
+            <p id="death-timer">Hồi sinh sau 5s…</p>
+          </div>
+        </div>
         <!-- Inventory + Craft panel (tabbed) -->
         <div id="inv-panel" class="hidden">
           <div class="inv-box">

@@ -253,6 +253,17 @@ export class Hud {
     this.manaLabel.textContent = `${mana}/${maxMana}`;
   }
 
+  /** Death veil + respawn countdown (dead while hp == 0). */
+  setDead(dead: boolean, respawnS: number, reason?: string): void {
+    const overlay = document.getElementById("death-overlay")!;
+    overlay.classList.toggle("hidden", !dead);
+    if (!dead) return;
+    const r = document.getElementById("death-reason");
+    if (r && reason) r.textContent = reason;
+    const t = document.getElementById("death-timer");
+    if (t) t.textContent = respawnS > 0 ? `Hồi sinh sau ${Math.ceil(respawnS)}s…` : "Đang hồi sinh…";
+  }
+
   setInventory(inv: InventoryPayload): void {
     this.inventory = inv;
     this.renderHotbar();

@@ -6,6 +6,8 @@ rendering plus the int tile so the client can mirror chat-client visuals.
 """
 from __future__ import annotations
 
+import time as _time
+
 from typing import Dict, List
 
 from game.crafting import RECIPE_REGISTRY
@@ -235,7 +237,16 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "coins": player.coins if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
-            # AUTHORITATIVE int tile the server resolves actions against.
+            # Dead flag + respawn countdown: the web client freezes its own
+            # prediction and shows a death overlay instead of letting the
+            # predicted marker keep walking (the server ignores dead inputs,
+            # so reconciliation kept snapping the ghost back to a walkable
+            # ring — the "vòng tròn vô hình" the player saw).
+            "dead": bool(player is not None and not player.alive),
+            "respawn_s": (
+                max(0, round(player.dead_until - _time.time(), 1))
+                if player is not None and player.dead_until is not None else 0
+            ),
             # The client must target relative to THIS (its predicted float
             # position drifts; using it for offsets misplaced blocks).
             "tile": [player.x, player.y] if player else [0, 0],

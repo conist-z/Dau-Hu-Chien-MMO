@@ -279,3 +279,22 @@ html, body {
   cursor: pointer; text-align: left;
 }
 .scenario-btn:hover { border-color: var(--accent); }
+
+/* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */
+#death-overlay {
+  position: absolute; inset: 0;
+  background: rgba(60, 8, 14, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+#death-overlay.hidden { display: none; }
+.death-panel {
+  background: rgba(20, 8, 10, 0.92);
+  border: 2px solid #ba2d40;
+  border-radius: 14px;
+  padding: 26px 40px;
+  text-align: center;
+}
+.death-panel h2 { font-size: 24px; color: #ff6b7d; margin-bottom: 6px; }
+.death-panel p { font-size: 14px; opacity: 0.85; }
+#death-timer { font-weight: 700; color: #ffd75e; margin-top: 8px; }

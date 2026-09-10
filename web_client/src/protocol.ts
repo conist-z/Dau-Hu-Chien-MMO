@@ -90,6 +90,10 @@ export interface SnapshotPayload {
     aim: { dx: number; dy: number } | null;
     // Item id currently held by self (mirrors welcome.held, 20 Hz echo).
     held: string | null;
+    // Death state (hp 0): the server ignores inputs while dead; the client
+    // freezes prediction + shows a respawn overlay (Kaetram dead parity).
+    dead?: boolean;
+    respawn_s?: number;
   };
   inventory: InventoryPayload;
   resources: [number, number, number][];

@@ -86,6 +86,8 @@ export class WorldScene extends Phaser.Scene {
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
+  // True while hp == 0 (server-authoritative): prediction frozen, overlay on.
+  private selfDead = false;
   // --- facing + hover cursor: the HAND dot is the direction indicator ---
   private selfDir = "SOUTH";
   private lastMoveX = 0; // last nonzero input (hand points here while idle)
@@ -643,6 +645,14 @@ export class WorldScene extends Phaser.Scene {
     const marker = this.selfMarker;
     if (!marker || !this.welcome) return;
     const v = this.inputVec;
+    if (this.selfDead) {
+      // Dead: the server drops our movement inputs — integrating locally only
+      // created the invisible-ring effect (server kept snapping us back).
+      // Hold position on the authority, keep the aim visuals updating.
+      marker.setPosition(this.selfServerPos.x * 32, this.selfServerPos.y * 32);
+      this.updateSelfHand();
+      return;
+    }
     const dt = this.frameDtSec;
     if ((v.dx !== 0 || v.dy !== 0) && dt > 0) {
       // Hand points where we walk: facing follows movement.
@@ -1503,6 +1513,16 @@ export class WorldScene extends Phaser.Scene {
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
     this.lastServerRecv = performance.now();
+    // Death state: on dead, HARD-snap the prediction to the authority (the
+    // server teleported/hid us — any predicted position is fiction). stepSelf
+    // reads selfDead and stops integrating input while dead (no more
+    // "walk inside an invisible circle": movement was server-rejected and
+    // every reconcile pulled the ghost back).
+    this.selfDead = snap.self.dead ?? false;
+    if (this.selfDead) {
+      this.selfX = snap.self.x;
+      this.selfY = snap.self.y;
+    }
     // Self held echo (20 Hz): converges the local instant hand with the
     // server truth (reconnect / bag change from another client / use).
     if (snap.self.held !== undefined) this.setSelfHeld(snap.self.held ?? null);
