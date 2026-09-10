@@ -559,39 +559,37 @@ class GameManager:
                     player.direction = _web_direction(sess.dx, sess.dy)
                     moved_any = True
                     self._schedule_save(rt, player)
-            # Web players share the zombie pack with Discord (same chase/bite
-            # rules on the int tiles). The 20 Hz tick drives their share of
-            # zombie turns HERE — every web session's own view rect counts,
-            # cooldown-gated bites included (Kaetram combat-loop parity).
+            # SEPARATE realtime web pack (state.web_zombies, float positions):
+            # driven by this same 20 Hz tick with the tick dt — movement
+            # integrates smoothly every frame like a player, bites are gated
+            # by a per-zombie cooldown so HP can never melt ("giật" fix).
+            # NEVER touches the Discord turn pack (state.zombies).
             if sessions:
-                from game.zombies import world_tick as _z_world_tick
+                from game.zombies import is_night as _is_night
+                from game.zombies import web_tick as _z_web_tick
 
                 from rendering.daynight import ingame_seconds as _ingame_s
-                from game.zombies import is_night as _is_night
 
-                view_rects = self.zombie_view_rects(rt)
-                w, h = rt.map_data.width, rt.map_data.height
-                for uid in sessions:
-                    if uid not in view_rects:
-                        p = rt.state.get_player(uid)
-                        if p is None:
-                            continue
-                        vw = min(DEFAULT_VIEW_W, w)
-                        vh = min(DEFAULT_VIEW_H, h)
-                        x0 = max(0, min(w - vw, p.x - vw // 2))
-                        y0 = max(0, min(h - vh, p.y - vh // 2))
-                        view_rects[uid] = (x0, y0, x0 + vw, y0 + vh)
-                zres = _z_world_tick(
-                    rt.state, rt.collision, view_rects,
-                    _is_night(_ingame_s()),
-                    rng=self.zombie_rng,
+                tick_dt = 1.0 / max(1.0, WEB_TICK_HZ)
+                zres = _z_web_tick(
+                    rt.state, rt.collision, _is_night(_ingame_s()),
+                    tick_dt, rng=self.zombie_rng,
                 )
                 if zres.changed:
                     zombie_touched = True
+                # Bite damage persists like any other HP change.
+                if zres.damaged_player_ids and self.db is not None:
+                    for uid in zres.damaged_player_ids:
+                        hurt = rt.state.get_player(uid)
+                        if hurt is not None:
+                            self._schedule_save(rt, hurt)
         if moved_any:
             self._touch_web_activity(rt)
         if zombie_touched:
-            self._schedule_zombie_updates(rt)
+            # Web-only refresh: snapshots carry the new pack at 20 Hz, so no
+            # Discord coalescer work is scheduled here (that was the "cắn là
+            # giật" cause — every web bite re-rendered chat screens).
+            pass
 
     def _touch_web_activity(self, rt: ScenarioRuntime) -> None:
         """Hook for the web layer (set by bot.py): notify snapshot consumers

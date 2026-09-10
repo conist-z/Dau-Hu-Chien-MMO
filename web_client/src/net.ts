@@ -19,7 +19,7 @@ export interface NetHandlers {
   onLoginOk: (token: string, displayName: string) => void;
   onLoginFail: (error: string) => void;
   onHeld: (slot: number, itemId: string | null) => void;
-  onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][] }) => void;
+  onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }) => void;
   onConnectionChange: (connected: boolean) => void;
 }
 

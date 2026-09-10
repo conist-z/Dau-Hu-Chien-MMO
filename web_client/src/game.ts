@@ -3,7 +3,7 @@
 // 60 fps rendering, follows the camera on the local player.
 
 import Phaser from "phaser";
-import type { PlayerPayload, SnapshotPayload, WelcomePayload, ZombiePayload } from "./protocol";
+import type { PlayerPayload, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -103,13 +103,17 @@ export class WorldScene extends Phaser.Scene {
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
-  // --- night zombies (Kaetram-style mob, shared pack with Discord) ---
-  // One entry per live zombie id: interpolated 20 Hz -> 60 fps like players,
-  // sprite = the Kaetram zombie sheet (mobs/zombie.png via asset_request),
-  // animation = Kaetram mob rows (atk 5f / walk 4f / idle 2f), attack anim
-  // fires when a zombie steps onto the player's tile (server bite tick),
-  // death anim = flash + sink + fade, then despawn.
+  // --- night zombies (Kaetram-style mob, SEPARATE realtime web pack) ---
+  // One entry per live zombie id: interpolated 20 Hz -> 60 fps like players.
+  // The sprite is ONE frame cut from the local sheet copy (Kaetram zombie
+  // 160x288 = 5 cols x 9 rows of 32px; mob rows: 0 = atk 5f, 1 = walk 4f,
+  // 2 = idle 2f) — never the whole stretched sheet. The server sends the
+  // authoritative anim ("walk"|"idle"|"atk") + facing per zombie at 20 Hz;
+  // the client advances frames locally at 60 fps (walk 4f ~6fps shambling,
+  // atk 5f = one 450ms lunge, idle 2f = slow breathe).
   private zombieLayer: Phaser.GameObjects.Layer | null = null;
+  // Kaetram hitsplat state: floating damage numbers (spawnSplat/updateSplats).
+  private splats = new Set<{ txt: Phaser.GameObjects.Text; t0: number; x: number; y: number }>();
   private zombies = new Map<string, {
     container: Phaser.GameObjects.Container;
     body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
@@ -118,8 +122,11 @@ export class WorldScene extends Phaser.Scene {
     hpFill: Phaser.GameObjects.Rectangle;
     buf: [number, number, number][];
     lastX: number; lastY: number;
-    lastMoveT: number;
-    atkT0: number; // performance.now() of the last attack anim (0 = none)
+    anim: string; // last server anim (walk|idle|atk)
+    animT0: number; // performance.now() when the server anim last changed
+    frame: number; // current local frame index inside the row
+    frameT0: number; // performance.now() of the last local frame advance
+    facing: string;
     dieT0: number; // performance.now() when the kill echo landed (0 = alive)
     hunter: boolean;
   }>();
@@ -560,11 +567,13 @@ export class WorldScene extends Phaser.Scene {
       rp.hand.setPosition((dv[0] / len) * reach, (dv[1] / len) * reach);
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
     }
-    this.updateZombies();
+    this.updateZombieFrames();
+    // Kaetram hitsplats: float + fade every frame (spawned from action_result).
+    this.updateSplats(performance.now());
   }
 
-  /** Per-frame zombie interpolation + walk/attack/death animation (60 fps). */
-  private updateZombies(): void {
+  /** Per-frame zombie interpolation + Kaetram sheet animation (60 fps). */
+  private updateZombieFrames(): void {
     const now = performance.now();
     for (const [id, z] of this.zombies) {
       const buf = z.buf;
@@ -584,22 +593,9 @@ export class WorldScene extends Phaser.Scene {
         const x = prev[1] + (next[1] - prev[1]) * k;
         const y = prev[2] + (next[2] - prev[2]) * k;
         z.container.setPosition(x, y);
-        const moved = Math.hypot(x - z.lastX, y - z.lastY);
-        if (moved > 0.75) {
-          z.lastX = x;
-          z.lastY = y;
-          z.lastMoveT = now;
-          const selfT = this.selfPos;
-          if (
-            Math.floor(x / 32) === Math.floor(selfT.x) &&
-            Math.floor(y / 32) === Math.floor(selfT.y)
-          ) {
-            z.atkT0 = now;
-          }
-        }
+        z.lastX = x;
+        z.lastY = y;
       }
-      const walking = now - z.lastMoveT < 250;
-      const attacking = now - z.atkT0 < 450;
       if (z.dieT0 !== 0) {
         const age = now - z.dieT0;
         const k = Math.min(1, age / 500);
@@ -613,24 +609,30 @@ export class WorldScene extends Phaser.Scene {
         continue;
       }
       if (z.body instanceof Phaser.GameObjects.Image) {
-        if (attacking) {
-          const f = Math.floor(((now - z.atkT0) / 450) * 5) % 5;
-          z.body.setScale(1 + f * 0.04);
+        // Server-authoritative anim -> Kaetram row; local frame ticks at the
+        // row's own pace (walk = shambling ~6fps, atk = one 450ms lunge,
+        // idle = slow 2-frame breathe). setCrop cuts ONE 32px cell — the
+        // full 160x288 sheet is never drawn stretched.
+        const row = z.anim === "atk" ? 0 : z.anim === "walk" ? 1 : 2;
+        const len = z.anim === "atk" ? 5 : z.anim === "walk" ? 4 : 2;
+        const pace = z.anim === "atk" ? 90 : z.anim === "walk" ? 160 : 500;
+        if (now - z.frameT0 >= pace) {
+          z.frameT0 = now;
+          z.frame = z.anim === "atk"
+            ? Math.min(len - 1, z.frame + 1) // lunge holds its last frame
+            : (z.frame + 1) % len; // walk/idle loop
+        }
+        z.body.setCrop(z.frame * 32, row * 32, 32, 32);
+        z.body.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
+        if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
-          z.body.setAngle(f % 2 === 0 ? -6 : 6);
-        } else if (walking) {
-          z.body.clearTint();
-          z.body.setScale(1);
-          z.body.setAngle(0);
-          z.body.y = Math.sin(now / 90) * 1.2;
+          z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
         } else {
           z.body.clearTint();
-          z.body.setScale(1);
           z.body.setAngle(0);
-          z.body.y = Math.sin(now / 500) * 1.5;
         }
       } else if (z.body instanceof Phaser.GameObjects.Rectangle) {
-        if (attacking) z.body.setScale(1.35, 0.85);
+        if (z.anim === "atk") z.body.setScale(1.35, 0.85);
         else z.body.setScale(1, 1);
       }
     }
@@ -892,6 +894,61 @@ export class WorldScene extends Phaser.Scene {
     if (best) best.swingT0 = performance.now();
   }
 
+  // -------------------------------------------------- hostiles (zombies)
+
+  /**
+   * LEGACY stub (old object-payload zombie renderer, pre realtime-pack).
+   * Kept as a no-op so older call sites never crash; the live path is
+   * syncZombies() fed by applySnapshot() (WebZombiePayload tuples).
+   */
+  updateZombies(_zombies?: unknown): void {
+    return;
+  }
+
+  // -------------------------------------------------- realtime-pack anim
+
+  /**
+   * Kaetram hitsplat (renderer/infos/splat.ts): damage number floats UP
+   * from the target, fading over ~1s; red for normal, GOLD + bigger for a
+   * critical, "MISS" when the hit whiffed. Pure client-side presentation —
+   * the server already resolved the damage (rule: deterministic state).
+   */
+  spawnSplat(tx: number | null, ty: number | null, damage: number, critical: boolean, missed: boolean): void {
+    if (tx === null || ty === null) return;
+    const text = missed || damage <= 0 ? "MISS" : String(damage);
+    const fill = missed ? "#cfd6e4" : critical ? "#ffd75e" : "#ff3232";
+    const stroke = missed ? "#2a2f3a" : critical ? "#7a5b00" : "#ffb4b4";
+    const txt = this.add.text(tx * 32 + 16, ty * 32 - 4, text, {
+      fontSize: critical ? "15px" : "12px",
+      fontStyle: critical ? "bold" : "bold",
+      color: fill,
+      stroke: stroke,
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(120);
+    this.splats.add({ txt, t0: performance.now(), x: txt.x, y: txt.y });
+  }
+
+  /** Per-frame splat float + fade (Kaetram: 1px/100ms, 1s duration). */
+  private updateSplats(now: number): void {
+    for (const s of this.splats) {
+      const age = now - s.t0;
+      if (age > 1000) {
+        s.txt.destroy();
+        this.splats.delete(s);
+        continue;
+      }
+      s.txt.setPosition(s.x, s.y - (age / 100) * 1);
+      s.txt.setAlpha(Math.max(0, 1 - age / 1000));
+    }
+  }
+
+  /**
+   * Combat swing: a bigger, faster arc than the harvest one — called on
+   * every attack action (F key / left click) regardless of target.
+   */
+  combatSwing(): void {
+    this.swingSelfHand();
+  }
   /**
    * Sync the resource layer with the server's visible-tile list.
    *
@@ -1178,9 +1235,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Sync the zombie layer from one snapshot payload (20 Hz). */
-  private syncZombies(list: ZombiePayload[]): void {
+  private syncZombies(list: WebZombiePayload[]): void {
     const seen = new Set<string>();
-    for (const [id, x, y, hp, maxHp, kind] of list) {
+    for (const [id, x, y, hp, maxHp, kind, facing, anim] of list) {
       seen.add(id);
       let z = this.zombies.get(id);
       if (!z) {
@@ -1190,6 +1247,12 @@ export class WorldScene extends Phaser.Scene {
           this.zombieTextureReady && this.textures.exists(this.zombieTextureKey)
             ? this.add.image(0, 0, this.zombieTextureKey)
             : this.add.rectangle(0, 0, 22, 26, 0x3a7d2c);
+        // Cut the FIRST idle frame immediately so a fresh spawn never shows
+        // the whole stretched sheet for even one frame.
+        if (body instanceof Phaser.GameObjects.Image) {
+          body.setCrop(0, 2 * 32, 32, 32);
+          body.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
+        }
         const label = this.add.text(0, 24, kind === "hunter" ? "🧟‍♂️!" : "🧟", {
           fontSize: "10px", color: "#ffffff",
           stroke: "#000000", strokeThickness: 3,
@@ -1201,8 +1264,10 @@ export class WorldScene extends Phaser.Scene {
         this.zombieLayer.add(container);
         z = {
           container, body, label, hpBg, hpFill,
-          buf: [], lastX: x * 32, lastY: y * 32, lastMoveT: 0,
-          atkT0: 0, dieT0: 0, hunter: kind === "hunter",
+          buf: [], lastX: x * 32, lastY: y * 32,
+          anim: anim ?? "idle", animT0: performance.now(),
+          frame: 0, frameT0: performance.now(),
+          facing: facing ?? "S", dieT0: 0, hunter: kind === "hunter",
         };
         this.zombies.set(id, z);
       }
@@ -1210,6 +1275,13 @@ export class WorldScene extends Phaser.Scene {
       z.buf.push([now, x * 32, y * 32]);
       if (z.buf.length > 12) z.buf.shift();
       z.hunter = kind === "hunter";
+      z.facing = facing ?? z.facing;
+      if ((anim ?? z.anim) !== z.anim) {
+        z.anim = anim ?? z.anim;
+        z.animT0 = now;
+        z.frame = 0;
+        z.frameT0 = now;
+      }
       const ratio = Math.max(0, Math.min(1, maxHp > 0 ? hp / maxHp : 0));
       z.hpFill.setSize(28 * ratio, 4);
       z.hpFill.setFillStyle(ratio > 0.5 ? 0x6fe26f : ratio > 0.25 ? 0xf2c14e : 0xe5484d);
@@ -1219,6 +1291,8 @@ export class WorldScene extends Phaser.Scene {
         this.textures.exists(this.zombieTextureKey)
       ) {
         const img = this.add.image(0, 0, this.zombieTextureKey);
+        img.setCrop(0, 2 * 32, 32, 32);
+        img.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
         z.container.add(img);
         z.container.sendToBack(img);
         z.body.destroy();
@@ -1448,7 +1522,7 @@ export class WorldScene extends Phaser.Scene {
     // Felled tiles: walkable in prediction until the node regrows.
     this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
     for (const p of snap.players) this.upsertPlayer(p);
-    // Night zombies (shared pack with Discord): interpolate + animate.
+    // Night zombies (web realtime pack): interpolate + animate.
     this.syncZombies(snap.zombies ?? []);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));

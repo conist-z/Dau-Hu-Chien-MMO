@@ -135,6 +135,65 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
 
     zombies = getattr(state, "zombies", {})
     candidates = zombies.values() if isinstance(zombies, dict) else (zombies or [])
+    # Discord clients resolve against the turn-based pack; web clients resolve
+    # against their own realtime pack (float hits — see web_hit below). The
+    # two packs never share ids, so neither side can hit the other's zombies.
+    player = state.get_player(action.user_id)
+    if player is not None and getattr(player, "is_web", False):
+        from game.zombies import remove_web_zombie
+
+        import math as _math
+
+        web = getattr(state, "web_zombies", {})
+        wcand = web.values() if isinstance(web, dict) else (web or [])
+        best = None
+        best_d = float("inf")
+        for enemy in wcand:
+            if not enemy.alive:
+                continue
+            d = _math.hypot(enemy.x_f - player.x_f, enemy.y_f - player.y_f)
+            if d <= max(1.5, ATTACK_RANGE) and d < best_d:
+                best, best_d = enemy, d
+        if best is None:
+            if blocks is not None:
+                from game import blocks as blocks_mod
+
+                tx, ty = _target_tile(player)
+                block_id = blocks.remove(tx, ty)
+                if block_id is not None:
+                    if not blocks_mod.CREATIVE_MODE:
+                        inventory.add(block_id, 1)
+                    return ActionResult(
+                        True, state_changed=True, pos=(tx, ty), block_id=block_id,
+                    )
+            return ActionResult(False, "no_target")
+        inventories = getattr(state, "inventories", None) or {}
+        inv = inventories.get(player.user_id)
+        from game.tools import sword_damage
+
+        dmg = sword_damage(inv)
+        if dmg <= 0:
+            dmg = (
+                ZOMBIE_PLAYER_ATTACK_DAMAGE
+                if _has_weapon(state, player)
+                else BARE_HAND_ATTACK_DAMAGE
+            )
+        best.hp = max(0, best.hp - dmg)
+        target_id = best.zombie_id
+        defeated = not best.alive
+        drops = []
+        if defeated:
+            remove_web_zombie(state, target_id)
+            for item_id, chance, qty in ZOMBIE_DROP_TABLE:
+                import random
+                if random.random() < chance:
+                    drops.append((item_id, qty))
+        return ActionResult(
+            True, state_changed=True,
+            pos=(best.x, best.y), block_id="zombie",
+            damage=dmg, target_id=target_id,
+            target_defeated=defeated, drops=drops,
+        )
     zombie = _nearest_in_range(state, player.x, player.y, candidates, ATTACK_RANGE)
     if zombie is None:
         # No hostile around: break the block on the target square instead.

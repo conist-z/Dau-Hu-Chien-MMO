@@ -2,8 +2,8 @@
 
 Covers: float/int sync invariants, wall slide, blocked axes, the Discord
 render-tile floor rule (a web player always shows one specific tile), speed
-caps in the tick integration, and the shared zombie pack (web + Discord
-chung một bầy — cùng bị dí, cùng đánh).
+caps in the tick integration, and the two separate zombie packs (Discord
+turn pack ignores web players; web realtime pack only hunts web players).
 """
 import asyncio
 import pathlib
@@ -199,9 +199,9 @@ def test_drop_web_session_freezes_tile():
     assert 11 not in rt.web_sessions
 
 
-# ----- zombie lock (web + Discord share ONE pack) -----
+# ----- zombie packs: Discord turn pack + web realtime pack (separate) -----
 
-def test_zombies_target_web_players_too():
+def test_discord_pack_ignores_web_players():
     from game.zombies import _players
 
     p_web = Player(user_id=1, display_name="web", x=5, y=5)
@@ -216,10 +216,10 @@ def test_zombies_target_web_players_too():
             return [p_web, p_discord]
 
     targets = _players(_State())
-    assert p_web in targets and p_discord in targets
+    assert p_web not in targets and p_discord in targets
 
 
-def test_zombie_bite_hits_web_player():
+def test_discord_bite_skips_web_player():
     from game.zombies import advance_visible_zombies
     from game.zombies import Zombie
 
@@ -236,6 +236,59 @@ def test_zombie_bite_hits_web_player():
             return [web_p]
 
     result = advance_visible_zombies(_State(), Collision(_map()), {1: (0, 0, 10, 10)})
-    # Web + Discord chung một bầy: zombie dí + cắn web player như thường.
+    # Discord pack never touches web players (separate realtime pack does).
+    assert 1 not in result.damaged_player_ids
+    assert z.x == 6 and z.y == 5
+
+
+def test_web_pack_chases_and_bites_web_player():
+    from game.zombies import Zombie, web_tick
+
+    web_p = Player(user_id=1, display_name="web", x=10, y=10)
+    web_p.is_web = True
+    web_p.sync_float_from_int()
+    web_p.hp = 100
+
+    class _State:
+        web_zombies = {}
+        web_zombie_seq = 0
+
+        def get_visible_players(self):
+            return [web_p]
+
+    st = _State()
+    z = Zombie("wzombie-1", 10, 10)
+    z.x_f, z.y_f = 10.5, 10.5  # same tile as the player
+    st.web_zombies[z.zombie_id] = z
+
+    import random
+
+    result = web_tick(st, Collision(_map()), True, 0.05, rng=random.Random(0))
     assert 1 in result.damaged_player_ids
-    assert z.x == 6 and z.y == 5  # adjacent: bites in place, no step
+    assert web_p.hp < 100
+    assert z.anim == "atk"
+
+
+def test_web_pack_ignores_discord_players():
+    from game.zombies import Zombie, web_tick
+
+    chat = Player(user_id=2, display_name="chat", x=10, y=10)
+    chat.hp = 100
+
+    class _State:
+        web_zombies = {}
+        web_zombie_seq = 0
+
+        def get_visible_players(self):
+            return [chat]
+
+    st = _State()
+    z = Zombie("wzombie-1", 10, 10)
+    z.x_f, z.y_f = 10.5, 10.5
+    st.web_zombies[z.zombie_id] = z
+
+    import random
+
+    result = web_tick(st, Collision(_map()), True, 0.05, rng=random.Random(0))
+    assert 2 not in result.damaged_player_ids
+    assert chat.hp == 100

@@ -61,6 +61,14 @@ export interface WelcomePayload {
   held: string | null;
 }
 
+// Web-pack zombie (realtime float mover, separate from the Discord turn
+// pack): [id, x, y, hp, max_hp, kind, facing, anim]. Float x/y = tile units
+// for 60 fps interpolation; facing = N/S/E/W/NE/NW/SE/SW; anim =
+// "walk"|"idle"|"atk" cuts the matching row/frame from the local sheet copy
+// (Kaetram 5 cols x 9 rows of 32px: row 0 atk 5f, row 1 walk 4f, row 2
+// idle 2f) — never the whole stretched sheet.
+export type WebZombiePayload = [string, number, number, number, number, string, string, string];
+
 export interface SnapshotPayload {
   type: "snapshot";
   seq: number;
@@ -69,8 +77,7 @@ export interface SnapshotPayload {
   weather: string;
   players: PlayerPayload[];
   blocks: [number, number, string][];
-  // Night zombies (Kaetram-style mob, shared pack with Discord).
-  zombies: ZombiePayload[];
+  zombies: WebZombiePayload[];
   self: {
     hp: number;
     max_hp: number;
@@ -140,7 +147,7 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
-  | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][] }
+  | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }
   | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string }
   | { type: "pong"; t: unknown };

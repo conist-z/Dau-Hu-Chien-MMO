@@ -10,7 +10,7 @@ from typing import Dict, List
 
 from game.crafting import RECIPE_REGISTRY
 from game.manager import ScenarioRuntime
-from game.zombies import iter_zombies
+from game.zombies import iter_web_zombies
 from rendering.daynight import ingame_seconds
 
 
@@ -54,21 +54,25 @@ def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
 
 
 def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
-    """Zombies for the web client: [id, x, y, hp, max_hp, kind/hunter].
+    """WEB-pack zombies: [id, x, y, hp, max_hp, kind, facing, anim].
 
-    Float positions (tile units, centre-based) so the client interpolates
-    smoothly at 60 fps — mirrors the players payload convention.
+    Float x/y (tile units) so the client interpolates smoothly at 60 fps.
+    facing (N/S/E/W/NE/NW/SE/SW) + anim ("walk"|"idle"|"atk") are
+    server-authoritative: the client cuts the matching row/frame from its own
+    zombie sheet copy instead of stretching the whole sheet.
     """
     out = []
-    for z in iter_zombies(rt.state):
+    for z in iter_web_zombies(rt.state):
         try:
             out.append([
                 z.zombie_id,
-                round(z.x + 0.5, 3),
-                round(z.y + 0.5, 3),
+                round(z.x_f, 3),
+                round(z.y_f, 3),
                 int(z.hp),
                 int(z.max_hp),
                 "hunter" if getattr(z, "hunter", False) else "walker",
+                str(getattr(z, "facing", "S")),
+                str(getattr(z, "anim", "idle")),
             ])
         except Exception:
             continue
@@ -222,6 +226,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "weather": rt.weather_key,
         "players": _players_payload(rt, user_id),
         "blocks": _blocks_payload(rt),
+        "zombies": _zombies_payload(rt),
         "self": {
             "hp": player.hp if player else 0,
             "max_hp": player.max_hp if player else 100,

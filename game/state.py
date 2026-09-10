@@ -50,6 +50,9 @@ class ActionResult:
     damage: int = 0
     target_id: Optional[str] = None
     target_defeated: bool = False
+    # Kaetram-style hit flags for the renderer (gold crit splat / MISS text).
+    critical: bool = False
+    missed: bool = False
     # Chop/mine only: total swings the node needs WITH the resolved tool
     # (the client renders progress = hits/needed). None = not a harvest.
     needed: Optional[int] = None
@@ -81,8 +84,9 @@ class Player:
     # path derives int x/y from the float instead of trusting stale ints.
     float_moved: bool = False
     # True while the player is connected through the web client. Web players
-    # share the SAME zombie pack as Discord players (chased + bitten alike);
-    # their int x/y stays synced from the float so the grid AI works.
+    # run on a SEPARATE realtime zombie pack (state.web_zombies, float
+    # positions, 20 Hz tick) — never the Discord turn-based pack, so neither
+    # side lags or interferes with the other.
     is_web: bool = False
     sprite_id: str = ""
     visible: bool = True
@@ -144,8 +148,14 @@ class GameState:
         self.players: Dict[int, Player] = {}
         # Zombies are transient night creatures; they respawn from the clock
         # instead of being persisted in SQLite.
+        # ``zombies`` = the Discord turn-based pack (int tiles, bitten via
+        # button presses). ``web_zombies`` = the SEPARATE realtime web pack
+        # (float positions, 20 Hz tick) — the two never interact, so heavy web
+        # combat can never stall the chat client (and vice versa).
         self.zombies: Dict[str, object] = {}
         self.zombie_seq: int = 0
+        self.web_zombies: Dict[str, object] = {}
+        self.web_zombie_seq: int = 0
         self.previous_positions: Dict[int, Tuple[int, int]] = {}
         # Placed-block overlay per tile (sandbox). Ground = the map itself;
         # a block covers its tile, breaking it reveals the ground again.

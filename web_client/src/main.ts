@@ -200,9 +200,17 @@ const net = new Net({
     // Zombie kill echo (shared pack with Discord): death anim + loot pop.
     if (frame.kind === "zombie") {
       scene.noteZombieKill(frame.target_id, frame.target_defeated);
-      if (frame.ok && frame.drops.length > 0) {
-        const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
-        hud.chatLine(`Hạ zombie! Nhặt: ${loot}`);
+      if (frame.ok) {
+        // Kaetram hitsplat parity: the damage number floats over the target
+        // (red / gold crit / MISS) — the server resolved the roll already.
+        scene.spawnSplat(frame.tx, frame.ty, frame.damage ?? 0, !!frame.critical, !!frame.missed);
+        if (frame.drops.length > 0) {
+          const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
+          hud.chatLine(`Hạ zombie! Nhặt: ${loot}`);
+        }
+      } else if (frame.missed) {
+        // Whiff on a live target still shows MISS over the zombie tile.
+        scene.spawnSplat(frame.tx, frame.ty, 0, false, true);
       }
       if (frame.ok) return;
     }
@@ -265,8 +273,9 @@ const input = new KeyboardInput({
   onAttack: () => {
     // Cheap melee: attack IN PLACE + swing the hand at once (the swing is
     // client-optimistic; a landed server hit re-triggers it via the echo).
+    // Kaetram parity: atk anim plays exactly ONCE per click, ~450ms.
     net.action("attack");
-    scene.swingSelfHand();
+    scene.combatSwing();
   },
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => hud.selectSlot(index),

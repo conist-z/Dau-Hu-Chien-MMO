@@ -34,6 +34,30 @@ ZOMBIE_TICK_SECONDS = 4.0
 # is never gated — only the damage tick is, so chases stay lively without
 # melting a player's HP bar between button presses.
 ZOMBIE_ATTACK_COOLDOWN_SECONDS = 2.0
+# ---- web realtime pack (20 Hz, float positions, no turns) -----------------
+# Speeds are tiles/second in float space (mirrors WEB_WALK/RUN_SPEED: zombies
+# shamble a touch slower than a walking player; hunters match a runner).
+WEB_ZOMBIE_WALK_SPEED = 2.2
+WEB_ZOMBIE_HUNTER_SPEED = 4.2
+# Bite range in float tiles: touching distance + a small slack.
+WEB_ZOMBIE_BITE_RANGE = 0.85
+# Per-zombie bite cooldown (seconds): the "giật" fix — damage lands at most
+# this often per zombie even though movement integrates every 50 ms.
+WEB_ZOMBIE_BITE_COOLDOWN = 1.2
+# Spawn/despawn distances in float tiles (mirror the int constants).
+WEB_ZOMBIE_MIN_SPAWN_DIST = 8.0
+WEB_ZOMBIE_DESPAWN_DIST = 90.0
+WEB_ZOMBIE_VISION_RADIUS = 6.0
+# Kaetram mob sheet rows for the zombie (5 cols x 9 rows of 32px, see
+# util.ts getDefaultAnimations "mobs"): row 0 = atk (5f), row 1 = walk (4f),
+# row 2 = idle (2f). Sent to the web client as anim state, NOT pixels.
+WEB_Z_ANIM_ATK_ROW = 0
+WEB_Z_ANIM_WALK_ROW = 1
+WEB_Z_ANIM_IDLE_ROW = 2
+WEB_Z_ATK_LEN = 5
+WEB_Z_WALK_LEN = 4
+WEB_Z_IDLE_LEN = 2
+
 # ---- threat model (see README-ish notes in game.manager) -----------------
 # A zombie "sees" a player within this Chebyshev radius; outside it the
 # zombie wanders instead of chasing.
@@ -77,6 +101,31 @@ class Zombie:
     hunter: bool = False
     # Last chase step, kept so pursuit can keep momentum (less zig-zag).
     last_step: Optional[Tuple[int, int]] = None
+    # ---- realtime web-pack fields (float space, ignored by the Discord pack)
+    # Continuous position (float tile units, centre-based like players).
+    # (x, y) ints stay synced (floor) so shared helpers keep working.
+    x_f: float = 0.0
+    y_f: float = 0.0
+    # Facing for the sprite (one of N/S/E/W/NE/NW/SE/SW, Kaetram row pick).
+    facing: str = "S"
+    # Server-authoritative anim state for the web client: "walk" | "idle" |
+    # "atk" — the client cuts the matching row/frame from its own sheet copy
+    # (5 cols x 9 rows of 32px) instead of receiving the whole sheet as one
+    # stretched texture. "atk" also drives the lunge + tint client-side.
+    anim: str = "idle"
+    anim_t: float = 0.0  # monotonic() when the current anim started
+    # monotonic() of the last landed bite (web cooldown — the "giật" fix).
+    last_bite: float = 0.0
+
+    def sync_float_from_int(self) -> None:
+        self.x_f = float(self.x) + 0.5
+        self.y_f = float(self.y) + 0.5
+
+    def sync_int_from_float(self) -> None:
+        import math as _math
+
+        self.x = _math.floor(self.x_f)
+        self.y = _math.floor(self.y_f)
 
     @property
     def alive(self) -> bool:
@@ -107,9 +156,21 @@ def _zombies(state) -> List[Zombie]:
     return [z for z in values if z.alive]
 
 
+def _web_zombies(state) -> List[Zombie]:
+    """Alive zombies of the SEPARATE realtime web pack."""
+    raw = getattr(state, "web_zombies", None)
+    values = raw.values() if isinstance(raw, dict) else (raw or [])
+    return [z for z in values if z.alive]
+
+
 def iter_zombies(state) -> List[Zombie]:
     """Return a snapshot of the currently alive zombies."""
     return list(_zombies(state))
+
+
+def iter_web_zombies(state) -> List[Zombie]:
+    """Return a snapshot of the currently alive WEB zombies."""
+    return list(_web_zombies(state))
 
 
 def _add_zombie(state, zombie: Zombie) -> None:
@@ -118,8 +179,41 @@ def _add_zombie(state, zombie: Zombie) -> None:
         raw[zombie.zombie_id] = zombie
         return
     if raw is None:
-        state.zombies = []
-    state.zombies.append(zombie)
+        state.zombies = {}
+        state.zombies[zombie.zombie_id] = zombie
+        return
+    raw[zombie.zombie_id] = zombie
+
+
+def _add_web_zombie(state, zombie: Zombie) -> None:
+    raw = getattr(state, "web_zombies", None)
+    if isinstance(raw, dict):
+        raw[zombie.zombie_id] = zombie
+        return
+    if raw is None:
+        state.web_zombies = {}
+        state.web_zombies[zombie.zombie_id] = zombie
+        return
+    raw.append(zombie)
+
+
+def remove_web_zombie(state, zombie_id: str) -> Optional[Zombie]:
+    """Remove and return a WEB zombie by id, if still present."""
+    raw = getattr(state, "web_zombies", None)
+    if isinstance(raw, dict):
+        return raw.pop(zombie_id, None)
+    if raw is None:
+        return None
+    for zombie in list(raw):
+        if zombie.zombie_id == zombie_id:
+            raw.remove(zombie)
+            return zombie
+    return None
+
+
+def _next_web_id(state) -> str:
+    state.web_zombie_seq = getattr(state, "web_zombie_seq", 0) + 1
+    return f"wzombie-{state.web_zombie_seq}"
 
 
 def remove_zombie(state, zombie_id: str) -> Optional[Zombie]:
@@ -127,7 +221,9 @@ def remove_zombie(state, zombie_id: str) -> Optional[Zombie]:
     raw = getattr(state, "zombies", None)
     if isinstance(raw, dict):
         return raw.pop(zombie_id, None)
-    for zombie in list(raw or []):
+    if raw is None:
+        return None
+    for zombie in list(raw):
         if zombie.zombie_id == zombie_id:
             raw.remove(zombie)
             return zombie
@@ -140,12 +236,20 @@ def _next_id(state) -> str:
 
 
 def _players(state) -> List[object]:
-    # Web + Discord CHUNG một bầy zombie: mọi visible+alive player đều là
-    # mục tiêu (dí + cắn + đếm spawn). Web player render ở float pos nhưng
-    # int x/y luôn được sync (floor) nên AI lưới vẫn đúng.
+    # Discord turn-based pack: SEES ONLY Discord players. Web players run on
+    # their own realtime pack (web_zombies) — never chased/bitten/counted
+    # here, so chat turns stay instant no matter how wild the web gets.
     return [
         p for p in state.get_visible_players()
-        if getattr(p, "alive", True)
+        if getattr(p, "alive", True) and not getattr(p, "is_web", False)
+    ]
+
+
+def _web_players(state) -> List[object]:
+    """Visible + alive WEB players (targets of the realtime web pack)."""
+    return [
+        p for p in state.get_visible_players()
+        if getattr(p, "alive", True) and getattr(p, "is_web", False)
     ]
 
 
@@ -479,4 +583,186 @@ def world_tick(
     result.damaged_player_ids |= visible.damaged_player_ids
     result.died_player_ids |= visible.died_player_ids
     result.drops.extend(visible.drops)
+    return result
+
+
+def _web_dist(z: Zombie, p) -> float:
+    import math as _math
+
+    return _math.hypot(z.x_f - p.x_f, z.y_f - p.y_f)
+
+
+def _web_nearest(z: Zombie, players: List[object]):
+    choices = list(players)
+    if not choices:
+        return None
+    return min(choices, key=lambda p: (_web_dist(z, p), p.user_id))
+
+
+def _web_facing(dx: float, dy: float) -> str:
+    if abs(dx) > abs(dy):
+        return "E" if dx > 0 else "W"
+    if abs(dy) > abs(dx):
+        return "S" if dy > 0 else "N"
+    if dx > 0:
+        return "SE" if dy > 0 else "NE"
+    return "SW" if dy > 0 else "NW"
+
+
+def _web_set_anim(z: Zombie, anim: str, now: float) -> None:
+    if z.anim != anim:
+        z.anim = anim
+        z.anim_t = now
+
+
+def web_spawn_one(state, collision, players: List[object], rng: random.Random) -> Optional[Zombie]:
+    """Spawn one web zombie in a ring around a random web player.
+
+    Ring: >= WEB_ZOMBIE_MIN_SPAWN_DIST away (no pop-in on the player),
+    walkable tile, centre-snapped float pos. None when no tile fits.
+    """
+    import math as _math
+
+    alive = [p for p in players if getattr(p, "alive", True)]
+    if not alive:
+        return None
+    anchor = rng.choice(alive)
+    w = getattr(getattr(collision, "map_data", None), "width", 0) or 0
+    h = getattr(getattr(collision, "map_data", None), "height", 0) or 0
+    if not w or not h:
+        return None
+    hunters = sum(1 for z in _web_zombies(state) if getattr(z, "hunter", False))
+    for _ in range(24):
+        ang = rng.uniform(0, 2 * _math.pi)
+        dist = rng.uniform(WEB_ZOMBIE_MIN_SPAWN_DIST, WEB_ZOMBIE_MIN_SPAWN_DIST + 10.0)
+        tx = int(_math.floor(anchor.x_f + _math.cos(ang) * dist))
+        ty = int(_math.floor(anchor.y_f + _math.sin(ang) * dist))
+        if tx < 0 or ty < 0 or tx >= w or ty >= h:
+            continue
+        try:
+            walkable = collision.is_walkable(tx, ty)
+        except Exception:
+            walkable = True
+        if not walkable:
+            continue
+        z = Zombie(_next_web_id(state), tx, ty)
+        z.x_f = float(tx) + 0.5
+        z.y_f = float(ty) + 0.5
+        z.hunter = hunters < ZOMBIE_MAX_HUNTERS and rng.random() < ZOMBIE_HUNTER_CHANCE
+        z.facing = "S"
+        z.anim = "walk"
+        z.anim_t = time.monotonic()
+        _add_web_zombie(state, z)
+        return z
+    return None
+
+
+def web_tick(
+    state,
+    collision,
+    night: bool,
+    dt: float,
+    rng: Optional[random.Random] = None,
+    max_count: int = ZOMBIE_MAX_COUNT,
+    spawn_chance: float = ZOMBIE_SPAWN_CHANCE,
+) -> ZombieTurnResult:
+    """One 20 Hz realtime beat for the WEB pack (inside the web tick).
+
+    Day/night + spawn upkeep + float steering + cooldown bites. NEVER touches
+    state.zombies — separate ids/store/math from the Discord turn pack.
+    """
+    import math as _math
+
+    rng = rng or random.Random()
+    now_mono = time.monotonic()
+    now_wall = time.time()
+    result = ZombieTurnResult()
+    players = _web_players(state)
+
+    if not night or not players:
+        for z in list(_web_zombies(state)):
+            removed = remove_web_zombie(state, z.zombie_id)
+            if removed is not None:
+                result.removed.append(removed)
+                result.changed = True
+        result.visible_changed = bool(result.removed)
+        return result
+
+    for z in list(_web_zombies(state)):
+        nearest = _web_nearest(z, players)
+        if nearest is not None and _web_dist(z, nearest) > WEB_ZOMBIE_DESPAWN_DIST:
+            removed = remove_web_zombie(state, z.zombie_id)
+            if removed is not None:
+                result.removed.append(removed)
+                result.changed = True
+    zombies = _web_zombies(state)
+    if len(zombies) < max_count and (
+        not zombies or rng.random() < max(0.0, min(1.0, spawn_chance))
+    ):
+        spawned = web_spawn_one(state, collision, players, rng)
+        if spawned is not None:
+            result.spawned.append(spawned)
+            result.changed = True
+            result.visible_changed = True
+            zombies = _web_zombies(state)
+
+    step = max(0.0, min(0.25, dt))
+    for z in list(zombies):
+        target = _web_nearest(z, players)
+        if target is None:
+            _web_set_anim(z, "idle", now_mono)
+            continue
+        dist = _web_dist(z, target)
+        dx = target.x_f - z.x_f
+        dy = target.y_f - z.y_f
+        length = _math.hypot(dx, dy)
+        if dist <= WEB_ZOMBIE_BITE_RANGE:
+            _web_set_anim(z, "atk", now_mono)
+            z.facing = _web_facing(dx, dy)
+            if now_mono - (z.last_bite or 0.0) >= WEB_ZOMBIE_BITE_COOLDOWN:
+                before = target.hp
+                target.hp = max(0, target.hp - z.damage)
+                if target.hp != before:
+                    result.changed = True
+                    result.damaged_player_ids.add(target.user_id)
+                    z.last_bite = now_mono
+                    if target.hp <= 0:
+                        target.visible = False
+                        target.dead_until = now_wall + 5.0
+                        target.death_reason = "bị zombie tấn công"
+                        result.died_player_ids.add(target.user_id)
+            continue
+        sees = z.hunter or dist <= WEB_ZOMBIE_VISION_RADIUS
+        if not sees or length <= 1e-6:
+            _web_set_anim(z, "idle", now_mono)
+            continue
+        speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else WEB_ZOMBIE_WALK_SPEED
+        ux, uy = dx / length, dy / length
+        can_float = getattr(collision, "can_move_float", None)
+        if callable(can_float):
+            try:
+                nx_f, ny_f = can_float(z.x_f, z.y_f, ux * speed * step, uy * speed * step)
+            except Exception:
+                nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
+        else:
+            nx_f, ny_f = z.x_f, z.y_f
+            try:
+                tx_a = int(_math.floor(z.x_f + ux * speed * step))
+                ty_a = int(_math.floor(z.y_f))
+                if collision.is_walkable(tx_a, ty_a):
+                    nx_f = z.x_f + ux * speed * step
+                if collision.is_walkable(int(_math.floor(nx_f)), int(_math.floor(z.y_f + uy * speed * step))):
+                    ny_f = z.y_f + uy * speed * step
+            except Exception:
+                nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
+        if (nx_f, ny_f) != (z.x_f, z.y_f):
+            z.x_f, z.y_f = nx_f, ny_f
+            z.sync_int_from_float()
+            z.facing = _web_facing(ux, uy)
+            _web_set_anim(z, "walk", now_mono)
+            result.changed = True
+        else:
+            _web_set_anim(z, "idle", now_mono)
+    if result.changed:
+        result.visible_changed = True
     return result

@@ -445,6 +445,9 @@ class WebHub:
                 "target_defeated": bool(getattr(result, "target_defeated", False)),
                 "needed": result.needed,
                 "drops": [[i, q] for i, q in (result.drops or [])],
+                "damage": int(getattr(result, "damage", 0) or 0),
+                "critical": bool(getattr(result, "critical", False)),
+                "missed": bool(getattr(result, "missed", False)),
             })
 
     async def _handle_input(self, sess: WebSession, frame: dict) -> None:
