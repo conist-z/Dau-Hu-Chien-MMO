@@ -179,6 +179,43 @@ def test_asset_request_rejects_traversal(hub):
     assert all(m.get("b64") is None for m in assets)
 
 
+def test_far_click_place_rejects_without_consuming(hub):
+    """A click genuinely beyond AIM_RANGE+tolerance must NOT fall back to the
+    facing tile (that used to eat a block and place it where nobody clicked).
+    It is rejected with out_of_range; material and block grid stay untouched."""
+    sess = hub.registry.create(user_id=111, display_name="builder", channel_id=1)
+
+    async def run():
+        await hub.handle_envelope({"type": "client_connected", "cid": 9})
+        await hub.handle_envelope({
+            "cid": 9,
+            "frame": {"type": "join", "token": sess.token, "channel_id": 1},
+        })
+        # 5 stone in the bag, first stack (hotbar slot 0).
+        inv = hub.manager.get_inventory(1, 111)
+        inv.add("stone", 5)
+        inv.move_to("stone", 0)
+        # Spawn is (5,5) on test-map; clicking 8 tiles east is beyond lim (4).
+        await hub.handle_envelope({
+            "cid": 9,
+            "frame": {
+                "type": "action", "name": "place",
+                "tx": 13, "ty": 5, "block_id": "stone",
+            },
+        })
+        await hub.stop()
+    asyncio.new_event_loop().run_until_complete(run())
+    msgs = _drain(hub)
+    results = [
+        m["frame"] for m in msgs
+        if m.get("frame", {}).get("type") == "action_result"
+    ]
+    assert any(r["reason"] == "out_of_range" for r in results), results
+    # Nothing consumed, nothing placed.
+    assert hub.manager.get_inventory(1, 111).count("stone") == 5
+    assert len(hub.manager.get_runtime(1).state.blocks) == 0
+
+
 def test_registry_create_get_drop():
     reg = SessionRegistry()
     s = reg.create(1, "a", 2)
