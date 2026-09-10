@@ -47,6 +47,7 @@ function fmtClock(secondsOfDay: number): string {
 export class Hud {
   private clockEl = document.getElementById("hud-clock")!;
   private weatherEl = document.getElementById("hud-weather")!;
+  private daynightEl = document.getElementById("hud-daynight")!;
   private hpFill = document.getElementById("bar-hp-fill")!;
   private hpLabel = document.getElementById("bar-hp-label")!;
   private manaFill = document.getElementById("bar-mana-fill")!;
@@ -221,6 +222,23 @@ export class Hud {
 
   setClock(secondsOfDay: number): void {
     this.clockEl.textContent = fmtClock(secondsOfDay);
+    // Day/night phase icon ("buổi") — mirrors the Discord hub renderer's
+    // _daynight_phase periods (05-10 morning, 11-16 day, 17-18 evening,
+    // otherwise night) driven by the SAME accelerated in-game clock.
+    const hour = Math.floor(secondsOfDay / 3600) % 24;
+    const phase =
+      hour >= 5 && hour <= 10 ? "morning" :
+      hour >= 11 && hour <= 16 ? "day" :
+      hour >= 17 && hour <= 18 ? "evening" : "night";
+    const icons: Record<string, [string, string]> = {
+      morning: ["🌅", "Buổi sáng"],
+      day: ["☀️", "Buổi trưa"],
+      evening: ["🌇", "Buổi chiều"],
+      night: ["🌙", "Ban đêm"],
+    };
+    const [icon, name] = icons[phase];
+    this.daynightEl.textContent = icon;
+    this.daynightEl.title = name;
   }
 
   setWeather(key: string): void {

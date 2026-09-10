@@ -24,6 +24,12 @@ html, body {
 /* Animated weather layer (rain/snow/storm...): plain canvas mounted between
    the Phaser canvas and the HUD overlay. Fixed so it never scrolls; the
    z-order keeps HUD text crisp above the particles. */
+#daynight-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
 #weather-fx {
   position: fixed;
   inset: 0;
@@ -50,6 +56,7 @@ html, body {
 /* Top-left: clock + weather — flush to the corner */
 #hud-topleft { top: 10px; left: 10px; font-size: 15px; font-weight: 600; }
 #hud-weather { font-size: 20px; }
+#hud-daynight { font-size: 20px; }
 
 /* Top-right: HP/mana — flush to the corner */
 #hud-topright {
