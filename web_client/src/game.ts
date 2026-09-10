@@ -7,6 +7,12 @@ import type { PlayerPayload, SnapshotPayload, WelcomePayload, ZombiePayload } fr
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
+// How long a client-optimistic place/break tile stays applied while we wait
+// for the action_result echo. Longer than one RTT (~300ms worst case) but
+// short enough that a lost echo self-heals: the every-snapshot blockSet
+// rebuild + this expiry guarantee no phantom solid/walkable tile outlives
+// this window.
+const OPTIMISTIC_TTL_MS = 800;
 
 // Direction name -> unit vector (mirrors game.state.Direction).
 const DIR_VECTORS: Record<string, [number, number]> = {
@@ -143,6 +149,13 @@ export class WorldScene extends Phaser.Scene {
   // or clamped own-action leave a phantom solid/walkable tile until some
   // OTHER block happened to change (the "đặt rồi xóa rồi chạy xuyên" bug).
   private blockSet = new Set<string>();
+  // Optimistic local collision for OUR OWN in-flight place/break actions:
+  // tile key -> click timestamp. Solid (or walkable) immediately so a fast
+  // run can't slip through; the action_result echo confirms/reverts exactly,
+  // the every-snapshot blockSet rebuild re-applies them, and the TTL bounds
+  // anything the echo missed (clamped target, lost frame).
+  private optimisticBlocks = new Map<string, number>();
+  private optimisticBreaks = new Map<string, number>();
   // --- build mode: selected block to place ---
   private selectedBlock = "stone";
 
@@ -1249,17 +1262,68 @@ export class WorldScene extends Phaser.Scene {
   /** Optimistic local collision: a block WE just placed is solid IMMEDIATELY
    * — no waiting for the next snapshot. On a high-RTT link the snapshot
    * staleness window (~0.3-2 tiles of travel at run speed) used to let the
-   * player run through their own fresh block. The next snapshot reconciles:
-   * if the server rejected the place, the rebuilt blockSet drops it again. */
+   * player run through their own fresh block. The optimistic entry is ALSO
+   * tracked (with a timestamp) so the every-snapshot blockSet rebuild can
+   * re-apply it until the action_result echo lands — the rebuild alone
+   * would clear our own in-flight block before the server even saw it.
+   * Bounded by optimisticTtlMs so a lost echo (clamped target, dropped
+   * frame) can never pin a phantom solid tile forever. */
   optimisticPlace(x: number, y: number): void {
-    this.blockSet.add(`${x},${y}`);
+    const key = `${x},${y}`;
+    this.blockSet.add(key);
+    this.optimisticBlocks.set(key, performance.now());
   }
 
   /** Optimistic local collision for a break we just sent: the block stops
-   * blocking movement right away; the next snapshot re-adds it if the server
-   * rejected the break (out of range etc.). */
+   * blocking movement right away; tracked like optimisticPlace so the
+   * snapshot rebuild re-applies the walkable state until the echo confirms
+   * or reverts (a rejected break — out of range, already gone — restores
+   * the block via reconcileBlockAction, no phantom walkable tile). */
   optimisticBreak(x: number, y: number): void {
-    this.blockSet.delete(`${x},${y}`);
+    const key = `${x},${y}`;
+    this.blockSet.delete(key);
+    this.optimisticBreaks.set(key, performance.now());
+  }
+
+  /** action_result echo for OUR OWN place/break: confirm/revert the
+   * optimistic tile EXACTLY. tx/ty is the tile the server actually acted on
+   * (it may have clamped the target or rejected it) — clear the pending
+   * entry and restore collision truth the moment the verdict arrives, no
+   * waiting for the next snapshot. This is what kills the "đặt rồi xóa rồi
+   * chạy xuyên" family: a rejected break used to leave a phantom walkable
+   * tile (the block was really still there) until some OTHER block changed. */
+  reconcileBlockAction(name: string, ok: boolean, tx: number | null, ty: number | null): void {
+    if (tx === null || ty === null) return;
+    const key = `${tx},${ty}`;
+    if (name === "place") {
+      this.optimisticBlocks.delete(key);
+      if (!ok) this.blockSet.delete(key); // server said no -> drop the solid phantom NOW
+    } else if (name === "break") {
+      this.optimisticBreaks.delete(key);
+      if (!ok) this.blockSet.add(key); // server kept the block -> solid again NOW
+    }
+  }
+
+  /** Mirror the server's click-target clamp (web_api/core.py): truncate each
+   * axis into AIM_RANGE (3), reject only when the click is genuinely beyond
+   * AIM_RANGE + WEB_AIM_RANGE_TOLERANCE (default 1). Keeps the optimistic
+   * place/break state on the SAME tile the server will act on — targeting
+   * from a stale snapshot used to leave optimistic phantoms on the clicked
+   * tile while the server clamped to a different one. Returns null when the
+   * server would reject with out_of_range (caller still sends the raw click
+   * so the "Quá xa." toast appears honestly). */
+  clampClickTile(tile: { x: number; y: number }): { x: number; y: number } | null {
+    const sx = Math.floor(this.selfServerPos.x);
+    const sy = Math.floor(this.selfServerPos.y);
+    let dx = Math.round(tile.x - sx);
+    let dy = Math.round(tile.y - sy);
+    const LIM = 4; // 3 + WEB_AIM_RANGE_TOLERANCE (default 1)
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > LIM) return null;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > 3) {
+      dx = Math.max(-3, Math.min(3, dx));
+      dy = Math.max(-3, Math.min(3, dy));
+    }
+    return { x: sx + dx, y: sy + dy };
   }
 
   /** Set the active Build-Mode cursor offset (from the server snapshot). */
@@ -1401,8 +1465,25 @@ export class WorldScene extends Phaser.Scene {
       this.lastBlockSig = sig;
       this.updateBlocks(snap.blocks);
     }
-    // Keep the local solid set in sync with placed blocks.
+    // Collision truth rebuilt from EVERY snapshot (a cheap Set — the old
+    // sig-guarded rebuild let a rejected/clamped own-action leave a phantom
+    // solid/walkable tile until some OTHER block happened to change: the
+    // "đặt rồi xóa rồi chạy xuyên" bug). Pending optimistic place/break
+    // from OUR OWN in-flight actions are re-applied on top, bounded by a
+    // TTL so a lost echo (clamped target, dropped frame) can never pin a
+    // phantom forever.
+    const now = performance.now();
+    const pendingSolid = new Set<string>();
+    for (const [k, t] of this.optimisticBlocks) {
+      if (now - t > OPTIMISTIC_TTL_MS) this.optimisticBlocks.delete(k);
+      else pendingSolid.add(k);
+    }
+    for (const [k, t] of this.optimisticBreaks) {
+      if (now - t > OPTIMISTIC_TTL_MS) this.optimisticBreaks.delete(k);
+    }
     this.blockSet = new Set(snap.blocks.map((b) => `${b[0]},${b[1]}`));
+    for (const k of pendingSolid) this.blockSet.add(k);
+    for (const k of this.optimisticBreaks.keys()) this.blockSet.delete(k);
   }
 
   // Local self position in tile units (for the HUD + camera sanity).

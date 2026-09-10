@@ -189,6 +189,14 @@ const net = new Net({
   },
   onActionResult: (frame) => {
     if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);
+    // place/break verdict: confirm or revert the optimistic collision tile
+    // EXACTLY (tx/ty = the tile the server acted on, possibly clamped). This
+    // closes the "đặt rồi xóa rồi chạy xuyên" gap in one RTT — a rejected
+    // break restores the block immediately instead of leaving a walkable
+    // phantom until some unrelated snapshot change.
+    if (frame.name === "place" || frame.name === "break") {
+      scene.reconcileBlockAction(frame.name, frame.ok, frame.tx, frame.ty);
+    }
     // Zombie kill echo (shared pack with Discord): death anim + loot pop.
     if (frame.kind === "zombie") {
       scene.noteZombieKill(frame.target_id, frame.target_defeated);
@@ -272,16 +280,30 @@ const input = new KeyboardInput({
         net.action("chop");
         return;
       }
+      // Clamp to the tile the server will ACTUALLY act on (mirrors its own
+      // clamp). The break-vs-chop decision AND the optimistic collision must
+      // live on that tile — targeting from a stale snapshot used to break
+      // the wrong tile (server clamped elsewhere) leaving a walkable phantom
+      // where the real block still stood: "đặt rồi xóa rồi chạy xuyên".
+      const target = scene.clampClickTile(tile);
+      if (!target) {
+        // Genuinely out of range: send the raw click — the server answers
+        // out_of_range honestly ("Quá xa."), no optimistic state involved.
+        net.actionAt("chop", tile.x, tile.y);
+        scene.swingSelfHand();
+        return;
+      }
       // Contextual: placed block under cursor -> break; else chop. The hand
       // swings AT ONCE (client-optimistic); the server echo (res_progress
       // grows) re-swings it on each LANDED hit for the multi-hit rhythm.
-      const breaking = scene.isBlockAt(tile.x, tile.y);
-      net.actionAt(breaking ? "break" : "chop", tile.x, tile.y);
+      const breaking = scene.isBlockAt(target.x, target.y);
+      net.actionAt(breaking ? "break" : "chop", target.x, target.y);
       scene.swingSelfHand();
       if (breaking) {
         // Optimistic local collision: the block stops blocking movement NOW
-        // (the next snapshot reconciles if the server rejected the break).
-        scene.optimisticBreak(tile.x, tile.y);
+        // (the echo confirms, or reconcileBlockAction restores it fast if
+        // the server rejected the break).
+        scene.optimisticBreak(target.x, target.y);
       }
       return;
     }
@@ -292,11 +314,18 @@ const input = new KeyboardInput({
     const placeable = new Set((welcome?.blocks_catalog ?? []).map((b) => b.id));
     const held = hud.heldItem;
     if (!tile || !held || !placeable.has(held)) return;
-    net.placeAt(tile.x, tile.y, held);
+    const target = scene.clampClickTile(tile);
+    if (!target) {
+      // Too far: still send so the server answers "Quá xa." honestly — but
+      // NO optimistic state (the block will not appear).
+      net.placeAt(tile.x, tile.y, held);
+      return;
+    }
+    net.placeAt(target.x, target.y, held);
     // Optimistic local collision: the block is solid IMMEDIATELY so a fast
     // run cannot pass through a block we just placed before the snapshot
-    // arrives (the snapshot reconciles if the server rejected it).
-    scene.optimisticPlace(tile.x, tile.y);
+    // arrives (the echo/snapshot reconciles if the server rejected it).
+    scene.optimisticPlace(target.x, target.y);
   },
   onCanvasHover: (sx, sy) => {
     // Store the raw cursor position; the scene re-derives the tile every
