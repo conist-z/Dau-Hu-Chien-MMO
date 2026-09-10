@@ -21,20 +21,23 @@ html, body {
 
 #game-root { position: relative; width: 100vw; height: 100vh; }
 #game-root canvas { display: block; width: 100%; height: 100%; }
-/* Animated weather layer (rain/snow/storm...): plain canvas mounted between
-   the Phaser canvas and the HUD overlay. Fixed so it never scrolls; the
-   z-order keeps HUD text crisp above the particles. */
+/* Animated weather + day/night layers: plain canvases nằm TRÊN game canvas
+   (mới thấy hạt/tint — game canvas render opaque, phủ kín bên dưới).
+   Chống bug cũ "weather đè màn hình nuốt click" bằng pointer-events:none
+   (cả inline trong TS lẫn !important ở đây) + main.ts bind input vào
+   game.canvas của Phaser (không querySelector). z-index:1 giữ hạt/tint trên
+   game nhưng dưới HUD (#overlay z-index:2). */
 #daynight-fx {
   position: fixed;
   inset: 0;
   z-index: 1;
-  pointer-events: none;
+  pointer-events: none !important;
 }
 #weather-fx {
   position: fixed;
   inset: 0;
   z-index: 1;
-  pointer-events: none;
+  pointer-events: none !important;
 }
 #overlay {
   position: absolute; inset: 0;

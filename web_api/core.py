@@ -51,8 +51,14 @@ log = logging.getLogger("WEB")
 
 # Weather keys accepted by /setweather on web (mirrors the Discord command's
 # label->key map; data-driven, no logic changes needed to extend).
+# Must cover ALL animated web overlay keys (rain/heavy_rain/storm/snow/cold/
+# wind — see web_client/src/weather.ts STYLES) plus every static Discord key,
+# otherwise admins cannot demo weather on web and it feels "turned off".
+# Legacy aliases (sun/clouds/fog) kept for backward compatibility.
 WEATHER_KEYS = (
-    "sun_clouds", "sun", "clouds", "rain", "storm", "snow", "wind", "fog",
+    "sun_clouds", "sunny", "cloudy", "heavy_clouds",
+    "rain", "heavy_rain", "storm", "snow", "cold", "wind",
+    "fog", "sun", "clouds",
 )
 
 
@@ -536,6 +542,9 @@ class WebHub:
             return
         async with rt.lock:
             rt.weather_key = args[0]
+            # Pin manual key (same as the Discord /setweather path): the auto
+            # weather loop only refreshes weather_state while pinned.
+            rt.weather_manual = True
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"Đã đổi thời tiết: {args[0]}",
         })

@@ -207,6 +207,10 @@ class ScenarioRuntime:
     weather_key: str = "sun_clouds"
     # Latest national weather snapshot (drives HUD + gameplay modifiers).
     weather_state: Optional[WeatherState] = None
+    # True when an admin pinned this scenario via /setweather (manual key).
+    # While pinned, the auto _weather_loop only refreshes weather_state and
+    # never clobbers weather_key; unpinned only by the "Tự Động" resume path.
+    weather_manual: bool = False
     # Storm lightning event: seed for the current strike (0/None = calm sky).
     # Re-randomised by GameManager._lightning_loop every 5-13 s, so strikes
     # change position/size instead of strobing the same bolt.
@@ -586,6 +590,13 @@ class GameManager:
             terrain=terrain,
         )
         self.runtimes[channel_id] = rt
+        # New scenario should open on LIVE weather, not the sun_clouds
+        # placeholder: seed from the freshest known snapshot. Keeps the web
+        # overlay + hub icon truthful from the first snapshot.
+        latest = getattr(self, "_latest_weather", None)
+        if latest is not None:
+            rt.weather_state = latest
+            rt.weather_key = latest.weather_key
         return rt
 
     async def load_blocks(self, rt: ScenarioRuntime) -> None:
@@ -1427,15 +1438,28 @@ class GameManager:
 
         A single network call feeds all channels (rule #16: per-channel lock for
         the state write, but one shared fetch), so we never multiply quota use.
+
+        Manual-override safety (web client "weather looks off" bug): an admin
+        /setweather override pins rt.weather_key to the chosen key. A later
+        auto-fetch must NOT clobber that pinned key — only refresh the
+        underlying WeatherState snapshot (ratios/buffs). The pinned scenario
+        resumes real weather only via /setweather "Tự Động" (WEATHER_AUTO on
+        Discord) — see _force_weather_fetch. Same for side_runtimes.
         """
         import time
 
         while True:
             ws = await self.weather_service.fetch(time.time())
-            for rt in self.runtimes.values():
+            # Cache the freshest snapshot: new scenarios seed from it so they
+            # open on live weather instead of the sun_clouds placeholder.
+            self._latest_weather = ws
+            for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
                 async with rt.lock:
                     rt.weather_state = ws
-                    rt.weather_key = ws.weather_key
+                    # Only adopt the fresh auto key when the scenario is NOT
+                    # manually pinned by an admin override.
+                    if not getattr(rt, "weather_manual", False):
+                        rt.weather_key = ws.weather_key
                 hub = getattr(self, "hub_coalescer", None)
                 if hub is not None:
                     hub.schedule(rt.channel_id, {"type": "weather"})

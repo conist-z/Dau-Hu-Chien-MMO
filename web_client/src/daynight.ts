@@ -146,6 +146,9 @@ export class DayNightFx {
   /** Mount into a container (game-root) once, above the Phaser canvas. */
   mount(parent: HTMLElement): void {
     if (this.canvas.parentElement === parent) return;
+    // LAYER SAFETY: như weather-fx — giữ appendChild + pointer-events:none
+    // (xem weather.ts). Canvas này phải nằm trên game canvas mới thấy tint.
+    this.canvas.style.pointerEvents = "none";
     parent.appendChild(this.canvas);
   }
 

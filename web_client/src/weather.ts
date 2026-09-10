@@ -140,6 +140,12 @@ export class WeatherFx {
   /** Mount into a container (game-root) once, above the Phaser canvas. */
   mount(parent: HTMLElement): void {
     if (this.canvas.parentElement === parent) return;
+    // LAYER SAFETY (bug cũ: weather canvas đè màn hình nuốt click — đã fix
+    // bằng pointer-events:none + bind input vào game.canvas của Phaser):
+    // canvas này PHẢI nằm TRÊN game canvas mới thấy được hạt mưa/tuyết
+    // (game canvas render opaque, phủ kín mọi thứ bên dưới). Giữ appendChild
+    // + tái khẳng định pointer-events:none ở đây và trong CSS (!important).
+    this.canvas.style.pointerEvents = "none";
     parent.appendChild(this.canvas);
   }
 

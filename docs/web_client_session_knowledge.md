@@ -156,6 +156,25 @@ git add … ; git commit; git push github-dauhu main; git push origin main
   rain, heavy_rain, storm, snow, cold, wind` (+`sun, clouds, fog` legacy).
   Client WEATHER_ICONS phải map đủ 13 key — thiếu là hiện ❓ ("lúc được lúc
   không" thực ra là key lạ).
+- **Web weather overlay KHÔNG có gate tắt/mở** (khác Discord `weather_fx_enabled`
+  mặc định OFF): web client vẽ particle trực tiếp từ `snapshot.weather` qua
+  `weatherFx.setWeather()` mỗi 20 Hz — key animated (rain/heavy_rain/storm/
+  snow/cold/wind/fog) là hiện hạt ngay. "Bị tắt" trên web thực chất là 1 trong:
+  (a) server đang ở key tĩnh (sun_clouds/sunny/cloudy/heavy_clouds — đúng là
+  KHÔNG có hạt, theo thiết kế); (b) fetch Open-Meteo fail → fallback clear;
+  (c) admin /setweather bị auto-fetch 15 phút sau đè lại (ĐÃ FIX 11/09 bằng
+  `rt.weather_manual` pin — xem game/manager.py `_weather_loop`); (d) scenario
+  mới mở vẫn ở placeholder sun_clouds (ĐÃ FIX: seed từ `_latest_weather`).
+- **Bug weather đè màn hình nuốt click — ĐÃ FIX 3 lớp, ĐỪNG PHÁ** (từng bị:
+  querySelector lấy nhầm canvas thời tiết): (1) weather/daynight canvas có
+  `pointer-events:none` cả inline (TS constructor + mount) lẫn CSS `!important`,
+  z-index:1 (dưới #overlay z-index:2); (2) main.ts bind input vào `game.canvas`
+  (Phaser), TUYỆT ĐỐI KHÔNG `querySelector("#game-root canvas")`; (3) canvas
+  weather PHẢI nằm TRÊN game canvas mới thấy hạt (game render opaque) — đừng
+  "fix click" bằng cách chèn xuống dưới, sẽ làm mất hạt mà click vẫn vậy.
+- **WEATHER_KEYS web (core.py) phải cover đủ 13 key** như client (ĐÃ FIX 11/09:
+  thêm heavy_rain/sunny/cloudy/heavy_clouds/cold) — thiếu là admin không demo
+  được thời tiết đó trên web, cảm giác như "bị tắt".
 
 ## 5. Test / debug nhanh (không đoán mò)
 - **Smoke test live flow** (chạy từ máy dev, không cần browser):
