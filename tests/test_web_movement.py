@@ -164,6 +164,58 @@ def test_web_tick_respects_zero_vector():
     assert (p.x_f, p.y_f) == before
 
 
+def test_web_tick_revives_a_lost_respawn():
+    """hp 0 with no deadline (bot restarted while dead / side world death) must
+    not lock the player out forever: the tick revives them on the spot."""
+    from game.manager import GameManager
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(1, "test-map")
+    assert gm.register_web_session(1, 42, "dead")
+    p = rt.state.get_player(42)
+    p.hp = 0
+    p.visible = False
+    p.dead_until = None  # the lost respawn task
+    assert p.alive is False
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(gm._web_tick_runtime(rt, rt.web_sessions, 10.0))
+        loop.run_until_complete(asyncio.sleep(0))  # drain the debounced save
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+    assert p.alive is True
+    assert p.visible is True and p.hp == p.max_hp
+
+
+def test_dispatch_revives_a_lost_respawn():
+    """The very next action must work instead of answering "dead" forever."""
+    from game.actions import MoveAction
+    from game.manager import GameManager
+    from game.state import Direction
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(1, "test-map")
+    p = rt.state.add_player(42, "stuck")
+    p.sync_float_from_int()
+    p.hp = 0
+    p.visible = False
+    p.dead_until = None
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        _, result = loop.run_until_complete(
+            gm.dispatch(1, MoveAction(42, Direction.EAST), rt=rt)
+        )
+        loop.run_until_complete(asyncio.sleep(0))
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+    assert p.alive is True
+    assert result is not None and result.reason != "dead"
+
+
 def test_input_vector_is_clamped():
     from game.manager import GameManager
 

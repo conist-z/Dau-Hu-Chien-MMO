@@ -124,6 +124,28 @@ class Player:
     def alive(self) -> bool:
         return self.hp > 0 and self.dead_until is None
 
+    def revive_if_expired(self, now: float) -> bool:
+        """Lazily revive a dead player whose respawn window is over.
+
+        ``dead_until`` is EPHEMERAL (never persisted) and the 5 s respawn is
+        carried by an in-memory task. A bot restart, a runtime torn down while
+        the player was dead, or a death in a side world all left ``hp == 0``
+        with no deadline AND no task — and ``alive`` (hp > 0 AND no deadline)
+        then stayed False forever: the player was locked in place, every
+        action answered "dead" and the web overlay counted down from 0 (the
+        "bị nhốt ở vòng tròn vô hình" report). Any caller can heal that; returns
+        True only when it actually revived the player.
+        """
+        if self.alive:
+            return False
+        if self.dead_until is not None and self.dead_until > now:
+            return False
+        self.hp = self.max_hp
+        self.visible = True
+        self.dead_until = None
+        self.death_reason = None
+        return True
+
     def sync_int_from_float(self) -> None:
         """Derive int grid coords from the float position (floor)."""
         self.x = _tile_of(self.x_f)

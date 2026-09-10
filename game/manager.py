@@ -534,10 +534,21 @@ class GameManager:
                                 sessions: Dict[int, WebSession], now: float) -> None:
         moved_any = False
         zombie_touched = False
+        import time as _time
+
         async with rt.lock:
             for user_id, sess in list(sessions.items()):
                 player = rt.state.get_player(user_id)
-                if player is None or not player.alive:
+                if player is None:
+                    continue
+                if not player.alive:
+                    # Self-heal a LOST respawn (bot restart, side world, or a
+                    # dropped task): ``dead_until`` is ephemeral, so without
+                    # this the player stayed "dead" forever — frozen in place
+                    # and every action refused (see Player.revive_if_expired).
+                    if player.revive_if_expired(_time.time()):
+                        moved_any = True
+                        self._schedule_save(rt, player)
                     continue
                 if sess.dx == 0.0 and sess.dy == 0.0:
                     sess.last_tick = now
@@ -1069,7 +1080,15 @@ class GameManager:
         # Any dispatched action counts as session activity (watchdog reset).
         self.touch_session(channel_id, action.user_id)
         zombie_result = None
+        import time as _time
+
         async with rt.lock:
+            # A respawn whose in-memory task was lost (restart / side world)
+            # must not keep the player locked out: revive lazily so the very
+            # next action works instead of answering "dead" forever.
+            _actor = rt.state.get_player(action.user_id)
+            if _actor is not None and _actor.revive_if_expired(_time.time()):
+                self._schedule_save(rt, _actor)
             # Expose the runtime-scoped inventory map to the pure rule layer
             # (apply_attack reads the held item for bare-hand vs weapon dmg).
             # The hotbar is a projection of each ordered bag — no separate map.
@@ -1273,7 +1292,11 @@ class GameManager:
 
     async def _respawn_after(self, channel_id: int, user_id: int) -> None:
         await asyncio.sleep(5.0)
-        rt = self.runtimes.get(channel_id)
+        # Multi-world: the player may have died in a SIDE runtime (lobby /
+        # interior). Looking only at self.runtimes made ``player`` come back
+        # None there, so the task returned without ever respawning them —
+        # dead forever. runtime_of resolves the world that holds them.
+        rt = self.runtime_of(channel_id, user_id)
         if rt is None:
             return
         async with rt.lock:
