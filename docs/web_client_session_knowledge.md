@@ -129,6 +129,28 @@ git add … ; git commit; git push github-dauhu main; git push origin main
   code so `"cây" in nl` → cây thành bàn đạp. Giờ `"cay" in nl` chặn (trừ
   "cay chet" cây chết + "cay cau" cầu — giữ nguyên behavior test pin).
 
+### Mouse / hover / click (session 10/09 — mấy lần "mất ô chuột")
+- **CANVAS ĐÚNG = `game.canvas` (Phaser), TUYỆT ĐỐI KHÔNG `querySelector("#game-root canvas")`**:
+  canvas weather-fx được mount vào `#game-root` **TRƯỚC** khi Phaser khởi tạo
+  → selector lấy canvas ĐẦU TIÊN = canvas thời tiết (có `pointer-events: none`)
+  → MỌI mouse listener gắn nhầm: không hover box, không click, chuột phải lọt
+  menu Chrome (menu Chrome hiện ra = dấu hiệu chắc chắn listener sai canvas).
+  Fix: `main.ts` bind input vào `game.canvas` trực tiếp (chờ `game.events.once(READY)`).
+- **Nguồn vị trí chuột**: DOM `mousemove` trên canvas là nguồn gốc; hover box
+  derive lại tile **mỗi frame** qua `camera.getWorldPoint` (không cache tile —
+  camera cuộn dưới con trỏ đứng yên làm cache stale). Click (attack/chop/
+  break/place) tính ô từ **tọa độ của chính sự kiện mousedown** — không đọc
+  cache, không dùng `activePointer` của Phaser làm nguồn chính (đã thử, vỡ
+  tương tác).
+- Hover box: `ensureHoverSquare` tái tạo mỗi frame nếu thiếu, depth 100,
+  `setPosition + visible = true` mỗi frame. Không khoanh theo map bounds —
+  bounds chỉ chặn click.
+- `screenToTile` phải public/export để `main.ts` dùng lúc click.
+- **Bài học debug**: mình dò code nhiều vòng không thấy lỗi vì chain nhìn
+  đúng — chốt bằng hiện tượng thực tế người dùng (menu chuột phải Chrome) mới
+  ra manh mối. Khi không reproduce được từ code, HỎI triệu chứng cụ thể ở
+  browser (F12 console, hành vi context menu) trước khi đoán tiếp.
+
 ### Weather
 - Server sample key từ bộ ĐẦY ĐỦ: `sun_clouds, sunny, cloudy, heavy_clouds,
   rain, heavy_rain, storm, snow, cold, wind` (+`sun, clouds, fog` legacy).

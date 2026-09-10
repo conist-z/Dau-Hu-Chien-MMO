@@ -109,6 +109,9 @@ cd "D:\dự án mini build bot discord mmo event"
 # then Restart bot on the panel. Details: docs/web_client_session_knowledge.md
 
 # Web client (TypeScript) — Railway auto-deploys on git push:
+# ⚠️ Mouse input MUST bind to `game.canvas` (Phaser) — NEVER `querySelector("#game-root canvas")`:
+# the weather-fx canvas mounts into #game-root BEFORE Phaser, so that selector grabs the wrong
+# (pointer-events: none) canvas → hover box + clicks silently die, right-click leaks Chrome menu.
 cd web_client; npm run build
 rm -rf relay/dist; cp -r dist relay/dist
 # recreate web_client/relay/dist/app-config.json (client_id + redirect_uri) if wiped
