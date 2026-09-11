@@ -670,7 +670,10 @@ export class WorldScene extends Phaser.Scene {
     // timer); we only feed the base idle/walk action here.
     const nowMs = performance.now();
     if (this.selfDoll?.ready && this.selfMarker) {
-      const moving = this.inputVec.running;
+      // MOVING = any movement input, not Shift-running. The old check read
+      // inputVec.running (Shift only), so plain walking never left the idle
+      // row — no leg animation.
+      const moving = this.inputVec.dx !== 0 || this.inputVec.dy !== 0;
       this.selfDoll.animate(this.selfX * 32, this.selfY * 32 + 16, moving ? "walk" : "idle", this.selfDir, nowMs);
     }
 
@@ -761,12 +764,18 @@ export class WorldScene extends Phaser.Scene {
         continue;
       }
       if (z.body instanceof Phaser.GameObjects.Image) {
-        // Server-authoritative anim -> Kaetram row; local frame ticks at the
-        // row's own pace (walk = shambling ~6fps, atk = one 450ms lunge,
-        // idle = slow 2-frame breathe). setFrame picks ONE 32px cell — the
-        // full 160x288 sheet is never drawn stretched.
-        const row = z.anim === "atk" ? 0 : z.anim === "walk" ? 1 : 2;
-        const len = z.anim === "atk" ? 5 : z.anim === "walk" ? 4 : 2;
+        // Server-authoritative anim + facing -> Kaetram zombie sheet row.
+        // The Kaetram manifest defines NINE rows: atk/walk/idle x right/up/
+        // down — LEFT mirrors the right row (flipX), so facing the sprite
+        // follows the server-facing instead of permanently staring right.
+        const fx = this.zombieFlipX(z.facing);
+        const facing = fx ? "right" : this.zombieRowFacing(z.facing);
+        const row = z.anim === "atk"
+          ? (facing === "up" ? 3 : facing === "down" ? 6 : 0)
+          : z.anim === "walk"
+            ? (facing === "up" ? 4 : facing === "down" ? 7 : 1)
+            : (facing === "up" ? 5 : facing === "down" ? 8 : 2);
+        const len = z.anim === "atk" ? 4 : z.anim === "walk" ? 4 : 2;
         const pace = z.anim === "atk" ? 90 : z.anim === "walk" ? 160 : 500;
         if (now - z.frameT0 >= pace) {
           z.frameT0 = now;
@@ -775,6 +784,7 @@ export class WorldScene extends Phaser.Scene {
             : (z.frame + 1) % len; // walk/idle loop
         }
         this.applyMobCell(z.body, z.frame, row, ZOMBIE_SIZE);
+        z.body.setFlipX(fx);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
           z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
@@ -1380,6 +1390,21 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.neededByAnchor.set(`${tx},${ty}`, needed);
+  }
+
+  /** True when the zombie facing needs the RIGHT row mirrored (Kaetram
+   * ships no left rows — left = flipX of right). */
+  private zombieFlipX(facing: string): boolean {
+    const f = (facing || "S").toUpperCase();
+    return f === "W" || f === "NW" || f === "SW";
+  }
+
+  /** Sheet-facing suffix (right/up/down) for a non-mirrored zombie facing. */
+  private zombieRowFacing(facing: string): "right" | "up" | "down" {
+    const f = (facing || "S").toUpperCase();
+    if (f === "N" || f === "NE" || f === "NW") return "up";
+    if (f === "E" || f === "NE" || f === "SE") return "right";
+    return "down"; // S, SE, SW
   }
 
   /** Show ONE 32px cell of a mob spritesheet at the requested display size.
