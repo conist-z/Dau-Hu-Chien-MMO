@@ -59,15 +59,7 @@ export class PaperdollBody {
       this.weapon.destroy();
       this.weapon = null;
     }
-    if (!stem) return;
-    const entry: SheetEntry | undefined = this.manifest.weapons[stem];
-    const key = `pd-weapon-${stem}`;
-    if (!entry || !this.scene.textures.exists(key)) return;
-    this.weapon = this.scene.add
-      .sprite(this.base!.x, this.base!.y + this.weaponYOff(entry), key, 0)
-      .setOrigin(0.5, 1)
-      .setDepth(this.base!.depth + 0.1);
-    this.syncWeaponFrame();
+    this.ensureWeapon();
   }
 
   /** Drive the animation: action + facing + frame clock. Call every tick. */
@@ -101,6 +93,7 @@ export class PaperdollBody {
     this.frame = Math.floor((now - this.frameT0) / speed) % this.manifest.frames_per_row;
     // Walk animates only while the avatar actually moves (caller passes
     // idle when velocity is zero), idle loops, atk runs once via atkEndsAt.
+    this.ensureWeapon(); // weapon sheet may have just registered
     this.applyBaseFrame();
     this.syncWeaponFrame();
   }
@@ -126,6 +119,19 @@ export class PaperdollBody {
   }
 
   // ---- internals ----
+
+  /** Create the weapon sprite once its sheet texture has registered. */
+  private ensureWeapon(): void {
+    if (this.weapon || !this.base || !this.weaponStem) return;
+    const entry: SheetEntry | undefined = this.manifest.weapons[this.weaponStem];
+    const key = `pd-weapon-${this.weaponStem}`;
+    if (!entry || !this.scene.textures.exists(key)) return; // retry next tick
+    this.weapon = this.scene.add
+      .sprite(this.base.x, this.base.y + this.weaponYOff(entry), key, 0)
+      .setOrigin(0.5, 1)
+      .setDepth(this.base.depth + 0.1);
+    this.syncWeaponFrame();
+  }
 
   /** Weapon bottom offset: centre the taller weapon frame on the body. */
   private weaponYOff(_entry: SheetEntry): number {

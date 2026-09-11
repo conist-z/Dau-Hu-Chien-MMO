@@ -456,13 +456,23 @@ export class WorldScene extends Phaser.Scene {
     }
     if (this.pdBytes["__base"] && !this.paperdollReady) {
       registerPaperdollTextures(this, this.playersManifest, this.pdBytes["__base"], this.pdBytes);
-      this.paperdollReady = true;
-      // Bodies may already exist (welcome before textures) — spawn them now.
-      if (this.selfMarker && !this.selfDoll) {
-        this.spawnSelfDoll();
-        this.selfMarker.setVisible(false);
-      }
-      for (const [id, rp] of this.players) this.spawnRemoteDoll(id, rp);
+      // addSpriteSheet decodes the image ASYNC — the texture does not exist
+      // yet. Poll for it, and only then swap the square for the Kaetram body
+      // (spawning earlier rendered the Phaser green "missing texture" box).
+      const trySpawn = (): void => {
+        if (this.paperdollReady || !this.textures.exists("pd-base")) return;
+        this.paperdollReady = true;
+        if (this.selfMarker && !this.selfDoll) {
+          this.spawnSelfDoll();
+          this.selfMarker.setVisible(false);
+        }
+        for (const [id, rp] of this.players) this.spawnRemoteDoll(id, rp);
+      };
+      const poll = this.time.addEvent({ delay: 50, loop: true, callback: () => {
+        trySpawn();
+        if (this.paperdollReady) poll.remove();
+      } });
+      trySpawn(); // in case the decode finished synchronously
     }
   }
 
@@ -513,7 +523,8 @@ export class WorldScene extends Phaser.Scene {
     this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
-    // Paperdoll ready already? Swap the square for the Kaetram body at once.
+    // Paperdoll texture already live? Swap the square for the body at once.
+    // (Keep the square — it becomes invisible only when the doll spawns.)
     if (this.paperdollReady) {
       this.spawnSelfDoll();
       this.selfMarker.setVisible(false);
@@ -576,7 +587,8 @@ export class WorldScene extends Phaser.Scene {
       rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
       container.setData("pid", p.id);
       this.players.set(p.id, rp);
-      // Paperdoll ready? Spawn the Kaetram body immediately.
+      // Paperdoll texture already live? Swap immediately (square stays as
+      // invisible fallback geometry otherwise).
       if (this.paperdollReady) this.spawnRemoteDoll(p.id, rp);
     }
     rp.buf.push([now, p.x * 32, p.y * 32]);
