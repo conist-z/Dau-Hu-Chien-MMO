@@ -148,9 +148,13 @@ export class WorldScene extends Phaser.Scene {
    * half of it is the input transit leg of natural echo lag. */
   private netRttMs = 0;
 
+  private sessionStartT = 0;
+
   /** Wire the measured websocket RTT (from net ping/pong EMA) into
-   * echoSlack — input transit is half the round trip. */
+   * echoSlack — input transit is half the round trip. Also marks the
+   * session start for the join-warmup grace window. */
   setNetRtt(rttMs: number): void {
+    if (this.sessionStartT === 0) this.sessionStartT = performance.now();
     this.netRttMs = rttMs;
   }
   /** Rolling stats of real snapshot arrival gaps (ms), updated in
@@ -158,7 +162,7 @@ export class WorldScene extends Phaser.Scene {
    * echoSlack() so reconciliation adapts to each player's actual link
    * instead of a fixed threshold. */
   private snapGapAvg = 50;
-  private snapGapMax = 50;
+  private snapGapMax = 150; // pessimistic init: assume a bursty first seconds
 
   /** Lead (tiles) tolerated before any pull-back: the natural echo lag of
    * THIS connection — input transit (half RTT), server tick interval, the
@@ -166,9 +170,19 @@ export class WorldScene extends Phaser.Scene {
    * small floor. A stop after a normal run never exceeds it, so the player
    * is never dragged back for just having lagged. */
   private echoSlack(): number {
+    // Join warmup: the first seconds on a new connection are the WORST —
+    // assets are still streaming, RTT is fresh, gaps are bursty. Until the
+    // connection has settled (8s of snapshots + an RTT measurement), never
+    // correct at all: a wrong pull during warmup is reported as "mới vào
+    // lag hơn và giật mạnh hơn".
+    if (this.lastServerRecv > 0 && performance.now() - this.sessionStartT < 8000) {
+      return Number.POSITIVE_INFINITY;
+    }
     const speed = this.welcome?.self?.run_speed ?? 6.0;
-    const rttHalfS = this.netRttMs > 0 ? this.netRttMs / 2000 : 0.05;
-    return Math.max(1.2, speed * (0.05 + rttHalfS + this.snapGapMax / 1000));
+    const rttHalfS = this.netRttMs > 0 ? this.netRttMs / 2000 : 0.08;
+    // Floor is generous: a conservative slack never wrongly pulls; a tight
+    // one does. Err on the side of playability.
+    return Math.max(2.0, speed * (0.05 + rttHalfS + this.snapGapMax / 1000));
   }
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
@@ -658,11 +672,12 @@ export class WorldScene extends Phaser.Scene {
     this.updateFacing();
 
     // Paperdoll animation: drive self + remote dolls from the shared clock.
+    // The atk overlay is owned by PaperdollBody (swing() arms a one-shot
+    // timer); we only feed the base idle/walk action here.
     const nowMs = performance.now();
     if (this.selfDoll?.ready && this.selfMarker) {
       const moving = this.inputVec.running;
-      const action = this.selfDoll.attacking ? "atk" : moving ? "walk" : "idle";
-      this.selfDoll.animate(this.selfX * 32, this.selfY * 32 + 16, action, this.selfDir, nowMs);
+      this.selfDoll.animate(this.selfX * 32, this.selfY * 32 + 16, moving ? "walk" : "idle", this.selfDir, nowMs);
     }
 
     const now = performance.now() - INTERP_BUFFER_MS;
@@ -698,8 +713,7 @@ export class WorldScene extends Phaser.Scene {
         rp.hand.setVisible(false);
         rp.toolIcon.setVisible(false);
         const moving = Math.hypot(next[1] - prev[1], next[2] - prev[2]) > 1;
-        const action = doll.attacking ? "atk" : moving ? "walk" : "idle";
-        doll.animate(x, y + 16, action, rp.dir, performance.now());
+        doll.animate(x, y + 16, moving ? "walk" : "idle", rp.dir, performance.now());
       }
     }
     this.updateZombieFrames();

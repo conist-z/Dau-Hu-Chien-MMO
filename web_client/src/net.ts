@@ -208,9 +208,12 @@ export class Net {
 
   private startPing(): void {
     if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+    // First ping IMMEDIATELY (reconciliation needs RTT during the join
+    // warmup — the worst-lag window), then every 5s to track drift.
+    this.send({ type: MSG_PING, t: Date.now() });
     this.pingTimer = window.setInterval(() => {
       this.send({ type: MSG_PING, t: Date.now() });
-    }, 15000);
+    }, 5000);
   }
 
   private onMessage(raw: string): void {
