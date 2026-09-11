@@ -113,6 +113,9 @@ function applyInventory(inv: InventoryPayload): void {
 }
 
 const net = new Net({
+  onRtt: (rttMs) => {
+    scene.setNetRtt(rttMs);
+  },
   onWelcome: (frame) => {
     welcome = frame;
     scene.buildWorld(frame, (name) => net.fetchAsset(name));

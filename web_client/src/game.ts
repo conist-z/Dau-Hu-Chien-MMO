@@ -144,6 +144,15 @@ export class WorldScene extends Phaser.Scene {
   private zombieTextureReady = false;
   private zombieFetchAsked = false;
   private lastZombieFrameT = 0;
+  /** Latest measured websocket RTT (EMA, ms) from the net ping/pong loop;
+   * half of it is the input transit leg of natural echo lag. */
+  private netRttMs = 0;
+
+  /** Wire the measured websocket RTT (from net ping/pong EMA) into
+   * echoSlack — input transit is half the round trip. */
+  setNetRtt(rttMs: number): void {
+    this.netRttMs = rttMs;
+  }
   /** Rolling stats of real snapshot arrival gaps (ms), updated in
    * applySnapshot: average + max over the last few seconds. Feeds
    * echoSlack() so reconciliation adapts to each player's actual link
@@ -152,13 +161,14 @@ export class WorldScene extends Phaser.Scene {
   private snapGapMax = 50;
 
   /** Lead (tiles) tolerated before any pull-back: the natural echo lag of
-   * THIS connection — server tick interval + the worst recent snapshot gap,
-   * valued at the current run speed, with a small floor. A stop after a
-   * normal run never exceeds it, so the player is never dragged back for
-   * just having lagged. */
+   * THIS connection — input transit (half RTT), server tick interval, the
+   * worst recent snapshot gap, valued at the current run speed, with a
+   * small floor. A stop after a normal run never exceeds it, so the player
+   * is never dragged back for just having lagged. */
   private echoSlack(): number {
     const speed = this.welcome?.self?.run_speed ?? 6.0;
-    return Math.max(1.2, speed * (0.05 + this.snapGapMax / 1000));
+    const rttHalfS = this.netRttMs > 0 ? this.netRttMs / 2000 : 0.05;
+    return Math.max(1.2, speed * (0.05 + rttHalfS + this.snapGapMax / 1000));
   }
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
@@ -831,25 +841,26 @@ export class WorldScene extends Phaser.Scene {
       if (drift > 20) {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > this.echoSlack() && v.dx === 0 && v.dy === 0) {
+      } else if (drift > this.echoSlack() + 0.1 && v.dx === 0 && v.dy === 0) {
         // Correct ONLY while standing still, and ONLY the part of the lead
-        // that cannot be normal echo lag. Natural drift while running is
-        // speed x (snapshot interval + one-way latency) — at run speed on a
-        // VN link that is ~1.5-2.5 tiles, and the player must NOT be yanked
-        // back for it the moment they release a key (the "đi xong bị kéo
-        // lại" rage). echoSlack() measures their ACTUAL recent snapshot
-        // cadence; only the excess beyond it is eased back, gently, through
-        // the collision grid. A >20-tile gap is a portal/respawn — snap.
-        const excess = drift - this.echoSlack();
-        const pull = Math.min(
-          0.3 * 60 * this.frameDtSec,
-          excess * 0.15 + 0.03,
+        // that cannot be normal echo lag. Two rules make this invisible to
+        // the player:
+        // 1. The glide TARGET is (serverPos + slack along the drift axis),
+        //    NOT serverPos itself — the legit lag lead is never reclaimed.
+        //    (The old target-serverPos version kept grinding the player all
+        //    the way back even after the excess was gone.)
+        // 2. The step is capped at the excess, so it can never overshoot
+        //    below the slack line.
+        const slack = this.echoSlack();
+        const excess = drift - slack;
+        const step = Math.min(
+          Math.min(0.3 * 60 * this.frameDtSec, excess * 0.15 + 0.03),
+          excess,
         );
-        const k = pull / Math.max(1e-6, drift);
-        const dx = (this.selfServerPos.x - this.selfX) * k;
-        const dy = (this.selfServerPos.y - this.selfY) * k;
-        this.selfX += this.freeX(this.selfX, this.selfY, dx);
-        this.selfY += this.freeY(this.selfX, this.selfY, dy);
+        const ux = (this.selfX - this.selfServerPos.x) / Math.max(1e-6, drift);
+        const uy = (this.selfY - this.selfServerPos.y) / Math.max(1e-6, drift);
+        this.selfX += this.freeX(this.selfX, this.selfY, -ux * step);
+        this.selfY += this.freeY(this.selfX, this.selfY, -uy * step);
       }
     }
     // Invariant guard: the collision box must NEVER sit inside a solid tile.

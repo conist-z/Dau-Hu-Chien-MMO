@@ -31,6 +31,8 @@ export class Net {
   private pendingInput = { dx: 0, dy: 0, running: false, dirty: false };
   private inputTimer: number | null = null;
   private pingTimer: number | null = null;
+  private lastRttMs = 0;
+  onRtt: ((rttMs: number) => void) | null = null;
 
   constructor(handlers: NetHandlers) {
     this.handlers = handlers;
@@ -249,8 +251,20 @@ export class Net {
       case "asset_data":
         this.handlers.onAssetData(frame.name, frame.b64);
         break;
-      case "pong":
+      case "pong": {
+        // RTT measurement: the server echoes the ping's Date.now() back, so
+        // pong.t - now = full round trip. EMA smooths jitter; feeds the
+        // reconciliation echoSlack (input transit = half RTT).
+        const sent = frame.t as number;
+        if (typeof sent === "number" && sent > 0) {
+          const rtt = Date.now() - sent;
+          if (rtt > 0 && rtt < 10000) {
+            this.lastRttMs = this.lastRttMs > 0 ? this.lastRttMs * 0.7 + rtt * 0.3 : rtt;
+            this.handlers.onRtt?.(this.lastRttMs);
+          }
+        }
         break;
+      }
       case "action_result":
         this.handlers.onActionResult(frame);
         break;
