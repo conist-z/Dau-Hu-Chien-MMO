@@ -67,28 +67,32 @@ export class PaperdollBody {
     this.ensureWeapon();
   }
 
-  /** Drive the animation: action + facing + frame clock. Call every tick. */
+  /** Drive the animation: action + facing + frame clock. Call every tick.
+   * `action` is the BASE action (idle/walk) derived from movement — the
+   * atk overlay is OWNED by this class: swing() arms a one-shot timer and
+   * the atk rows play exactly once over it. Callers must NOT pass "atk"
+   * here (they can't know when the swing expires without re-arming it —
+   * the stale-param comparison restarted the swing forever: one click,
+   * infinite loop). */
   animate(
     x: number,
     y: number,
-    action: "idle" | "walk" | "atk",
+    action: "idle" | "walk",
     dir: string,
     now: number,
   ): void {
     if (!this.base) return;
     // Position (feet anchor).
     this.base.setPosition(x, y);
-    // Atk plays ONCE (count=1 in Kaetram) then falls back to idle.
+    // Atk plays ONCE (count=1 in Kaetram) then falls back to the base action.
     if (this.action === "atk" && now >= this.atkEndsAt) {
-      this.action = "idle";
-    }
-    if (action !== this.action || dir !== this.dir) {
-      // Restart the clock when the action or facing changes (walk loops
-      // restart cleanly; atk restart = re-swing, matching Kaetram behaviour).
-      if (action === "atk" && this.action !== "atk") {
-        this.atkEndsAt = now + this.manifest.speeds.atk * this.manifest.frames_per_row;
-      }
       this.action = action;
+      this.frameT0 = now;
+    }
+    const eff = this.action === "atk" ? "atk" : action;
+    if (eff !== this.action || dir !== this.dir) {
+      // Restart the clock when the effective action or facing changes.
+      this.action = eff;
       this.dir = dir;
       this.frame = 0;
       this.frameT0 = now;
@@ -108,8 +112,11 @@ export class PaperdollBody {
     return this.action === "atk";
   }
 
-  /** Trigger a one-shot swing (attack/chop/mine feedback). */
+  /** Trigger a one-shot swing (attack/chop/mine feedback). A swing that is
+   * still playing is NOT restarted (Kaetram plays the atk rows once per
+   * attack; echo-driven re-triggers must never extend it). */
   swing(now: number): void {
+    if (this.action === "atk" && now < this.atkEndsAt) return;
     this.action = "atk";
     this.atkEndsAt = now + this.manifest.speeds.atk * this.manifest.frames_per_row;
     this.frame = 0;
@@ -132,21 +139,29 @@ export class PaperdollBody {
     const key = `pd-weapon-${this.weaponStem}`;
     if (!entry || !this.scene.textures.exists(key)) return; // retry next tick
     this.weapon = this.scene.add
-      .sprite(this.base.x, this.base.y + this.weaponYOff(entry), key, 0)
+      .sprite(this.weaponX(), this.weaponY(), key, 0)
       .setOrigin(0.5, 1)
       .setDepth(this.base.depth + 0.1)
       .setScale(this.scale);
     this.syncWeaponFrame();
   }
 
-  /** Weapon bottom offset: centre the taller weapon frame on the body.
-   * Kaetram: weapon offsetY=-24 vs body offsetY=-32 => weapon bottom sits
-   * 8px BELOW the body bottom (the 48px frame centres on the 32px body).
-   * With origin (0.5, 1) anchored at feet, weapon origin sits at feet+8,
-   * scaled by the body upscale so the overlay hugs the body proportionally.
-   */
-  private weaponYOff(_entry: SheetEntry): number {
-    return 8 * this.scale;
+  /** Weapon frame offset from the BODY, straight from Kaetram's sprites.json
+   * + renderer: body 32x32 drawn at offsetX -8 (no offsetY); weapon 48x48
+   * drawn at offsetX 0, offsetY -24 relative to the SAME entity origin.
+   * => weapon frame centre = body frame centre + (16, -16) px, i.e. 16px
+   * toward the weapon hand and 16px up. Mirrored when facing left (the
+   * sword lives in the RIGHT hand on the unflipped art). */
+  private weaponX(): number {
+    const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
+    return this.base!.x + (flip ? -16 : 16) * this.scale;
+  }
+
+  /** Feet-anchored Y: Kaetram weapon bottom sits 8px ABOVE the body bottom
+   * (weapon: offsetY -24 + 48 = 24; body bottom: 32). The old +8 below the
+   * feet made the sword float at ground level. */
+  private weaponY(): number {
+    return this.base!.y - 8 * this.scale;
   }
 
   private rowFor(): number {
@@ -171,7 +186,7 @@ export class PaperdollBody {
     const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
     this.weapon.setFrame(row * this.manifest.frames_per_row + this.frame);
     this.weapon.setFlipX(flip);
-    this.weapon.setPosition(this.base.x, this.base.y + 8 * this.scale);
+    this.weapon.setPosition(this.weaponX(), this.weaponY());
   }
 }
 

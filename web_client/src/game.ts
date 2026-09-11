@@ -170,19 +170,12 @@ export class WorldScene extends Phaser.Scene {
    * small floor. A stop after a normal run never exceeds it, so the player
    * is never dragged back for just having lagged. */
   private echoSlack(): number {
-    // Join warmup: the first seconds on a new connection are the WORST —
-    // assets are still streaming, RTT is fresh, gaps are bursty. Until the
-    // connection has settled (8s of snapshots + an RTT measurement), never
-    // correct at all: a wrong pull during warmup is reported as "mới vào
-    // lag hơn và giật mạnh hơn".
-    if (this.lastServerRecv > 0 && performance.now() - this.sessionStartT < 8000) {
-      return Number.POSITIVE_INFINITY;
-    }
-    const speed = this.welcome?.self?.run_speed ?? 6.0;
-    const rttHalfS = this.netRttMs > 0 ? this.netRttMs / 2000 : 0.08;
-    // Floor is generous: a conservative slack never wrongly pulls; a tight
-    // one does. Err on the side of playability.
-    return Math.max(2.0, speed * (0.05 + rttHalfS + this.snapGapMax / 1000));
+    // DISABLED BY USER REQUEST: smoothness beats position authority for now
+    // (anti-speedhack/anti-desync tightening is deferred). No pull-back ever
+    // fires; the only remaining correction is the >20-tile snap (portal/
+    // respawn/death teleports), which cannot be felt as a pull. To restore,
+    // return speed * (0.05 + rttHalfS + snapGapMax/1000) with a ~2.0 floor.
+    return Number.POSITIVE_INFINITY;
   }
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
