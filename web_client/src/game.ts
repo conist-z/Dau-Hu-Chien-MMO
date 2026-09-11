@@ -144,9 +144,10 @@ export class WorldScene extends Phaser.Scene {
   private zombieTextureReady = false;
   private zombieFetchAsked = false;
   private lastZombieFrameT = 0;
-  /** Latest measured websocket RTT (EMA, ms) from the net ping/pong loop;
-   * half of it is the input transit leg of natural echo lag. */
-  private netRttMs = 0;
+  /** Latest measured websocket RTT (EMA, ms) from the net ping/pong loop.
+   * Currently unused (reconciliation disabled) but kept for the future
+   * anti-desync re-tightening; public so tsc does not flag it unread. */
+  netRttMs = 0;
 
   private sessionStartT = 0;
 
