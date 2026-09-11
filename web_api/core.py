@@ -734,7 +734,8 @@ class WebHub:
         ``blocks/<id>.png`` is served from ``assets/blocks`` so the web client
         draws the same real block faces as the Discord renderer.
         ``mobs/<id>.png`` (the Kaetram zombie sheet) is served from
-        ``assets/mobs`` the same way.
+        ``assets/mobs`` the same way. ``players/...`` serves the paperdoll
+        sheets from ``assets/players``; the manifest rides the welcome frame.
         """
         from config import ASSETS_DIR
 
@@ -746,6 +747,11 @@ class WebHub:
             base_dir = ASSETS_DIR.parent / "blocks"
         elif name.startswith("mobs/"):
             base_dir = ASSETS_DIR.parent / "mobs"
+        elif name.startswith("players/"):
+            # Paperdoll sheets (player/base + players/weapon/<tool>.png)
+            # served from assets/players — same manifest-driven pipeline as
+            # blocks/mobs so the web client can build Kaetram-style sprites.
+            base_dir = ASSETS_DIR.parent / "players"
         else:
             base_dir = ASSETS_DIR
         path = base_dir / safe

@@ -1,0 +1,139 @@
+{
+  "base": {
+    "file": "base.png",
+    "frame_w": 32,
+    "frame_h": 32,
+    "cols": 4,
+    "rows": 12,
+    "offset_x": -8,
+    "offset_y": -32
+  },
+  "weapons": {
+    "ancientshovel": {
+      "file": "weapon/ancientshovel.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "bronzeaxe": {
+      "file": "weapon/bronzeaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "bronzepickaxe": {
+      "file": "weapon/bronzepickaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "cobaltaxe": {
+      "file": "weapon/cobaltaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "cobaltpickaxe": {
+      "file": "weapon/cobaltpickaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "coppersword": {
+      "file": "weapon/coppersword.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "goldsword": {
+      "file": "weapon/goldsword.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "ironaxe": {
+      "file": "weapon/ironaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "ironpickaxe": {
+      "file": "weapon/ironpickaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "ironsword": {
+      "file": "weapon/ironsword.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "smithshammer": {
+      "file": "weapon/smithshammer.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "spoon": {
+      "file": "weapon/spoon.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    }
+  },
+  "rows": {
+    "idle_down": 0,
+    "idle_right": 1,
+    "idle_up": 2,
+    "walk_down": 3,
+    "walk_right": 4,
+    "walk_up": 5,
+    "atk_down": 6,
+    "atk_right": 7,
+    "atk_up": 8
+  },
+  "frames_per_row": 4,
+  "speeds": {
+    "idle": 250,
+    "walk": 120,
+    "atk": 50
+  },
+  "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 \u2014 see kaetram_extract/_license/ATTRIBUTION.md"
+}

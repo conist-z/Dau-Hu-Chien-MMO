@@ -15,6 +15,8 @@ from game.manager import ScenarioRuntime
 from game.zombies import iter_web_zombies
 from rendering.daynight import ingame_seconds
 
+_PLAYERS_MANIFEST_CACHE: Dict | None = None
+
 
 def _tilesets_payload(rt: ScenarioRuntime) -> List[dict]:
     """Tileset image references for the client (fetched via asset_request)."""
@@ -153,6 +155,9 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
     player = rt.state.get_player(user_id)
     return {
         "type": "welcome",
+        # Paperdoll manifest: frame grid + animation rows for the player
+        # sheets (assets/players). Static data — read once per welcome.
+        "players_manifest": _players_manifest_payload(),
         "map": {
             "id": md.map_id,
             "name": md.display_name or md.map_id,
@@ -201,6 +206,26 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "players": _players_payload(rt, user_id),
         "zombies": _zombies_payload(rt),
     }
+
+
+def _players_manifest_payload() -> dict:
+    """Paperdoll manifest (frame grid + rows + speeds) for the web client.
+
+    Pure static data from assets/players/players_manifest.json; read lazily
+    and cached so welcome building stays cheap.
+    """
+    global _PLAYERS_MANIFEST_CACHE
+    if _PLAYERS_MANIFEST_CACHE is None:
+        import json
+        from config import ASSETS_DIR
+
+        path = ASSETS_DIR.parent / "players" / "players_manifest.json"
+        try:
+            with open(path, encoding="utf-8") as f:
+                _PLAYERS_MANIFEST_CACHE = json.load(f)
+        except OSError:
+            _PLAYERS_MANIFEST_CACHE = {}
+    return _PLAYERS_MANIFEST_CACHE
 
 
 def _blocks_catalog_payload() -> List[dict]:

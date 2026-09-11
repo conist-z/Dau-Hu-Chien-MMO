@@ -82,6 +82,12 @@ function applyTexture(name: string, b64: string): void {
       scene.onMobTexture(name);
       return;
     }
+    if (name.startsWith("players/")) {
+      // Paperdoll sheet (base body / weapon) — byte-registered with the
+      // frame grid in game.ts, not a plain image.
+      scene.onPaperdollAsset(name, b64);
+      return;
+    }
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
     // rebuilding duplicated players and reset the camera).
     scene.onTilesetLoaded(name);

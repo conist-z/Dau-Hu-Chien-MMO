@@ -59,6 +59,29 @@ export interface WelcomePayload {
   // Item id currently held by self (hotbar slot -> item). Null = empty hand
   // (the hand dot still renders — plan A — just without a tool icon).
   held: string | null;
+  // Paperdoll manifest (frame grid + animation rows/speeds) for the player
+  // sheets in assets/players/. Absent on older servers — client falls back
+  // to the plan-A square body in that case.
+  players_manifest?: PlayersManifest;
+}
+
+// Manifest shape (see game/appearance.py + assets/players/players_manifest.json).
+export interface SheetEntry {
+  file: string;
+  frame_w: number;
+  frame_h: number;
+  cols: number;
+  rows: number;
+  offset_x: number;
+  offset_y: number;
+}
+
+export interface PlayersManifest {
+  base: SheetEntry;
+  weapons: Record<string, SheetEntry>;
+  rows: Record<string, number>;
+  frames_per_row: number;
+  speeds: Record<string, number>;
 }
 
 // Web-pack zombie (realtime float mover, separate from the Discord turn
