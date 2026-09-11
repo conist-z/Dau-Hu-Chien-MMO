@@ -8,7 +8,7 @@ import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdol
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
-const ZOMBIE_SIZE = 28; // mobs render a bit larger than players
+const ZOMBIE_SIZE = 48; // mobs tower ~1.5x over the 32px player doll
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // How long a client-optimistic place/break tile stays applied while we wait
 // for the action_result echo. Longer than one RTT (~300ms worst case) but
@@ -144,6 +144,7 @@ export class WorldScene extends Phaser.Scene {
   private zombieTextureKey = "mob-zombie";
   private zombieTextureReady = false;
   private zombieFetchAsked = false;
+  private lastZombieFrameT = 0;
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
@@ -680,33 +681,38 @@ export class WorldScene extends Phaser.Scene {
     this.updateSplats(performance.now());
   }
 
-  /** Per-frame zombie interpolation + Kaetram sheet animation (60 fps). */
+  /** Per-frame zombie animation + position smoothing (60 fps).
+   *
+   * Position: exponential smoothing toward the LATEST server sample. The old
+   * buffer-window interpolation (rendering 120ms behind, searching the sample
+   * pair containing the cursor) flickered with bursty 20 Hz delivery: the
+   * cursor kept falling outside the window, pinning the sprite to the oldest
+   * sample and then gliding forward — "at this spot, back to the old spot",
+   * over and over. Smoothing never moves backwards and ignores jitter. */
   private updateZombieFrames(): void {
     const now = performance.now();
+    const dt = this.lastZombieFrameT > 0
+      ? Math.min(0.1, (now - this.lastZombieFrameT) / 1000)
+      : 0.016;
+    this.lastZombieFrameT = now;
     for (const [id, z] of this.zombies) {
       const buf = z.buf;
       if (buf.length > 0) {
-        const t = now - INTERP_BUFFER_MS;
-        let prev = buf[0];
-        let next = buf[buf.length - 1];
-        for (let i = 0; i < buf.length - 1; i++) {
-          if (buf[i][0] <= t && t <= buf[i + 1][0]) {
-            prev = buf[i];
-            next = buf[i + 1];
-            break;
-          }
+        const latest = buf[buf.length - 1];
+        const lx = latest[1];
+        const ly = latest[2];
+        const dist = Math.hypot(lx - z.lastX, ly - z.lastY);
+        if (dist > 96) {
+          // Teleport (>3 tiles): respawn/despawn lag — snap, don't glide.
+          z.lastX = lx;
+          z.lastY = ly;
+        } else if (dist > 0.01) {
+          // ~14/s rate: a 0.64-tile server tick is caught up in ~100ms.
+          const a = 1 - Math.exp(-14 * dt);
+          z.lastX += (lx - z.lastX) * a;
+          z.lastY += (ly - z.lastY) * a;
         }
-        const span = next[0] - prev[0];
-        // Clamp k to [0,1]: when a snapshot burst arrives, render time t can
-        // fall BEFORE buf[0] — an unclamped k goes negative and the sprite
-        // jumps backwards past the oldest sample, then glides forward again
-        // (the "zombie flickers back to its old spot" bug).
-        const k = span > 0 ? Math.max(0, Math.min(1, (t - prev[0]) / span)) : 1;
-        const x = prev[1] + (next[1] - prev[1]) * k;
-        const y = prev[2] + (next[2] - prev[2]) * k;
-        z.container.setPosition(x, y);
-        z.lastX = x;
-        z.lastY = y;
+        z.container.setPosition(z.lastX, z.lastY);
       }
       if (z.dieT0 !== 0) {
         const age = now - z.dieT0;
