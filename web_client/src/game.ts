@@ -816,32 +816,24 @@ export class WorldScene extends Phaser.Scene {
       if (drift > 20) {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > 3.0) {
-        if (v.dx === 0 && v.dy === 0) {
-          // Standing still: ease back to the authority (server-side force,
-          // direction change mid-lag, etc.). Brisk glide, collision-aware.
-          const pull = Math.min(
-            0.3 * 60 * this.frameDtSec,
-            (drift - 3.0) * 0.2 + 0.05,
-          );
-          const k = pull / Math.max(1e-6, drift);
-          const dx = (this.selfServerPos.x - this.selfX) * k;
-          const dy = (this.selfServerPos.y - this.selfY) * k;
-          this.selfX += this.freeX(this.selfX, this.selfY, dx);
-          this.selfY += this.freeY(this.selfX, this.selfY, dy);
-        } else {
-          // MOVING: never pull backwards against the held direction — that
-          // counter-force (up to ~9 tiles/s at small drift) was the
-          // "invisible block shoving me" feel at night. Instead brake the
-          // prediction to half speed for this frame so the server can catch
-          // up; drift decays without any visible shove. Server-side debt
-          // repayment (WebSession.time_debt) keeps its lead small.
-          const bs = v.running
-            ? (this.welcome?.self?.run_speed ?? 6.0)
-            : (this.welcome?.self?.walk_speed ?? 4.0);
-          this.selfX += this.freeX(this.selfX, this.selfY, -v.dx * bs * this.frameDtSec * 0.5);
-          this.selfY += this.freeY(this.selfX, this.selfY, -v.dy * bs * this.frameDtSec * 0.5);
-        }
+      } else if (drift > 3.0 && v.dx === 0 && v.dy === 0) {
+        // Correct ONLY while standing still. Any per-frame correction while
+        // the player is moving (backward glide OR a speed brake) reads as
+        // walking into something soft that shoves you back — reported as
+        // "bị khối vô hình đẩy". While a key is held the prediction runs
+        // free (smooth is king during lag); when the player releases input
+        // the glide eases them onto the authority — position authority
+        // matters the moment they stop, not mid-stride. A >20-tile gap is a
+        // portal/respawn and snaps instantly regardless of input.
+        const pull = Math.min(
+          0.3 * 60 * this.frameDtSec,
+          (drift - 3.0) * 0.2 + 0.05,
+        );
+        const k = pull / Math.max(1e-6, drift);
+        const dx = (this.selfServerPos.x - this.selfX) * k;
+        const dy = (this.selfServerPos.y - this.selfY) * k;
+        this.selfX += this.freeX(this.selfX, this.selfY, dx);
+        this.selfY += this.freeY(this.selfX, this.selfY, dy);
       }
     }
     // Invariant guard: the collision box must NEVER sit inside a solid tile.
