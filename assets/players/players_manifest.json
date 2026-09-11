@@ -135,6 +135,6 @@
     "walk": 120,
     "atk": 50
   },
-  "scale": 2,
+  "scale": 1.5,
   "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 \u2014 see kaetram_extract/_license/ATTRIBUTION.md"
 }
