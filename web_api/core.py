@@ -520,7 +520,7 @@ class WebHub:
         if cmd == "help":
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /weather, /setweather <key> (admin)",
+                "message": "Lệnh: /help, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin)",
             })
         elif cmd == "weather":
             rt = self.manager.get_runtime(sess.channel_id)
@@ -530,10 +530,152 @@ class WebHub:
             })
         elif cmd == "setweather":
             await self._cmd_setweather(sess, args)
+        elif cmd == "time":
+            await self._cmd_time(sess, args)
+        elif cmd == "give":
+            await self._cmd_give(sess, args)
         else:
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Lệnh không rõ: /{cmd}",
             })
+
+    async def _cmd_give(self, sess: WebSession, args: List[str]) -> None:
+        """Admin /give: mint any item or block straight into the player's bag.
+
+        Usage: /give <item_id> [qty]. Item ids are the registry ids
+        (dirt_sword, stone_pickaxe, potion_hp, coin, wood, ...). Admin-gated
+        the same way as /setweather.
+        """
+        if not args:
+            # No args: list every mintable id so the admin can pick by hand.
+            from game.items import ITEM_REGISTRY
+
+            ids = " ".join(sorted(ITEM_REGISTRY.keys()))
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH,
+                "message": f"Dùng: /give <item> [số lượng]. Có: {ids}",
+            })
+            return
+        item_id = args[0].lower()
+        qty = 1
+        if len(args) > 1:
+            try:
+                qty = max(1, min(999, int(args[1])))
+            except ValueError:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH, "message": "Số lượng phải là số nguyên.",
+                })
+                return
+        from game.items import ITEM_REGISTRY, get_item
+        from game.blocks import BLOCK_REGISTRY
+
+        known = item_id in ITEM_REGISTRY or item_id in BLOCK_REGISTRY
+        if not known:
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": f"Không rõ vật phẩm: {item_id}",
+            })
+            return
+        # TEMP (quick test): admin gate OFF — everyone can /give.
+        # Restore `if not await self._is_web_admin(sess): ...` before prod.
+        # if not await self._is_web_admin(sess):
+        #     await self.send_to_client_conn(sess, {
+        #         "type": MSG_PUSH, "message": "Chỉ admin mới được dùng /give (chưa bật).",
+        #     })
+        #     return
+        rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
+        if rt is None:
+            return
+        async with rt.lock:
+            inv = self.manager.get_inventory(sess.channel_id, sess.user_id)
+            inv.add(item_id, qty)
+            if self.manager.db is not None:
+                from persistence.repositories import save_inventory_item
+                await save_inventory_item(
+                    self.manager.db, sess.channel_id, sess.user_id,
+                    item_id, inv.count(item_id),
+                )
+            self.manager._notify_inventory_change(sess.channel_id, sess.user_id)
+        from web_api.snapshots import _inventory_payload
+
+        await self.send_to_client_conn(sess, {
+            "type": MSG_INV_DELTA,
+            "inventory": _inventory_payload(rt, sess.user_id),
+        })
+        it = get_item(item_id)
+        label = f"{it.name} x{qty}" if it is not None else f"{item_id} x{qty}"
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH, "message": f"🎁 Đã nhận {label} vào túi.",
+        })
+
+    _TIME_PRESETS = {
+        # word -> second_of_day (night window = 20:00..06:00, see zombies.py)
+        "day": 12 * 3600,       # noon
+        "noon": 12 * 3600,
+        "night": 22 * 3600,     # deep night (zombies active)
+        "midnight": 0,
+        "dawn": 6 * 3600,
+        "dusk": 19 * 3600,
+    }
+
+    async def _cmd_time(self, sess: WebSession, args: List[str]) -> None:
+        """Web chat /time set <preset|HH:MM|normal>: jump the in-game clock.
+
+        The clock keeps advancing normally from the new point. Zombie activity
+        follows the same clock (night = 20:00..06:00), so /time set night is
+        the fast way to test zombies without waiting for dusk.
+        """
+        from rendering.daynight import ingame_seconds, set_ingame_time
+
+        usage = "Dùng: /time set <day|night|dawn|dusk|midnight|HH:MM|normal>"
+        if len(args) < 2 or args[0].lower() != "set":
+            if not args:
+                sec = ingame_seconds()
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH,
+                    "message": f"Giờ trong game: {sec // 3600:02d}:{sec % 3600 // 60:02d}. {usage}",
+                })
+                return
+            await self.send_to_client_conn(sess, {"type": MSG_PUSH, "message": usage})
+            return
+        if not await self._is_web_admin(sess):
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Chỉ admin mới được chỉnh giờ.",
+            })
+            return
+        value = args[1].lower()
+        target: int | None
+        if value in ("normal", "auto", "reset"):
+            target = None
+        elif value in self._TIME_PRESETS:
+            target = self._TIME_PRESETS[value]
+        elif ":" in value:
+            try:
+                hh, mm = value.split(":", 1)
+                h, m = int(hh), int(mm)
+                if not (0 <= h < 24 and 0 <= m < 60):
+                    raise ValueError
+                target = h * 3600 + m * 60
+            except ValueError:
+                await self.send_to_client_conn(sess, {"type": MSG_PUSH, "message": usage})
+                return
+        else:
+            await self.send_to_client_conn(sess, {"type": MSG_PUSH, "message": usage})
+            return
+        rt = self.manager.get_runtime(sess.channel_id)
+        if rt is None:
+            return
+        async with rt.lock:
+            result = set_ingame_time(target)
+        # HUD/web clock updates automatically: web snapshots carry the clock at
+        # 20 Hz, Discord hubs re-render on their 5s signature beat.
+        label = (
+            "vòng tự nhiên"
+            if target is None
+            else f"{result // 3600:02d}:{result % 3600 // 60:02d}"
+        )
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH, "message": f"⏰ Đã chỉnh giờ trong game: {label}.",
+        })
 
     async def _cmd_setweather(self, sess: WebSession, args: List[str]) -> None:
         if not args or args[0] not in WEATHER_KEYS:
@@ -573,7 +715,14 @@ class WebHub:
         if member is None:
             return False
         perms = member.guild_permissions
-        return bool(perms.administrator or perms.manage_guild)
+        if perms.administrator or perms.manage_guild:
+            return True
+        # Env override: WEB_ADMIN_IDS="123,456" grants web admin to specific
+        # Discord user_ids (guests / bot-less test setups). Empty = off.
+        import os
+
+        allowed = os.environ.get("WEB_ADMIN_IDS", "")
+        return str(sess.user_id) in {s.strip() for s in allowed.split(",") if s.strip()}
 
     # ----- assets -----
 
