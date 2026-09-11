@@ -140,28 +140,28 @@ export class PaperdollBody {
     if (!entry || !this.scene.textures.exists(key)) return; // retry next tick
     this.weapon = this.scene.add
       .sprite(this.weaponX(), this.weaponY(), key, 0)
-      .setOrigin(0.5, 1)
+      .setOrigin(0.5, 1) // feet anchor: sprite bottom sits at (x, y)
       .setDepth(this.base.depth + 0.1)
       .setScale(this.scale);
     this.syncWeaponFrame();
   }
 
-  /** Weapon frame offset from the BODY, straight from Kaetram's sprites.json
-   * + renderer: body 32x32 drawn at offsetX -8 (no offsetY); weapon 48x48
-   * drawn at offsetX 0, offsetY -24 relative to the SAME entity origin.
-   * => weapon frame centre = body frame centre + (16, -16) px, i.e. 16px
-   * toward the weapon hand and 16px up. Mirrored when facing left (the
-   * sword lives in the RIGHT hand on the unflipped art). */
+  /** Kaetram alignment, verified from its renderer + sprites.json: body
+   * 32x32 draws at offset (-8,-16), weapon 48x48 at (-16,-24) relative to
+   * the SAME entity origin => BOTH LAYERS SHARE ONE CENTRE. The weapon
+   * frame is just a bigger canvas with the sword art pre-offset toward the
+   * hand inside it — no lateral nudge needed here (flipX mirrors around
+   * the shared centre, which is what Kaetram does via context.scale(-1,1)).
+   * The earlier ±16px/+8px nudge sent the sword flying above the head. */
   private weaponX(): number {
-    const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
-    return this.base!.x + (flip ? -16 : 16) * this.scale;
+    return this.base!.x;
   }
 
-  /** Feet-anchored Y: Kaetram weapon bottom sits 8px ABOVE the body bottom
-   * (weapon: offsetY -24 + 48 = 24; body bottom: 32). The old +8 below the
-   * feet made the sword float at ground level. */
+  /** Shared-centre Y, feet-anchored: body centre = feet − 16·scale,
+   * weapon half-height = 24·scale => weapon origin (0.5,1) sits at
+   * feet − 16·scale + 24·scale = feet + 8·scale. */
   private weaponY(): number {
-    return this.base!.y - 8 * this.scale;
+    return this.base!.y + 8 * this.scale;
   }
 
   private rowFor(): number {
