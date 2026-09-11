@@ -3,7 +3,9 @@
 // 60 fps rendering, follows the camera on the local player.
 
 import Phaser from "phaser";
-import type { PlayerPayload, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
+import type { PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
+import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdoll";
+import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -78,6 +80,14 @@ export class WorldScene extends Phaser.Scene {
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
   private itemEmojis: Record<string, string> = {};
+  // --- paperdoll (Kaetram parity): manifest + per-player bodies ---
+  private playersManifest: PlayersManifest | null = null;
+  private paperdollAsked = false;
+  private paperdollReady = false;
+  private selfDoll: PaperdollBody | null = null;
+  private remoteDolls = new Map<number, PaperdollBody>();
+  // Last known held item per remote player (drives the weapon overlay).
+  private remoteHeld = new Map<number, string | null>();
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
   private selfX = 0; // predicted float position, TILE units
@@ -179,6 +189,16 @@ export class WorldScene extends Phaser.Scene {
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
     this.selfId = welcome.self.id;
+    // Paperdoll: stash manifest, fetch base + every mapped weapon sheet
+    // once through the same relay pipe as blocks/mobs (license-safe).
+    if (welcome.players_manifest && !this.paperdollAsked) {
+      this.playersManifest = welcome.players_manifest;
+      this.paperdollAsked = true;
+      fetchAsset("players/base.png");
+      for (const stem of new Set(Object.values(WEAPON_SHEET_BY_ITEM))) {
+        fetchAsset(`players/weapon/${stem}.png`);
+      }
+    }
     // Server item emojis FIRST: hand icons (self + remote) resolve through
     // this map, so it must be fresh before any setText call below.
     this.itemEmojis = welcome.item_emojis ?? {};
@@ -419,6 +439,54 @@ export class WorldScene extends Phaser.Scene {
     if (this.welcome) this.updateBlocks(this.welcome.blocks);
   }
 
+  /**
+   * A paperdoll PNG arrived (players/base.png or players/weapon/<x>.png).
+   * Register the sheet into the Phaser texture system with its frame grid;
+   * once the BASE sheet is ready the paperdoll takes over rendering.
+   */
+  onPaperdollAsset(name: string, b64: string): void {
+    if (!this.playersManifest) return;
+    if (!this.pdBytes) this.pdBytes = {};
+    if (name === "players/base.png") {
+      this.pdBytes["__base"] = b64ToBytes(b64);
+    } else if (name.startsWith("players/weapon/")) {
+      const stem = name.slice("players/weapon/".length).replace(/\.png$/i, "");
+      this.pdBytes[stem] = b64ToBytes(b64);
+    } else {
+      return;
+    }
+    if (this.pdBytes["__base"] && !this.paperdollReady) {
+      registerPaperdollTextures(this, this.playersManifest, this.pdBytes["__base"], this.pdBytes);
+      this.paperdollReady = true;
+      // Bodies may already exist (welcome before textures) — spawn them now.
+      if (this.selfMarker && !this.selfDoll) {
+        this.spawnSelfDoll();
+        this.selfMarker.setVisible(false);
+      }
+      for (const [id, rp] of this.players) this.spawnRemoteDoll(id, rp);
+    }
+  }
+
+  private pdBytes: Record<string, Uint8Array> | null = null;
+
+  /** Spawn the SELF paperdoll at the predicted position. */
+  private spawnSelfDoll(): void {
+    if (!this.playersManifest || this.selfDoll) return;
+    this.selfDoll = new PaperdollBody(this, this.playersManifest);
+    this.selfDoll.spawn(this.selfX * 32, this.selfY * 32 + 16, 7);
+    if (this.selfHeld) this.selfDoll.setWeapon(weapon_sheet_for(this.selfHeld));
+  }
+
+  /** Spawn a remote paperdoll inside its interpolation container. */
+  private spawnRemoteDoll(id: number, rp: RemotePlayer): void {
+    if (!this.playersManifest || this.remoteDolls.has(id)) return;
+    const doll = new PaperdollBody(this, this.playersManifest);
+    doll.spawn(rp.container.x, rp.container.y + 16, 7);
+    this.remoteDolls.set(id, doll);
+    rp.body.setVisible(false); // hide the square; keep it for hit geometry
+    if (rp.held) doll.setWeapon(weapon_sheet_for(rp.held));
+  }
+
   updateBlocks(blocks: [number, number, string][]): void {
     for (const id of new Set(blocks.map(([, , bid]) => bid))) {
       if (!this.blockTextures.has(id)) {
@@ -446,6 +514,11 @@ export class WorldScene extends Phaser.Scene {
     this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
+    // Paperdoll ready already? Swap the square for the Kaetram body at once.
+    if (this.paperdollReady) {
+      this.spawnSelfDoll();
+      this.selfMarker.setVisible(false);
+    }
     this.ensureSelfHand();
     this.setSelfHeld(welcome.held ?? null);
   }
@@ -473,6 +546,7 @@ export class WorldScene extends Phaser.Scene {
   setSelfHeld(itemId: string | null): void {
     this.selfHeld = itemId;
     if (this.selfToolIcon) this.selfToolIcon.setText(this.emojiFor(itemId));
+    if (this.selfDoll) this.selfDoll.setWeapon(weapon_sheet_for(itemId));
   }
 
   /** Update the SELF hand from the local hotbar (instant, no server wait). */
@@ -501,7 +575,10 @@ export class WorldScene extends Phaser.Scene {
       container.add(toolIcon);
       container.add(label);
       rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
+      container.setData("pid", p.id);
       this.players.set(p.id, rp);
+      // Paperdoll ready? Spawn the Kaetram body immediately.
+      if (this.paperdollReady) this.spawnRemoteDoll(p.id, rp);
     }
     rp.buf.push([now, p.x * 32, p.y * 32]);
     if (rp.buf.length > 12) rp.buf.shift();
@@ -511,6 +588,8 @@ export class WorldScene extends Phaser.Scene {
     if (held !== rp.held) {
       rp.held = held;
       rp.toolIcon.setText(this.emojiFor(held));
+      const doll = this.remoteDolls.get(p.id);
+      if (doll) doll.setWeapon(weapon_sheet_for(held));
     }
   }
 
@@ -541,6 +620,14 @@ export class WorldScene extends Phaser.Scene {
     this.updateFacing();
     this.updateSelfHand();
 
+    // Paperdoll animation: drive self + remote dolls from the shared clock.
+    const nowMs = performance.now();
+    if (this.selfDoll?.ready && this.selfMarker) {
+      const moving = this.inputVec.running;
+      const action = this.selfDoll.attacking ? "atk" : moving ? "walk" : "idle";
+      this.selfDoll.animate(this.selfX * 32, this.selfY * 32 + 16, action, this.selfDir, nowMs);
+    }
+
     const now = performance.now() - INTERP_BUFFER_MS;
     for (const rp of this.players.values()) {
       if (rp.container.getData("self")) continue; // self is predicted, not interpolated
@@ -568,6 +655,15 @@ export class WorldScene extends Phaser.Scene {
       const reach = HAND_ORBIT + this.swingExtra(rp.swingT0, performance.now());
       rp.hand.setPosition((dv[0] / len) * reach, (dv[1] / len) * reach);
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
+      // Paperdoll: hide the hand dot under the Kaetram body, animate the doll.
+      const doll = this.remoteDolls.get(parseInt(String(rp.container.getData("pid") ?? ""), 10));
+      if (doll?.ready) {
+        rp.hand.setVisible(false);
+        rp.toolIcon.setVisible(false);
+        const moving = Math.hypot(next[1] - prev[1], next[2] - prev[2]) > 1;
+        const action = doll.attacking ? "atk" : moving ? "walk" : "idle";
+        doll.animate(x, y + 16, action, rp.dir, performance.now());
+      }
     }
     this.updateZombieFrames();
     // Kaetram hitsplats: float + fade every frame (spawned from action_result).
@@ -624,8 +720,7 @@ export class WorldScene extends Phaser.Scene {
             ? Math.min(len - 1, z.frame + 1) // lunge holds its last frame
             : (z.frame + 1) % len; // walk/idle loop
         }
-        z.body.setCrop(z.frame * 32, row * 32, 32, 32);
-        z.body.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
+        this.applyMobCell(z.body, z.frame, row);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
           z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
@@ -877,12 +972,14 @@ export class WorldScene extends Phaser.Scene {
   /** Swing the SELF hand at once (optimistic — no server wait). */
   swingSelfHand(): void {
     this.selfSwingT0 = performance.now();
+    this.selfDoll?.swing(performance.now());
   }
 
   /** Swing one REMOTE hand when its harvest progress grows (20 Hz echo). */
   swingRemoteHand(id: number): void {
     const rp = this.players.get(id);
     if (rp) rp.swingT0 = performance.now();
+    this.remoteDolls.get(id)?.swing(performance.now());
   }
 
   /**
@@ -1237,6 +1334,15 @@ export class WorldScene extends Phaser.Scene {
     this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
+  /** Crop ONE 32px cell out of a mob sheet and scale it so the CELL (not the
+   * whole sheet) maps to PLAYER_SIZE. setDisplaySize(22,22) on the uncropped
+   * 160x288 sheet sets scale = 22/160 = 0.1375, which renders the cropped
+   * 32px cell at ~4px — the "tiny blinking pixel" zombie bug. */
+  private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number): void {
+    img.setCrop(col * 32, row * 32, 32, 32);
+    img.setScale(PLAYER_SIZE / 32);
+  }
+
   /** A mob sprite PNG arrived via the relay: mark ready for upgrade. */
   onMobTexture(name: string): void {
     if (name !== "mobs/zombie.png" || this.zombieTextureReady) return;
@@ -1260,8 +1366,7 @@ export class WorldScene extends Phaser.Scene {
         // Cut the FIRST idle frame immediately so a fresh spawn never shows
         // the whole stretched sheet for even one frame.
         if (body instanceof Phaser.GameObjects.Image) {
-          body.setCrop(0, 2 * 32, 32, 32);
-          body.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
+          this.applyMobCell(body, 0, 2);
         }
         const label = this.add.text(0, 24, kind === "hunter" ? "🧟‍♂️!" : "🧟", {
           fontSize: "10px", color: "#ffffff",
@@ -1301,8 +1406,7 @@ export class WorldScene extends Phaser.Scene {
         this.textures.exists(this.zombieTextureKey)
       ) {
         const img = this.add.image(0, 0, this.zombieTextureKey);
-        img.setCrop(0, 2 * 32, 32, 32);
-        img.setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
+        this.applyMobCell(img, 0, 2);
         z.container.add(img);
         z.container.sendToBack(img);
         z.body.destroy();
