@@ -739,7 +739,14 @@ class WebHub:
         """
         from config import ASSETS_DIR
 
+        # players/weapon/<stem>.png must keep its subfolder: the basename
+        # squeeze looked for assets/players/<stem>.png (never exists) and
+        # every weapon sheet came back b64=null — the web paperdoll could
+        # never attach a sword. Traversal is still blocked by the resolved-
+        # path confinement check below (defence in depth).
         safe = Path(name).name
+        if name.startswith("players/weapon/"):
+            safe = Path(name).parts[-2] + "/" + Path(name).parts[-1]
         if not safe.lower().endswith(".png"):
             await self.send_to_client(cid, {"type": "asset_data", "name": name, "b64": None})
             return
