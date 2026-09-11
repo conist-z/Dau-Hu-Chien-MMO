@@ -30,11 +30,15 @@ export class PaperdollBody {
   private frameT0 = 0;
   private atkEndsAt = 0; // performance.now() timestamp; atk runs once
   private weaponStem: string | null = null;
+  // Visual-only upscale from the manifest (2 = body spans 2 tiles tall).
+  // Pure rendering: collision/positions stay in 1-tile server space.
+  private readonly scale: number;
 
   constructor(scene: Phaser.Scene, manifest: PlayersManifest | null | undefined) {
     this.scene = scene;
     // Manifest may be missing (old server) — callers gate on ready().
     this.manifest = manifest ?? { base: { file: "", frame_w: 32, frame_h: 32, cols: 4, rows: 12, offset_x: 0, offset_y: 0 }, weapons: {}, rows: {}, frames_per_row: 4, speeds: { idle: 250, walk: 120, atk: 50 } };
+    this.scale = Math.max(1, Math.min(4, this.manifest.scale ?? 1));
   }
 
   get ready(): boolean {
@@ -47,7 +51,8 @@ export class PaperdollBody {
     this.base = this.scene.add
       .sprite(x, y, "pd-base", 0)
       .setOrigin(0.5, 1) // feet anchor: sprite bottom sits at (x, y)
-      .setDepth(depth);
+      .setDepth(depth)
+      .setScale(this.scale);
     this.applyBaseFrame();
   }
 
@@ -129,16 +134,19 @@ export class PaperdollBody {
     this.weapon = this.scene.add
       .sprite(this.base.x, this.base.y + this.weaponYOff(entry), key, 0)
       .setOrigin(0.5, 1)
-      .setDepth(this.base.depth + 0.1);
+      .setDepth(this.base.depth + 0.1)
+      .setScale(this.scale);
     this.syncWeaponFrame();
   }
 
-  /** Weapon bottom offset: centre the taller weapon frame on the body. */
+  /** Weapon bottom offset: centre the taller weapon frame on the body.
+   * Kaetram: weapon offsetY=-24 vs body offsetY=-32 => weapon bottom sits
+   * 8px BELOW the body bottom (the 48px frame centres on the 32px body).
+   * With origin (0.5, 1) anchored at feet, weapon origin sits at feet+8,
+   * scaled by the body upscale so the overlay hugs the body proportionally.
+   */
   private weaponYOff(_entry: SheetEntry): number {
-    // Kaetram: weapon offsetY=-24 vs body offsetY=-32 => weapon bottom sits
-    // 8px BELOW the body bottom (the 48px frame centres on the 32px body).
-    // With origin (0.5, 1) anchored at feet, weapon origin sits at feet+8.
-    return 8;
+    return 8 * this.scale;
   }
 
   private rowFor(): number {
@@ -163,7 +171,7 @@ export class PaperdollBody {
     const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
     this.weapon.setFrame(row * this.manifest.frames_per_row + this.frame);
     this.weapon.setFlipX(flip);
-    this.weapon.setPosition(this.base.x, this.base.y + 8);
+    this.weapon.setPosition(this.base.x, this.base.y + 8 * this.scale);
   }
 }
 

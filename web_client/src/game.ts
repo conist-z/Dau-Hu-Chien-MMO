@@ -8,7 +8,7 @@ import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdol
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
-const ZOMBIE_SIZE = 48; // mobs tower ~1.5x over the 32px player doll
+const ZOMBIE_SIZE = 48; // vs the 64px (2-tile) player doll
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // How long a client-optimistic place/break tile stays applied while we wait
 // for the action_result echo. Longer than one RTT (~300ms worst case) but
@@ -77,7 +77,6 @@ export class WorldScene extends Phaser.Scene {
   private selfHand: Phaser.GameObjects.Arc | null = null;
   private selfToolIcon: Phaser.GameObjects.Text | null = null;
   private selfHeld: string | null = null;
-  private selfSwingT0 = 0; // performance.now() of the last self swing
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
   private itemEmojis: Record<string, string> = {};
@@ -484,6 +483,7 @@ export class WorldScene extends Phaser.Scene {
     if (!this.playersManifest || this.selfDoll) return;
     this.selfDoll = new PaperdollBody(this, this.playersManifest);
     this.selfDoll.spawn(this.selfX * 32, this.selfY * 32 + 16, 7);
+    this.hideSelfHand(); // Kaetram body carries its own weapon layer
     if (this.selfHeld) this.selfDoll.setWeapon(weapon_sheet_for(this.selfHeld));
   }
 
@@ -627,10 +627,9 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
-    // Hand orbit: self hand + icon follow the smoothed facing vector so the
-    // dot + tool rotate WITH the avatar. updateFacing() must run first.
+    // Facing vector still feeds the hover square + swing geometry (the hand
+    // dot itself is hidden once the paperdoll body renders).
     this.updateFacing();
-    this.updateSelfHand();
 
     // Paperdoll animation: drive self + remote dolls from the shared clock.
     const nowMs = performance.now();
@@ -666,7 +665,8 @@ export class WorldScene extends Phaser.Scene {
       const reach = HAND_ORBIT + this.swingExtra(rp.swingT0, performance.now());
       rp.hand.setPosition((dv[0] / len) * reach, (dv[1] / len) * reach);
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
-      // Paperdoll: hide the hand dot under the Kaetram body, animate the doll.
+      // Paperdoll: hide the hand dot + icon under the Kaetram body, animate
+      // the doll. (The square stays hidden — it's hit geometry only.)
       const doll = this.remoteDolls.get(parseInt(String(rp.container.getData("pid") ?? ""), 10));
       if (doll?.ready) {
         rp.hand.setVisible(false);
@@ -765,7 +765,6 @@ export class WorldScene extends Phaser.Scene {
       // created the invisible-ring effect (server kept snapping us back).
       // Hold position on the authority, keep the aim visuals updating.
       marker.setPosition(this.selfServerPos.x * 32, this.selfServerPos.y * 32);
-      this.updateSelfHand();
       return;
     }
     const dt = this.frameDtSec;
@@ -975,27 +974,16 @@ export class WorldScene extends Phaser.Scene {
     return Math.sin(t * Math.PI) * SWING_EXTRA;
   }
 
-  /**
-   * Self hand orbit (plan A): the dot + tool icon ride the smoothed facing
-   * vector, so the hand rotates WITH the avatar. A swing thrusts the hand
-   * out and back (dig/chop feedback). Runs right after updateFacing().
-   */
-  private updateSelfHand(): void {
-    if (!this.selfHand || !this.selfToolIcon || !this.selfMarker) return;
-    const v = this.faceVec ?? { x: this.lastMoveX, y: this.lastMoveY || 1 };
-    const len = Math.hypot(v.x, v.y) || 1;
-    const ux = v.x / len;
-    const uy = v.y / len;
-    const reach = HAND_ORBIT + this.swingExtra(this.selfSwingT0, performance.now());
-    const hx = this.selfX * 32 + ux * reach;
-    const hy = this.selfY * 32 + uy * reach;
-    this.selfHand.setPosition(hx, hy);
-    this.selfToolIcon.setPosition(hx, hy);
+  /** Hide the plan-A hand dot + tool icon once the paperdoll body is live
+   * (the Kaetram sprite carries its own weapon layer — the orbiting dot
+   * would poke out from under the taller 2-tile body). */
+  private hideSelfHand(): void {
+    this.selfHand?.setVisible(false);
+    this.selfToolIcon?.setVisible(false);
   }
 
   /** Swing the SELF hand at once (optimistic — no server wait). */
   swingSelfHand(): void {
-    this.selfSwingT0 = performance.now();
     this.selfDoll?.swing(performance.now());
   }
 

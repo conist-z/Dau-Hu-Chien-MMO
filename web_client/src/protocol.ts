@@ -82,6 +82,9 @@ export interface PlayersManifest {
   rows: Record<string, number>;
   frames_per_row: number;
   speeds: Record<string, number>;
+  // Optional visual-only upscale (2 = player spans 2 tiles tall). Pure
+  // rendering — collision stays 1 tile, server unchanged.
+  scale?: number;
 }
 
 // Web-pack zombie (realtime float mover, separate from the Discord turn
