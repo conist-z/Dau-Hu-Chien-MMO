@@ -8,6 +8,7 @@ import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdol
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
+const ZOMBIE_SIZE = 28; // mobs render a bit larger than players
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // How long a client-optimistic place/break tile stays applied while we wait
 // for the action_result echo. Longer than one RTT (~300ms worst case) but
@@ -86,8 +87,6 @@ export class WorldScene extends Phaser.Scene {
   private paperdollReady = false;
   private selfDoll: PaperdollBody | null = null;
   private remoteDolls = new Map<number, PaperdollBody>();
-  // Last known held item per remote player (drives the weapon overlay).
-  private remoteHeld = new Map<number, string | null>();
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
   private selfX = 0; // predicted float position, TILE units
@@ -642,9 +641,8 @@ export class WorldScene extends Phaser.Scene {
           next = buf[i + 1];
           break;
         }
-      }
-      const span = next[0] - prev[0];
-      const t = span > 0 ? Math.min(1, (now - prev[0]) / span) : 1;
+      }        const span = next[0] - prev[0];
+        const t = span > 0 ? Math.max(0, Math.min(1, (now - prev[0]) / span)) : 1;
       const x = prev[1] + (next[1] - prev[1]) * t;
       const y = prev[2] + (next[2] - prev[2]) * t;
       rp.container.setPosition(x, y);
@@ -687,7 +685,11 @@ export class WorldScene extends Phaser.Scene {
           }
         }
         const span = next[0] - prev[0];
-        const k = span > 0 ? Math.min(1, (t - prev[0]) / span) : 1;
+        // Clamp k to [0,1]: when a snapshot burst arrives, render time t can
+        // fall BEFORE buf[0] — an unclamped k goes negative and the sprite
+        // jumps backwards past the oldest sample, then glides forward again
+        // (the "zombie flickers back to its old spot" bug).
+        const k = span > 0 ? Math.max(0, Math.min(1, (t - prev[0]) / span)) : 1;
         const x = prev[1] + (next[1] - prev[1]) * k;
         const y = prev[2] + (next[2] - prev[2]) * k;
         z.container.setPosition(x, y);
@@ -720,7 +722,7 @@ export class WorldScene extends Phaser.Scene {
             ? Math.min(len - 1, z.frame + 1) // lunge holds its last frame
             : (z.frame + 1) % len; // walk/idle loop
         }
-        this.applyMobCell(z.body, z.frame, row);
+        this.applyMobCell(z.body, z.frame, row, ZOMBIE_SIZE);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
           z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
@@ -1335,12 +1337,12 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Crop ONE 32px cell out of a mob sheet and scale it so the CELL (not the
-   * whole sheet) maps to PLAYER_SIZE. setDisplaySize(22,22) on the uncropped
-   * 160x288 sheet sets scale = 22/160 = 0.1375, which renders the cropped
-   * 32px cell at ~4px — the "tiny blinking pixel" zombie bug. */
-  private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number): void {
+   * whole sheet) maps to the display size. setDisplaySize(22,22) on the
+   * uncropped 160x288 sheet sets scale = 22/160 = 0.1375, which renders the
+   * cropped 32px cell at ~4px — the "tiny blinking pixel" zombie bug. */
+  private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number, size: number = PLAYER_SIZE): void {
     img.setCrop(col * 32, row * 32, 32, 32);
-    img.setScale(PLAYER_SIZE / 32);
+    img.setScale(size / 32);
   }
 
   /** A mob sprite PNG arrived via the relay: mark ready for upgrade. */
@@ -1366,7 +1368,7 @@ export class WorldScene extends Phaser.Scene {
         // Cut the FIRST idle frame immediately so a fresh spawn never shows
         // the whole stretched sheet for even one frame.
         if (body instanceof Phaser.GameObjects.Image) {
-          this.applyMobCell(body, 0, 2);
+          this.applyMobCell(body, 0, 2, ZOMBIE_SIZE);
         }
         const label = this.add.text(0, 24, kind === "hunter" ? "🧟‍♂️!" : "🧟", {
           fontSize: "10px", color: "#ffffff",
@@ -1406,7 +1408,7 @@ export class WorldScene extends Phaser.Scene {
         this.textures.exists(this.zombieTextureKey)
       ) {
         const img = this.add.image(0, 0, this.zombieTextureKey);
-        this.applyMobCell(img, 0, 2);
+        this.applyMobCell(img, 0, 2, ZOMBIE_SIZE);
         z.container.add(img);
         z.container.sendToBack(img);
         z.body.destroy();
