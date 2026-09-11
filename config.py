@@ -71,8 +71,8 @@ DISCORD_OAUTH_CLIENT_SECRET = os.getenv("DISCORD_OAUTH_CLIENT_SECRET", "")
 # Continuous-movement simulation: 20 server ticks/sec, walk/run tile speeds
 # (server-authoritative cap — the client never sets its own speed).
 WEB_TICK_HZ = float(os.getenv("WEB_TICK_HZ", "20"))
-WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "4.0"))   # tiles/sec
-WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "6.0"))     # tiles/sec (Shift)
+WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "4.5"))   # tiles/sec
+WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "7.5"))     # tiles/sec (Shift)
 WEB_AIM_RANGE_TOLERANCE = int(os.getenv("WEB_AIM_RANGE_TOLERANCE", "1"))  # lag slack for click targeting
 # Max simultaneous web players per scenario (design ceiling; extra joins wait).
 WEB_MAX_PLAYERS = int(os.getenv("WEB_MAX_PLAYERS", "15"))
