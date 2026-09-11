@@ -70,7 +70,16 @@ function applyTexture(name: string, b64: string): void {
   const img = new Image();
   img.onload = () => {
     if (game.textures.exists(key)) game.textures.remove(key);
-    game.textures.addImage(key, img);
+    if (name.startsWith("mobs/")) {
+      // Mob sheets MUST register as a 32x32 spritesheet: addImage + setCrop
+      // keeps the render quad at the FULL sheet size (UV-only crop), so each
+      // animation cell draws offset from the object origin and every frame
+      // change visibly shifts the sprite. Spritesheet frames get their own
+      // cut + origin — setFrame centres each cell exactly.
+      game.textures.addSpriteSheet(key, img, { frameWidth: 32, frameHeight: 32 });
+    } else {
+      game.textures.addImage(key, img);
+    }
     URL.revokeObjectURL(url);
     if (name.startsWith("blocks/")) {
       // Block face arrived: redraw the block layer with the real sprite.

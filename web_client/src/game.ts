@@ -729,7 +729,7 @@ export class WorldScene extends Phaser.Scene {
       if (z.body instanceof Phaser.GameObjects.Image) {
         // Server-authoritative anim -> Kaetram row; local frame ticks at the
         // row's own pace (walk = shambling ~6fps, atk = one 450ms lunge,
-        // idle = slow 2-frame breathe). setCrop cuts ONE 32px cell — the
+        // idle = slow 2-frame breathe). setFrame picks ONE 32px cell — the
         // full 160x288 sheet is never drawn stretched.
         const row = z.anim === "atk" ? 0 : z.anim === "walk" ? 1 : 2;
         const len = z.anim === "atk" ? 5 : z.anim === "walk" ? 4 : 2;
@@ -1354,12 +1354,15 @@ export class WorldScene extends Phaser.Scene {
     this.neededByAnchor.set(`${tx},${ty}`, needed);
   }
 
-  /** Crop ONE 32px cell out of a mob sheet and scale it so the CELL (not the
-   * whole sheet) maps to the display size. setDisplaySize(22,22) on the
-   * uncropped 160x288 sheet sets scale = 22/160 = 0.1375, which renders the
-   * cropped 32px cell at ~4px — the "tiny blinking pixel" zombie bug. */
+  /** Show ONE 32px cell of a mob spritesheet at the requested display size.
+   * The texture registers as a spritesheet (frameWidth/Height = 32), so
+   * setFrame gives every cell its own cut + origin — unlike setCrop on the
+   * full-sheet Image, which kept the quad at sheet size and drew cells
+   * offset sideways, shifting position on every frame change. */
   private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number, size: number = PLAYER_SIZE): void {
-    img.setCrop(col * 32, row * 32, 32, 32);
+    const tex = this.textures.get(img.texture.key);
+    const perRow = Math.max(1, Math.floor(tex.source[0].width / 32));
+    img.setFrame(row * perRow + col);
     img.setScale(size / 32);
   }
 
