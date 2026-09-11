@@ -817,19 +817,31 @@ export class WorldScene extends Phaser.Scene {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
       } else if (drift > 3.0) {
-        // Ease toward the authority. Pull rate is time-scaled and capped so
-        // the correction reads as a brisk glide (~18 tiles/s max), never a
-        // jump, and the move goes through the same swept slide collision as
-        // normal movement — a block in the way stops the marker dead.
-        const pull = Math.min(
-          0.3 * 60 * this.frameDtSec,
-          (drift - 3.0) * 0.2 + 0.05,
-        );
-        const k = pull / Math.max(1e-6, drift);
-        const dx = (this.selfServerPos.x - this.selfX) * k;
-        const dy = (this.selfServerPos.y - this.selfY) * k;
-        this.selfX += this.freeX(this.selfX, this.selfY, dx);
-        this.selfY += this.freeY(this.selfX, this.selfY, dy);
+        if (v.dx === 0 && v.dy === 0) {
+          // Standing still: ease back to the authority (server-side force,
+          // direction change mid-lag, etc.). Brisk glide, collision-aware.
+          const pull = Math.min(
+            0.3 * 60 * this.frameDtSec,
+            (drift - 3.0) * 0.2 + 0.05,
+          );
+          const k = pull / Math.max(1e-6, drift);
+          const dx = (this.selfServerPos.x - this.selfX) * k;
+          const dy = (this.selfServerPos.y - this.selfY) * k;
+          this.selfX += this.freeX(this.selfX, this.selfY, dx);
+          this.selfY += this.freeY(this.selfX, this.selfY, dy);
+        } else {
+          // MOVING: never pull backwards against the held direction — that
+          // counter-force (up to ~9 tiles/s at small drift) was the
+          // "invisible block shoving me" feel at night. Instead brake the
+          // prediction to half speed for this frame so the server can catch
+          // up; drift decays without any visible shove. Server-side debt
+          // repayment (WebSession.time_debt) keeps its lead small.
+          const bs = v.running
+            ? (this.welcome?.self?.run_speed ?? 6.0)
+            : (this.welcome?.self?.walk_speed ?? 4.0);
+          this.selfX += this.freeX(this.selfX, this.selfY, -v.dx * bs * this.frameDtSec * 0.5);
+          this.selfY += this.freeY(this.selfX, this.selfY, -v.dy * bs * this.frameDtSec * 0.5);
+        }
       }
     }
     // Invariant guard: the collision box must NEVER sit inside a solid tile.

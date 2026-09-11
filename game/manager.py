@@ -97,6 +97,16 @@ class WebSession:
     dy: float = 0.0
     running: bool = False
     last_tick: float = 0.0
+    # Debt of integration time owed to the client after a stall. When the
+    # event loop hiccups (heavy Discord PNG renders at night, GC), raw dt
+    # exceeds the 0.2s sweep-collision clamp and the excess used to be thrown
+    # away — the server integrated less time than the client, the prediction
+    # walked ahead, and the 3-tile glide correction then dragged the player
+    # BACKWARDS against their movement: the "invisible block shoving me" feel
+    # at night with many zombies. Debt is repaid gradually (0.4x rate) so the
+    # client never outruns the server by more than ~1 tile, without ever
+    # applying a counter-force.
+    time_debt: float = 0.0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -263,6 +273,9 @@ class GameManager:
         self.lightning_task: Optional[asyncio.Task] = None
         self.zombie_task: Optional[asyncio.Task] = None
         self.zombie_rng = random.Random()
+        # Shared furnace smelting loop (game/smelting.py): ticks every placed
+        # furnace ~1s. Started in bot.py setup_hook next to the zombie loop.
+        self.smelting_task: Optional[asyncio.Task] = None
         # Continuous (web client) simulation loop. Started lazily by the first
         # web session join; self-stops when the last session drops so an idle
         # panel pays nothing (rule 15/16: per-runtime state, no global lock —
@@ -546,7 +559,18 @@ class GameManager:
                     # dropped task): ``dead_until`` is ephemeral, so without
                     # this the player stayed "dead" forever — frozen in place
                     # and every action refused (see Player.revive_if_expired).
+                    # Revive teleports to a random walkable tile (same rule as
+                    # the task path) so they never wake inside the zombie pack
+                    # and die again on the next tick ("treo màn hồi sinh").
                     if player.revive_if_expired(_time.time()):
+                        occupied = {(p.x, p.y) for p in rt.state.get_visible_players()}
+                        spots = [
+                            (x, y) for y in range(rt.map_data.height)
+                            for x in range(rt.map_data.width)
+                            if rt.collision.is_walkable(x, y) and (x, y) not in occupied
+                        ]
+                        if spots:
+                            player.revive_teleport(*random.choice(spots))
                         moved_any = True
                         self._schedule_save(rt, player)
                     continue
@@ -555,8 +579,22 @@ class GameManager:
                     continue
                 # Clamp dt so a stalled loop can never teleport the player
                 # through the world (swept collision assumes <= 1 tile steps).
-                dt = min(0.2, max(0.0, now - sess.last_tick))
+                raw_dt = max(0.0, now - sess.last_tick)
+                dt = min(0.2, raw_dt)
                 sess.last_tick = now
+                # Stall overrun becomes debt, repaid at 0.4x speed on later
+                # ticks (still clamped to the 0.2s sweep limit) instead of
+                # vanishing — the client's prediction must never integrate
+                # more time than the server eventually does, or the glide
+                # correction fights the player's movement direction.
+                if raw_dt > 0.2:
+                    sess.time_debt += raw_dt - 0.2
+                if sess.time_debt > 0.0:
+                    repay = min(sess.time_debt, dt * 0.4, 0.2)
+                    dt = min(0.2, dt + repay)
+                    sess.time_debt -= repay
+                    if sess.time_debt > 0.2:
+                        sess.time_debt = 0.2  # cap: never owes more than one sweep step
                 speed = WEB_RUN_SPEED if sess.running else WEB_WALK_SPEED
                 step_x = sess.dx * speed * dt
                 step_y = sess.dy * speed * dt
@@ -808,6 +846,159 @@ class GameManager:
         from persistence.repositories import save_inventory_item
 
         await save_inventory_item(self.db, channel_id, user_id, item_id, qty)
+
+    # ----- furnace (smelting) adapters: thin, all logic in game/smelting.py --
+
+    def _furnace_at(self, rt: ScenarioRuntime, x: int, y: int):
+        """The FurnaceState for the furnace block at (x, y), creating it on
+        first use. Returns None when no furnace block sits on that tile."""
+        from game.smelting import FurnaceState
+
+        if rt.state.blocks.get(x, y) != "furnace":
+            return None
+        f = rt.state.furnaces.get((x, y))
+        if f is None:
+            f = FurnaceState(x=x, y=y)
+            rt.state.furnaces[(x, y)] = f
+        return f
+
+    async def furnace_put_input(self, channel_id: int, user_id: int,
+                                x: int, y: int, item_id: str, qty: int = 1):
+        """Bag -> furnace input slot. Station gate re-checked server-side.
+        Returns (ok, reason)."""
+        from game import smelting
+
+        rt = self.get_runtime_for(channel_id, user_id)
+        player = rt.state.get_player(user_id)
+        if player is None:
+            return False, "no_player"
+        f = self._furnace_at(rt, x, y)
+        if f is None:
+            return False, "no_furnace"
+        if smelting.nearest_furnace(rt.state.blocks, player) != (x, y):
+            return False, "too_far"
+        inv = self.get_inventory(channel_id, user_id)
+        ok, reason = smelting.put_input(f, inv, item_id, qty)
+        if ok:
+            await self._persist_inventory(channel_id, user_id, item_id, inv.count(item_id))
+            await self._persist_furnace(channel_id, f)
+        return ok, reason
+
+    async def furnace_add_fuel(self, channel_id: int, user_id: int,
+                               x: int, y: int, item_id: str, qty: int = 1):
+        """Bag -> furnace burn time. Returns (ok, reason)."""
+        from game import smelting
+
+        rt = self.get_runtime_for(channel_id, user_id)
+        player = rt.state.get_player(user_id)
+        if player is None:
+            return False, "no_player"
+        f = self._furnace_at(rt, x, y)
+        if f is None:
+            return False, "no_furnace"
+        if smelting.nearest_furnace(rt.state.blocks, player) != (x, y):
+            return False, "too_far"
+        inv = self.get_inventory(channel_id, user_id)
+        ok, reason = smelting.add_fuel(f, inv, item_id, qty)
+        if ok:
+            await self._persist_inventory(channel_id, user_id, item_id, inv.count(item_id))
+            await self._persist_furnace(channel_id, f)
+        return ok, reason
+
+    async def furnace_take_output(self, channel_id: int, user_id: int, x: int, y: int):
+        """Furnace output slot -> bag. Returns (ok, reason, item_id, qty)."""
+        from game import smelting
+
+        rt = self.get_runtime_for(channel_id, user_id)
+        player = rt.state.get_player(user_id)
+        if player is None:
+            return False, "no_player", None, 0
+        f = self._furnace_at(rt, x, y)
+        if f is None:
+            return False, "no_furnace", None, 0
+        if smelting.nearest_furnace(rt.state.blocks, player) != (x, y):
+            return False, "too_far", None, 0
+        inv = self.get_inventory(channel_id, user_id)
+        item_id, qty = f.output_item, f.output_qty
+        ok, reason = smelting.take_output(f, inv)
+        if ok:
+            await self._persist_inventory(channel_id, user_id, item_id, inv.count(item_id))
+            await self._persist_furnace(channel_id, f)
+            self._notify_inventory_change(channel_id, user_id)
+        return ok, reason, item_id, qty
+
+    async def _persist_furnace(self, channel_id: int, furnace) -> None:
+        if self.db is None:
+            return
+        from persistence.repositories import save_furnace
+
+        await save_furnace(self.db, channel_id, furnace)
+
+    async def load_furnaces(self, rt: ScenarioRuntime) -> None:
+        """Populate per-tile furnace states from the DB (boot restore, rule 14).
+        Furnace blocks themselves come back via load_blocks."""
+        if self.db is None:
+            return
+        from game.smelting import FurnaceState
+        from persistence.repositories import load_furnaces
+
+        for row in await load_furnaces(self.db, rt.channel_id):
+            f = FurnaceState.from_dict(row)
+            rt.state.furnaces[(f.x, f.y)] = f
+
+    def start_smelting(self, enabled: bool = True) -> None:
+        """Start the shared furnace-tick loop once."""
+        if not enabled:
+            return
+        if self.smelting_task is None or self.smelting_task.done():
+            self.smelting_task = asyncio.create_task(self._smelting_loop())
+
+    async def stop_smelting(self) -> None:
+        task = self.smelting_task
+        self.smelting_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _smelting_loop(self) -> None:
+        """Tick every placed furnace ~1s: land finished outputs, re-arm the
+        next smelt, persist on completion. Deadline model means a restart
+        loses nothing (the persisted deadline keeps ticking through downtime)."""
+        import time as _time
+
+        from game import smelting
+
+        while True:
+            started = asyncio.get_running_loop().time()
+            now = _time.time()
+            for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
+                if not rt.state.furnaces:
+                    continue
+                changed_any = False
+                async with rt.lock:
+                    for f in list(rt.state.furnaces.values()):
+                        # A broken furnace block kills its state (persisted
+                        # row deleted below, outside the lock).
+                        if rt.state.blocks.get(f.x, f.y) != "furnace":
+                            continue
+                        if smelting.tick(f, now):
+                            changed_any = True
+                # Drop states whose block was removed; persist completions.
+                for key, f in list(rt.state.furnaces.items()):
+                    if rt.state.blocks.get(f.x, f.y) != "furnace":
+                        rt.state.furnaces.pop(key, None)
+                        if self.db is not None:
+                            from persistence.repositories import delete_furnace
+
+                            await delete_furnace(self.db, rt.channel_id, f.x, f.y)
+                if changed_any and self.db is not None:
+                    for f in list(rt.state.furnaces.values()):
+                        await self._persist_furnace(rt.channel_id, f)
+            elapsed = asyncio.get_running_loop().time() - started
+            await asyncio.sleep(max(0.05, 1.0 - elapsed))
 
     def get_runtime(self, channel_id: int) -> Optional[ScenarioRuntime]:
         return self.runtimes.get(channel_id)
@@ -1303,6 +1494,10 @@ class GameManager:
             player = rt.state.get_player(user_id)
             if player is None or player.dead_until is None:
                 return
+            # Respawn to a RANDOM walkable tile — never in place. Waking up on
+            # the death tile (inside the zombie pack) got the player bitten
+            # back to 0 HP on the next tick, forever ("treo màn hồi sinh").
+            # Clear the zombie aggro too so nothing is mid-bite on arrival.
             occupied = {(p.x, p.y) for p in rt.state.get_visible_players()}
             candidates = [
                 (x, y) for y in range(rt.map_data.height)
@@ -1319,6 +1514,18 @@ class GameManager:
             # Respawn is tile-based: re-centre the continuous position so a
             # connected web client sees the player at the new tile's centre.
             player.sync_float_from_int()
+            # Web pack grace: reset every web zombie's bite cooldown so the
+            # arrival tile is never bitten on the very next 20 Hz tick
+            # ("treo màn hồi sinh" — died, revived, instantly re-bitten).
+            import time as _respawn_time
+
+            _web_pack = getattr(rt.state, "web_zombies", None)
+            if isinstance(_web_pack, dict):
+                for z in _web_pack.values():
+                    try:
+                        z.last_bite = _respawn_time.monotonic()
+                    except Exception:
+                        pass
         if self.db is not None:
             self._schedule_save(rt, player)
         screen = rt.screens.get(user_id)
