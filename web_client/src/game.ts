@@ -144,6 +144,22 @@ export class WorldScene extends Phaser.Scene {
   private zombieTextureReady = false;
   private zombieFetchAsked = false;
   private lastZombieFrameT = 0;
+  /** Rolling stats of real snapshot arrival gaps (ms), updated in
+   * applySnapshot: average + max over the last few seconds. Feeds
+   * echoSlack() so reconciliation adapts to each player's actual link
+   * instead of a fixed threshold. */
+  private snapGapAvg = 50;
+  private snapGapMax = 50;
+
+  /** Lead (tiles) tolerated before any pull-back: the natural echo lag of
+   * THIS connection — server tick interval + the worst recent snapshot gap,
+   * valued at the current run speed, with a small floor. A stop after a
+   * normal run never exceeds it, so the player is never dragged back for
+   * just having lagged. */
+  private echoSlack(): number {
+    const speed = this.welcome?.self?.run_speed ?? 6.0;
+    return Math.max(1.2, speed * (0.05 + this.snapGapMax / 1000));
+  }
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
@@ -815,18 +831,19 @@ export class WorldScene extends Phaser.Scene {
       if (drift > 20) {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > 3.0 && v.dx === 0 && v.dy === 0) {
-        // Correct ONLY while standing still. Any per-frame correction while
-        // the player is moving (backward glide OR a speed brake) reads as
-        // walking into something soft that shoves you back — reported as
-        // "bị khối vô hình đẩy". While a key is held the prediction runs
-        // free (smooth is king during lag); when the player releases input
-        // the glide eases them onto the authority — position authority
-        // matters the moment they stop, not mid-stride. A >20-tile gap is a
-        // portal/respawn and snaps instantly regardless of input.
+      } else if (drift > this.echoSlack() && v.dx === 0 && v.dy === 0) {
+        // Correct ONLY while standing still, and ONLY the part of the lead
+        // that cannot be normal echo lag. Natural drift while running is
+        // speed x (snapshot interval + one-way latency) — at run speed on a
+        // VN link that is ~1.5-2.5 tiles, and the player must NOT be yanked
+        // back for it the moment they release a key (the "đi xong bị kéo
+        // lại" rage). echoSlack() measures their ACTUAL recent snapshot
+        // cadence; only the excess beyond it is eased back, gently, through
+        // the collision grid. A >20-tile gap is a portal/respawn — snap.
+        const excess = drift - this.echoSlack();
         const pull = Math.min(
           0.3 * 60 * this.frameDtSec,
-          (drift - 3.0) * 0.2 + 0.05,
+          excess * 0.15 + 0.03,
         );
         const k = pull / Math.max(1e-6, drift);
         const dx = (this.selfServerPos.x - this.selfX) * k;
@@ -1631,7 +1648,13 @@ export class WorldScene extends Phaser.Scene {
     // Authoritative self position for reconciliation. Self is NOT in the
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
-    this.lastServerRecv = performance.now();
+    const nowMs = performance.now();
+    if (this.lastServerRecv > 0) {
+      const gap = Math.min(2000, nowMs - this.lastServerRecv);
+      this.snapGapAvg += (gap - this.snapGapAvg) * 0.1; // EMA of cadence
+      this.snapGapMax = Math.max(50, this.snapGapMax * 0.98, gap); // decays over ~2s
+    }
+    this.lastServerRecv = nowMs;
     // Death state: on dead, HARD-snap the prediction to the authority (the
     // server teleported/hid us — any predicted position is fiction). stepSelf
     // reads selfDead and stops integrating input while dead (no more
