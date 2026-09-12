@@ -170,14 +170,21 @@ export class WorldScene extends Phaser.Scene {
    * THIS connection — input transit (half RTT), server tick interval, the
    * worst recent snapshot gap, valued at the current run speed, with a
    * small floor. A stop after a normal run never exceeds it, so the player
-   * is never dragged back for just having lagged. */
+   * is never dragged back for just having lagged.
+   *
+   * RESTORED: with slack = INF the pull-back NEVER fired, so on a laggy link
+   * the predicted avatar ran 7-8+ tiles ahead of the server truth — the
+   * server-side player (what zombies chase + bite!) was an INVISIBLE GHOST
+   * far from the sprite on screen ("zombie đuổi thực thể vô hình, mình đứng
+   * xa 7-8 ô vẫn bị đánh"). A bounded, generous slack keeps movement smooth
+   * while the ghost stays close enough that bites feel legitimate. */
   private echoSlack(): number {
-    // DISABLED BY USER REQUEST: smoothness beats position authority for now
-    // (anti-speedhack/anti-desync tightening is deferred). No pull-back ever
-    // fires; the only remaining correction is the >20-tile snap (portal/
-    // respawn/death teleports), which cannot be felt as a pull. To restore,
-    // return speed * (0.05 + rttHalfS + snapGapMax/1000) with a ~2.0 floor.
-    return Number.POSITIVE_INFINITY;
+    const speed = this.welcome?.self?.run_speed ?? 6.0;
+    const rttHalfS = Math.max(0, Math.min(0.4, this.netRttMs / 2000));
+    const gapS = Math.max(0, Math.min(0.4, this.snapGapMax / 1000));
+    // 2.0 floor + generous lag headroom, hard-capped at 4.5 tiles so the
+    // ghost can never roam far even on a terrible link.
+    return Math.min(4.5, Math.max(2.0, speed * (0.05 + rttHalfS + gapS)));
   }
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
@@ -860,16 +867,18 @@ export class WorldScene extends Phaser.Scene {
       if (drift > 20) {
         this.selfX = this.selfServerPos.x;
         this.selfY = this.selfServerPos.y;
-      } else if (drift > this.echoSlack() + 0.1 && v.dx === 0 && v.dy === 0) {
-        // Correct ONLY while standing still, and ONLY the part of the lead
-        // that cannot be normal echo lag. Two rules make this invisible to
-        // the player:
-        // 1. The glide TARGET is (serverPos + slack along the drift axis),
-        //    NOT serverPos itself — the legit lag lead is never reclaimed.
-        //    (The old target-serverPos version kept grinding the player all
-        //    the way back even after the excess was gone.)
-        // 2. The step is capped at the excess, so it can never overshoot
-        //    below the slack line.
+      } else if (drift > this.echoSlack() + 0.1) {
+        // Pull back WHILE MOVING too (not only when standing still): with
+        // the old idle-only correction a laggy client kept drifting further
+        // and further ahead while running — the server ghost ended up tiles
+        // away from the sprite, and that ghost is what zombies chase + bite.
+        // The slack formula already includes the full echo lag, so this only
+        // fires on REAL excess divergence, never on normal echo lag.
+        // Standing-still and moving cases share the SAME glide: target is
+        // (serverPos + slack along the drift axis) — the legit lag lead is
+        // never reclaimed; the step is capped at the excess (no overshoot
+        // below the slack line); the glide runs THROUGH collision (freeX/
+        // freeY) so the marker never slides into a wall.
         const slack = this.echoSlack();
         const excess = drift - slack;
         const step = Math.min(
