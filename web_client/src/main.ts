@@ -434,6 +434,9 @@ const input = new KeyboardInput({
       return;
     }
     net.placeAt(target.x, target.y, held);
+    // Same hand-swing feedback as breaking a block — placing is an arm
+    // motion too (the doll plays its one-shot atk rows).
+    scene.combatSwing();
     // Optimistic local collision: the block is solid IMMEDIATELY so a fast
     // run cannot pass through a block we just placed before the snapshot
     // arrives (the echo/snapshot reconciles if the server rejected it).
