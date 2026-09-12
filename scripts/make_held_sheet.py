@@ -68,9 +68,10 @@ def load_icon(path: Path, size: int = 13) -> Image.Image:
     return im
 
 
-def paste_art(frame: Image.Image, art: Image.Image, cx: int, cy: int) -> None:
-    """Paste the art block with its CENTRE at (cx, cy) — absolute frame px."""
-    frame.alpha_composite(art, (cx - art.size[0] // 2, cy - art.size[1] // 2))
+def paste_art(frame: Image.Image, art: Image.Image, cx: float, cy: float) -> None:
+    """Paste the art block with its CENTRE at (cx, cy) — absolute frame px
+    (floats fine-tune allowed; rounded — pixel art has no subpixel)."""
+    frame.alpha_composite(art, (int(round(cx - art.size[0] / 2)), int(round(cy - art.size[1] / 2))))
 
 
 def draw_streak(frame: Image.Image, streak: dict) -> None:
@@ -98,14 +99,18 @@ def build_sheet(icon: Path, size: int = 13, block: bool = False) -> tuple[Image.
         centres = row["centre12"]
         rots = row.get("rot") or [None] * COLS
         # Block-only row nudges (baked, feedback-tuned): back/up rows tuck the
-        # block INTO the player (left 2px); front/down rows drop it 2px and
-        # out 2px right so it sits in front of the body like a carried cube.
+        # block INTO the player (left 2px); front/down rows drop 2px, sit out
+        # right 2px, then lifted 1.5px and pushed OUT left 1.5px more per the
+        # facing-camera pass. Item icons get a 1.5px left tuck on *_up rows
+        # (into the player when walking away).
         row_nudge = (0, 0)
         if block:
             if ri == 2 or ri == 5 or ri == 8:   # *_up (walking away)
                 row_nudge = (-2, 0)
             elif ri == 0 or ri == 3 or ri == 6: # *_down (facing camera)
-                row_nudge = (2, 2)
+                row_nudge = (0.5, 0.5)  # was (2,2): up 1.5 + left 1.5 net
+        elif ri == 2 or ri == 5 or ri == 8:     # items: *_up tuck left 1.5px
+            row_nudge = (-1.5, 0)
         frames.append([])
         for c in range(COLS):
             frame = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
