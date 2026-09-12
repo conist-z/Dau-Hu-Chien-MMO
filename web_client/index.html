@@ -53,13 +53,16 @@
             <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
             <button class="inv-close" id="inv-close" type="button">✕</button>
           </div>
-          <!-- INVENTORY: inventory.png 98×101 + 5×4 slot grid (10,17) step 16 -->
+          <!-- INVENTORY (V5 frame_01): 98×101 frame, 20 slots 5×4 at
+               (10,17) pitch 16, currency overlays at kit bboxes -->
           <div id="inv-items-wrap" class="panel-wrap">
-            <img class="panel" src="ui/inventory.png" alt="" draggable="false">
+            <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
           </div>
-          <!-- CRAFT: craft_a.png 198×117 + recipe 4×4 grid + output (107,91) -->
+          <!-- CRAFT (V5 frame3_03): 198×117 frame, inputs 3×5 @(10,33),
+               outputs 3×3 @(74,17), result [108,90,16,16], button [75,68,43,14],
+               description [133,21,54,87] -->
           <div id="inv-craft-wrap" class="panel-wrap hidden">
-            <img class="panel" src="ui/craft_a.png" alt="" draggable="false">
+            <img class="panel" src="ui/v5/layers/craft_frame.png" alt="" draggable="false">
           </div>
           <!-- Selected recipe detail (inputs → output, needs-table hint) -->
           <div id="craft-detail" class="hidden"></div>

@@ -4,20 +4,52 @@
 
 import type { InventoryPayload, RecipePayload } from "./protocol";
 import {
-  CRAFT_GRID, CRAFT_OUTPUT, CRAFT_PANEL, INVENTORY_GRID, INVENTORY_PANEL,
-  makeSlot, sizePanel, slotXY,
+  CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_INPUT_CELL,
+  CRAFT_INPUT_GRID, CRAFT_LAYERS, CRAFT_OUTPUT_CELL, CRAFT_OUTPUT_GRID,
+  CRAFT_PANEL, CRAFT_RESULT, CRAFT_RESULT_ATOM,
+  CRAFT_TITLE, INV_ARROW_L, INV_ARROW_R, INV_COIN, INV_CRYSTAL,
+  INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
+  itemIconUrl, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
 
-const WEATHER_ICONS: Record<string, string> = {
-  sun_clouds: "⛅", sun: "☀️", sunny: "☀️", clouds: "☁️", cloudy: "☁️",
-  heavy_clouds: "☁️", rain: "🌧️", heavy_rain: "⛈️", storm: "⛈️",
-  snow: "🌨️", cold: "🥶", wind: "🌬️", fog: "🌫️",
+// Animated pixel weather icons copied from the Discord hub renderer
+// (assets/gui/weather/<key>/frame_*.png -> public/ui/hud/weather/). One frame
+// set per key; the HUD cycles frames at the same 400ms beat as the hub GIF.
+const WEATHER_FRAMES: Record<string, number[]> = {
+  sun_clouds: [1, 2, 3, 4, 5, 6],
+  sunny: [1, 2, 3, 4, 5, 6],
+  cloudy: [1, 2, 3, 4, 5, 6, 7],
+  heavy_clouds: [1, 2, 3, 4, 5, 6, 7, 8],
+  rain: [1, 2, 3, 4, 5, 6],
+  heavy_rain: [1, 2, 3, 4, 5, 6],
+  storm: [1, 2, 3, 4, 5, 6],
+  snow: [1, 2, 3, 4, 5, 6, 7],
+  cold: [1, 2, 3, 4],
+  wind: [1, 2, 3, 4, 5, 6, 7],
+};
+// Legacy aliases + web-only keys fall back to the closest pixel set / emoji.
+const WEATHER_ICON_FALLBACK: Record<string, string> = {
+  sun: "☀️", sunny: "☀️", clouds: "☁️", fog: "🌫️",
 };
 const WEATHER_NAMES: Record<string, string> = {
-  sun_clouds: "Nắng có mây", sun: "Nắng", sunny: "Nắng", clouds: "Mây",
-  cloudy: "Nhiều mây", heavy_clouds: "U ám", rain: "Mưa",
-  heavy_rain: "Mưa to", storm: "Bão", snow: "Tuyết", cold: "Lạnh",
-  wind: "Gió", fog: "Sương mù",
+  sun_clouds: "Nắng Dịu", sun: "Nắng", sunny: "Nắng Vàng", clouds: "Mây",
+  cloudy: "Nhiều Mây", heavy_clouds: "Trời Âm U", rain: "Mây Thưa",
+  heavy_rain: "Mưa Tầm Tã", storm: "Giông Bão", snow: "Tuyết Rơi",
+  cold: "Giá Lạnh", wind: "Gió Nhẹ", fog: "Sương mù",
+};
+// Day/night phase pixel icons copied from the Discord hub renderer
+// (assets/gui/daynight/*.png -> public/ui/hud/daynight/).
+const DAYNIGHT_ICONS: Record<string, string> = {
+  morning: "ui/hud/daynight/sun_morning.png",
+  day: "ui/hud/daynight/sun_noon.png",
+  evening: "ui/hud/daynight/sun_dusk.png",
+  night: "ui/hud/daynight/moon_night.png",
+};
+const DAYNIGHT_EMOJI: Record<string, string> = {
+  morning: "🌅", day: "☀️", evening: "🌇", night: "🌙",
+};
+const DAYNIGHT_NAMES: Record<string, string> = {
+  morning: "Buổi sáng", day: "Buổi trưa", evening: "Buổi chiều", night: "Ban đêm",
 };
 
 // Hotbar slot icons: bundled Twemoji codepoints are a SERVER-side concern;
@@ -68,11 +100,18 @@ export class Hud {
   private invPanel = document.getElementById("inv-panel")!;
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
-  private craftDetail = document.getElementById("craft-detail")!;
+  private craftDetail = document.getElementById("craft-detail")!; // kept: tab-switch hidden toggle;
   private craftTab: HTMLElement;
   private itemsTab: HTMLElement;
   private selectedRecipeId: string | null = null;
+  private recipePage = 0; // OUTPUT grid pages 9 recipes at a time (arrows)
   private nearTable = false; // updated from snapshots (server truth)
+  // Animated pixel icon state (weather + day/night HUD icons).
+  private weatherImg: HTMLImageElement | null = null;
+  private weatherKey: string | null = null;
+  private weatherFrameIdx = 0;
+  private weatherTimer: number | null = null;
+  private daynightImg: HTMLImageElement | null = null;
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
   // Server-driven emoji map (welcome.item_emojis): every item the player has
@@ -103,14 +142,22 @@ export class Hud {
         const isCraft = tab.dataset.tab === "craft";
         this.invItemsWrap.classList.toggle("hidden", isCraft);
         this.invCraftWrap.classList.toggle("hidden", !isCraft);
-        this.craftDetail.classList.toggle("hidden", !isCraft);
+        this.craftDetail.classList.toggle("hidden", true); // detail moved in-panel (V5)
         this.renderInventory();
       });
     });
     document.getElementById("inv-close")!.addEventListener("click", () => this.toggleInventory(false));
-    // Panel geometry once at boot (handoff: integer scale, absolute slots).
+    // Panel geometry once at boot (V5: integer scale, exact local bboxes).
     sizePanel(this.invItemsWrap, INVENTORY_PANEL);
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
+    // Static kit layers (title/currency/decor) — placed once, exact bboxes.
+    this.invItemsWrap.append(
+      makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL),
+    );
+    this.invCraftWrap.append(
+      makeLayer(CRAFT_TITLE),
+      ...CRAFT_LAYERS.map((l) => makeLayer(l)),
+    );
   }
 
 
@@ -180,7 +227,8 @@ export class Hud {
     }
   }
 
-  /** Túi đồ: fixed 5×4 pixel grid; bag order maps row-major into slots. */
+  /** Túi đồ: fixed 5×4 pixel grid (V5 origin [10,17] pitch 16, slot 14×14);
+   *  bag order maps row-major into slots; coin/crystal overlays stay put. */
   private renderBagGrid(): void {
     this.invItemsWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
     const g = INVENTORY_GRID;
@@ -188,25 +236,24 @@ export class Hud {
     for (let i = 0; i < total; i++) {
       const [x, y] = slotXY(g, i);
       const stack = this.inventory.bag[i];
-      const [r, c] = [Math.floor(i / g.cols), i % g.cols];
-      const slot = makeSlot("inventory", r, c, x, y, g, {
-        icon: stack ? iconFor(stack.id, this.itemEmojis) : "",
+      const slot = makeSlot(g.slotW, x, y, INV_SLOT, {
+        iconUrl: stack ? itemIconUrl(stack.id) : undefined,
+        emoji: stack ? iconFor(stack.id, this.itemEmojis) : "",
         qty: stack ? String(stack.qty) : "",
         title: stack ? stack.id : undefined,
       });
       if (stack) {
         slot.addEventListener("click", () => this.onUse?.(stack.id));
-        slot.classList.add("has-item");
       }
       this.invItemsWrap.appendChild(slot);
     }
   }
 
-  /** Chế tạo: 4×4 recipe grid (pick one) + output slot + detail strip. */
+  /** Chế tạo (V5 frame3_03): INPUT grid 3×5 = selected recipe's materials,
+   *  OUTPUT grid 3×3 = recipe catalog page (arrows page), result slot
+   *  [108,90,16,16] = craft trigger, in-panel button + description region. */
   private renderCraftPanel(): void {
-    this.invCraftWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
-    const g = CRAFT_GRID;
-    const total = g.cols * g.rows;
+    this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager").forEach((n) => n.remove());
     // Keep the selection valid across recipe list changes.
     if (this.selectedRecipeId && !this.recipes.some((r) => r.id === this.selectedRecipeId)) {
       this.selectedRecipeId = null;
@@ -214,14 +261,37 @@ export class Hud {
     if (!this.selectedRecipeId && this.recipes.length > 0) {
       this.selectedRecipeId = this.recipes[0].id;
     }
-    for (let i = 0; i < total; i++) {
-      const [x, y] = slotXY(g, i);
-      const rec = this.recipes[i];
-      const [r, c] = [Math.floor(i / g.cols), i % g.cols];
-      const sel = !!rec && rec.id === this.selectedRecipeId;
-      const slot = makeSlot("recipe", r, c, x, y, g, {
-        icon: rec ? rec.emoji : "",
-        selected: sel,
+    const sel = this.recipes.find((x) => x.id === this.selectedRecipeId) ?? null;
+    const pageCount = Math.max(1, Math.ceil(this.recipes.length / 9));
+    this.recipePage = Math.min(this.recipePage, pageCount - 1);
+
+    // --- INPUT grid 3×5: the selected recipe's materials, one stack per slot.
+    const inputs = sel?.inputs ?? [];
+    for (let i = 0; i < CRAFT_INPUT_GRID.cols * CRAFT_INPUT_GRID.rows; i++) {
+      const [x, y] = slotXY(CRAFT_INPUT_GRID, i);
+      const inp = inputs[i];
+      const have = inp ? (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) : 0;
+      const enough = inp ? have >= inp.qty : true;
+      const slot = makeSlot(CRAFT_INPUT_GRID.slotW, x, y, CRAFT_INPUT_CELL, {
+        iconUrl: inp ? itemIconUrl(inp.id) : undefined,
+        emoji: inp ? iconFor(inp.id, this.itemEmojis) : "",
+        qty: inp ? String(inp.qty) : "",
+        title: inp ? `${inp.id}: có ${have}/${inp.qty}` : undefined,
+      });
+      if (inp && !enough) slot.classList.add("lacking");
+      this.invCraftWrap.appendChild(slot);
+    }
+
+    // --- OUTPUT grid 3×3: recipe catalog, 9 per page (output cell surface).
+    const pageRecipes = this.recipes.slice(this.recipePage * 9, this.recipePage * 9 + 9);
+    for (let i = 0; i < CRAFT_OUTPUT_GRID.cols * CRAFT_OUTPUT_GRID.rows; i++) {
+      const [x, y] = slotXY(CRAFT_OUTPUT_GRID, i);
+      const rec = pageRecipes[i];
+      const slot = makeSlot(CRAFT_OUTPUT_GRID.slotW, x, y, CRAFT_OUTPUT_CELL, {
+        iconUrl: rec ? itemIconUrl(rec.output.id) : undefined,
+        emoji: rec ? rec.emoji : "",
+        qty: rec && rec.output.qty > 1 ? String(rec.output.qty) : "",
+        selected: !!rec && rec.id === this.selectedRecipeId,
         title: rec ? `${rec.name}${rec.needs_table ? " — cần bàn chế tạo" : ""}` : undefined,
       });
       if (rec) {
@@ -229,23 +299,104 @@ export class Hud {
           this.selectedRecipeId = rec.id;
           this.renderCraftPanel();
         });
-        slot.classList.add("has-item");
       }
       this.invCraftWrap.appendChild(slot);
     }
-    // Output slot: FIXED (107,91) — never flex/grid (handoff §3.3).
-    const sel = this.recipes.find((x) => x.id === this.selectedRecipeId) ?? null;
-    const outSlot = makeSlot("output", 0, 0, CRAFT_OUTPUT.x, CRAFT_OUTPUT.y, CRAFT_GRID, {
-      icon: sel ? sel.emoji : "",
+    // Catalog paging arrows (V5 Inventory arrow atoms, mirrored to craft's
+    // free corners beside the output grid).
+    if (this.recipes.length > 9) {
+      const left = makeLayer({ ...INV_ARROW_L, x: 74, y: 65 });
+      left.classList.add("pix-pager");
+      const right = makeLayer({ ...INV_ARROW_R, x: 111, y: 65 });
+      right.classList.add("pix-pager");
+      if (this.recipePage > 0) {
+        left.classList.add("clickable");
+        left.style.cursor = "pointer";
+        left.addEventListener("click", () => {
+          this.recipePage--;
+          this.renderCraftPanel();
+        });
+      }
+      if (this.recipePage < pageCount - 1) {
+        right.classList.add("clickable");
+        right.style.cursor = "pointer";
+        right.addEventListener("click", () => {
+          this.recipePage++;
+          this.renderCraftPanel();
+        });
+      }
+      this.invCraftWrap.append(left, right);
+    }
+
+    // --- Result slot [108,90,16,16] (V5 PATCH_LOG): shows the output;
+    // clicking it crafts (when craftable). Pulse overlay when craftable.
+    const outSlot = makeSlot(CRAFT_RESULT.w, CRAFT_RESULT.x, CRAFT_RESULT.y, CRAFT_RESULT_ATOM, {
+      iconUrl: sel ? itemIconUrl(sel.output.id) : undefined,
+      emoji: sel ? sel.emoji : "",
       qty: sel && sel.output.qty > 1 ? String(sel.output.qty) : "",
       title: sel ? sel.name : undefined,
     });
-    if (sel && this.canCraftNow(sel)) {
+    const craftable = !!sel && this.canCraftNow(sel);
+    if (craftable && sel) {
       outSlot.classList.add("craftable");
       outSlot.addEventListener("click", () => this.onCraft?.(sel.id));
     }
     this.invCraftWrap.appendChild(outSlot);
-    this.renderCraftDetail(sel);
+
+    // --- In-panel pixel button [75,68,43,14] with state atoms.
+    this.invCraftWrap.appendChild(this.makeCraftButton(craftable, sel));
+
+    // --- Description region [133,21,54,87]: name + ingredient checklist.
+    this.invCraftWrap.appendChild(this.makeCraftDescription(sel));
+  }
+
+  /** Pixel create button (demo sprite [76,69] 43×13): states via filters. */
+  private makeCraftButton(craftable: boolean, sel: RecipePayload | null): HTMLElement {
+    const btn = document.createElement("div");
+    btn.className = "pix-btn" + (craftable ? " ok" : " off");
+    btn.style.cssText =
+      `left:${CRAFT_BUTTON.x * PIXEL_SCALE}px;top:${CRAFT_BUTTON.y * PIXEL_SCALE}px;` +
+      `width:${CRAFT_BUTTON.w * PIXEL_SCALE}px;height:${CRAFT_BUTTON.h * PIXEL_SCALE}px;`;
+    const bg = document.createElement("img");
+    bg.className = "slot-bg";
+    bg.src = CRAFT_BTN.normal;
+    bg.draggable = false;
+    btn.appendChild(bg);
+    if (craftable && sel) {
+      btn.addEventListener("mousedown", () => btn.classList.add("pressed"));
+      btn.addEventListener("mouseup", () => btn.classList.remove("pressed"));
+      btn.addEventListener("mouseleave", () => btn.classList.remove("pressed"));
+      btn.addEventListener("click", () => this.onCraft?.(sel.id));
+    }
+    return btn;
+  }
+
+  /** Description region [133,21,54,87]: recipe name + per-input have/need. */
+  private makeCraftDescription(sel: RecipePayload | null): HTMLElement {
+    const d = document.createElement("div");
+    d.className = "pix-desc";
+    d.style.cssText =
+      `left:${CRAFT_DESC.x * PIXEL_SCALE}px;top:${CRAFT_DESC.y * PIXEL_SCALE}px;` +
+      `width:${CRAFT_DESC.w * PIXEL_SCALE}px;height:${CRAFT_DESC.h * PIXEL_SCALE}px;`;
+    if (!sel) return d;
+    const title = document.createElement("div");
+    title.className = "pix-desc-title";
+    title.textContent = sel.name + (sel.needs_table ? " 🛠️" : "");
+    d.appendChild(title);
+    for (const inp of sel.inputs) {
+      const have = this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0;
+      const row = document.createElement("div");
+      row.className = `pix-desc-row ${have >= inp.qty ? "ok" : "lack"}`;
+      row.textContent = `${iconFor(inp.id, this.itemEmojis)}×${inp.qty} (${have})`;
+      d.appendChild(row);
+    }
+    if (sel.needs_table && !this.nearTable) {
+      const warn = document.createElement("div");
+      warn.className = "pix-desc-row lack";
+      warn.textContent = "🛠️ cần bàn chế tạo";
+      d.appendChild(warn);
+    }
+    return d;
   }
 
   /** Pure client preview of can_craft — the SERVER re-checks at craft time. */
@@ -254,43 +405,6 @@ export class Hud {
     return r.inputs.every(
       (inp) => (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) >= inp.qty,
     );
-  }
-
-  /** Detail strip under the craft panel: name, inputs ×qty (green/red), button. */
-  private renderCraftDetail(sel: RecipePayload | null): void {
-    const d = this.craftDetail;
-    d.innerHTML = "";
-    if (!sel) {
-      d.classList.add("hidden");
-      return;
-    }
-    d.classList.remove("hidden");
-    const title = document.createElement("div");
-    title.className = "craft-title";
-    title.textContent = `${sel.emoji} ${sel.name}` +
-      (sel.needs_table ? " 🛠️" : "");
-    const mats = document.createElement("div");
-    mats.className = "craft-mats";
-    for (const inp of sel.inputs) {
-      const have = this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0;
-      const chip = document.createElement("span");
-      chip.className = `mat-chip ${have >= inp.qty ? "ok" : "lack"}`;
-      chip.textContent = `${iconFor(inp.id, this.itemEmojis)}×${inp.qty}`;
-      chip.title = `${inp.id}: có ${have}/${inp.qty}`;
-      mats.appendChild(chip);
-    }
-    if (sel.needs_table && !this.nearTable) {
-      const warn = document.createElement("span");
-      warn.className = "mat-chip lack";
-      warn.textContent = "🛠️ cần bàn";
-      mats.appendChild(warn);
-    }
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "Chế tạo";
-    btn.disabled = !this.canCraftNow(sel);
-    btn.addEventListener("click", () => this.onCraft?.(sel.id));
-    d.append(title, mats, btn);
   }
 
   // ----- loading overlay -----
@@ -379,28 +493,85 @@ export class Hud {
 
   setClock(secondsOfDay: number): void {
     this.clockEl.textContent = fmtClock(secondsOfDay);
-    // Day/night phase icon ("buổi") — mirrors the Discord hub renderer's
+    // Day/night phase PIXEL icon ("buổi") — mirrors the Discord hub renderer's
     // _daynight_phase periods (05-10 morning, 11-16 day, 17-18 evening,
-    // otherwise night) driven by the SAME accelerated in-game clock.
+    // otherwise night) driven by the SAME accelerated in-game clock, using
+    // the same 17x17 pixel-art tiles (assets/gui/daynight -> ui/hud/daynight).
     const hour = Math.floor(secondsOfDay / 3600) % 24;
     const phase =
       hour >= 5 && hour <= 10 ? "morning" :
       hour >= 11 && hour <= 16 ? "day" :
       hour >= 17 && hour <= 18 ? "evening" : "night";
-    const icons: Record<string, [string, string]> = {
-      morning: ["🌅", "Buổi sáng"],
-      day: ["☀️", "Buổi trưa"],
-      evening: ["🌇", "Buổi chiều"],
-      night: ["🌙", "Ban đêm"],
-    };
-    const [icon, name] = icons[phase];
-    this.daynightEl.textContent = icon;
-    this.daynightEl.title = name;
+    this.setDaynightIcon(phase);
+  }
+
+  /** Swap the day/night pixel icon when the phase changes (emoji fallback). */
+  private setDaynightIcon(phase: string): void {
+    if (this.daynightImg && this.daynightImg.dataset.phase === phase) return;
+    const file = DAYNIGHT_ICONS[phase];
+    if (file) {
+      let img = this.daynightImg;
+      if (!img) {
+        img = document.createElement("img");
+        img.className = "hud-pix";
+        img.draggable = false;
+        img.alt = "";
+        this.daynightEl.replaceChildren(img);
+      }
+      img.src = file;
+      img.dataset.phase = phase;
+      img.title = DAYNIGHT_NAMES[phase] ?? phase;
+      this.daynightImg = img;
+    } else {
+      this.daynightEl.textContent = DAYNIGHT_EMOJI[phase] ?? "❓";
+      this.daynightEl.title = DAYNIGHT_NAMES[phase] ?? phase;
+      this.daynightImg = null;
+    }
   }
 
   setWeather(key: string): void {
-    this.weatherEl.textContent = WEATHER_ICONS[key] ?? "❓";
     this.weatherEl.title = WEATHER_NAMES[key] ?? key;
+    const frames = WEATHER_FRAMES[key];
+    if (!frames) {
+      // No pixel set (legacy alias / fog): emoji fallback, stop the cycle.
+      this.stopWeatherCycle();
+      this.weatherEl.textContent = WEATHER_ICON_FALLBACK[key] ?? "❓";
+      this.weatherKey = null;
+      return;
+    }
+    if (this.weatherKey === key && this.weatherImg) return; // already cycling
+    this.stopWeatherCycle();
+    this.weatherKey = key;
+    const img = document.createElement("img");
+    img.className = "hud-pix";
+    img.draggable = false;
+    img.alt = "";
+    img.title = WEATHER_NAMES[key] ?? key;
+    this.weatherEl.replaceChildren(img);
+    this.weatherImg = img;
+    // Cycle frames at the same 400ms beat as the Discord hub GIF
+    // (HubRenderResult.duration_ms=400).
+    this.weatherFrameIdx = 0;
+    img.src = this.weatherFrameSrc(key, 0);
+    this.weatherTimer = window.setInterval(() => {
+      this.weatherFrameIdx = (this.weatherFrameIdx + 1) % frames.length;
+      if (this.weatherImg) {
+        this.weatherImg.src = this.weatherFrameSrc(key, this.weatherFrameIdx);
+      }
+    }, 400);
+  }
+
+  private weatherFrameSrc(key: string, idx: number): string {
+    const n = WEATHER_FRAMES[key][idx];
+    return `ui/hud/weather/${key}/frame_${String(n).padStart(3, "0")}.png`;
+  }
+
+  private stopWeatherCycle(): void {
+    if (this.weatherTimer !== null) {
+      window.clearInterval(this.weatherTimer);
+      this.weatherTimer = null;
+    }
+    this.weatherImg = null;
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number): void {
