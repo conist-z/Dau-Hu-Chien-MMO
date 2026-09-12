@@ -140,9 +140,10 @@ export class WorldScene extends Phaser.Scene {
   private zombieLayer: Phaser.GameObjects.Layer | null = null;
   // Kaetram hitsplat state: floating damage numbers (spawnSplat/updateSplats).
   private splats = new Set<{ txt: Phaser.GameObjects.Text; t0: number; x: number; y: number }>();
-  // Progressive block-break cracks: tileKey -> jagged crack lines drawn
-  // over the block sprite; density/opacity scale with damage/hardness.
-  private crackOverlays = new Map<string, Phaser.GameObjects.Graphics>();
+  // Progressive block-break cracks: tileKey -> Minetest-style crack stage
+  // sprite (10-stage sheet ui/fx/cracks.png, CC0) drawn OVER the block.
+  private crackOverlays = new Map<string, Phaser.GameObjects.Image>();
+  private crackTextureReady = false;
   // Drop entities ("linh khí"): id -> live sprite group. Server-authoritative
   // position/phase at 20 Hz; the client animates bob/glow/collect locally.
   private dropLayer: Phaser.GameObjects.Layer | null = null;
@@ -497,10 +498,19 @@ export class WorldScene extends Phaser.Scene {
         this.blockSprites.delete(tileKey);
       }
     }
+    // A removed block must not keep a ghost crack floating over the ground.
+    for (const tileKey of [...this.crackOverlays.keys()]) {
+      if (!seen.has(tileKey)) {
+        this.crackOverlays.get(tileKey)?.destroy();
+        this.crackOverlays.delete(tileKey);
+      }
+    }
   }
 
   /** Progressive crack overlay for a block being broken (server echo carries
-   * damage/hardness). ratio >= 1 or a gone block clears the overlay. */
+   * damage/hardness). Stage 0..9 from the Minetest-style CC0 crack sheet;
+   * a gentle flicker makes long grinds feel alive. ratio >= 1 or a gone
+   * block clears the overlay. */
   setBlockCrack(tx: number | null, ty: number | null, damage: number, needed: number): void {
     if (tx === null || ty === null) return;
     const key = `${tx},${ty}`;
@@ -511,28 +521,34 @@ export class WorldScene extends Phaser.Scene {
       this.crackOverlays.delete(key);
       return;
     }
-    let g = existing;
-    if (!g) {
-      g = this.add.graphics();
-      if (this.blockLayer) this.blockLayer.add(g);
-      this.crackOverlays.set(key, g);
+    if (!this.crackTextureReady) {
+      // Load the 10-stage crack sheet once from the static bundle (no
+      // server round-trip). Until it decodes, cracks simply don't show —
+      // the next hit's echo will draw them.
+      if (!this.textures.exists("fx-cracks")) {
+        this.load.image("fx-cracks", "ui/fx/cracks.png");
+        this.load.once("complete", () => { this.crackTextureReady = true; });
+        this.load.start();
+      }
+      return;
     }
-    g.clear();
-    // Deterministic jagged cracks radiating from the block centre; more
-    // cracks + darker as damage accumulates (no per-hit random flicker).
-    const cx = tx * 32 + 16;
-    const cy = ty * 32 + 16;
-    const n = 1 + Math.floor(ratio * 3);
-    g.lineStyle(1.5, 0x1a130a, 0.9);
-    for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + 0.7;
-      g.beginPath();
-      g.moveTo(cx + Math.cos(ang) * 2.5, cy + Math.sin(ang) * 2.5);
-      g.lineTo(cx + Math.cos(ang + 0.35) * 8, cy + Math.sin(ang + 0.35) * 8);
-      g.lineTo(cx + Math.cos(ang - 0.2) * 14, cy + Math.sin(ang - 0.2) * 14);
-      g.strokePath();
+    let img = existing;
+    if (!img) {
+      img = this.add.image(tx * 32 + 16, ty * 32 + 16, "fx-cracks", 0);
+      if (this.blockLayer) this.blockLayer.add(img);
+      img.setDepth(1); // above the block sprite, below actors
+      this.crackOverlays.set(key, img);
     }
-    g.setAlpha(0.45 + ratio * 0.55);
+    // 10 stages: never show the last frame as "cracked" (that's the break
+    // itself — the snapshot removes the block a beat later).
+    const stage = Math.min(8, Math.floor(ratio * 10));
+    img.setFrame(stage);
+    // Slow flicker on the heaviest stages (7+): dust settling vibe without
+    // strobing. Base alpha rises with damage so early cracks stay subtle.
+    const wobble = stage >= 7
+      ? 0.9 + 0.1 * Math.sin(this.time.now / 120)
+      : 1.0;
+    img.setAlpha((0.55 + ratio * 0.45) * wobble);
   }
 
   /** A block face PNG arrived: register + redraw with the real sprite. */
