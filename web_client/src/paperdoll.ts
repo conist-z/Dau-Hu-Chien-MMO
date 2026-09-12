@@ -173,18 +173,27 @@ export class PaperdollBody {
 
   private applyBaseFrame(): void {
     if (!this.base) return;
-    const row = this.rowFor();
-    // LEFT mirrors the right-facing row.
+    const tex = this.base.texture;
+    if (!tex || !tex.key || tex.key === "__MISSING") return;
+    // The sheet registers ASYNC (blob -> Image -> addSpriteSheet). A frame
+    // that does not exist yet throws inside Phaser's setFrame and KILLS the
+    // whole scene update loop (frozen map: chat/tui DOM kept working, canvas
+    // dead). Guard every setFrame with a frame-existence check.
+    const idx = this.rowFor() * this.manifest.frames_per_row + this.frame;
+    if (!tex.has(String(idx))) return; // sheet not cut yet — skip this tick
     const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
-    this.base.setFrame(row * this.manifest.frames_per_row + this.frame);
+    this.base.setFrame(idx);
     this.base.setFlipX(flip);
   }
 
   private syncWeaponFrame(): void {
     if (!this.weapon || !this.base) return;
-    const row = this.rowFor();
+    const tex = this.weapon.texture;
+    if (!tex || !tex.key || tex.key === "__MISSING") return;
+    const idx = this.rowFor() * this.manifest.frames_per_row + this.frame;
+    if (!tex.has(String(idx))) return; // sheet not cut yet — skip this tick
     const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
-    this.weapon.setFrame(row * this.manifest.frames_per_row + this.frame);
+    this.weapon.setFrame(idx);
     this.weapon.setFlipX(flip);
     this.weapon.setPosition(this.weaponX(), this.weaponY());
   }
@@ -198,17 +207,28 @@ export function registerPaperdollTextures(
   weaponBytes: Record<string, Uint8Array>,
 ): void {
   const addSheet = (key: string, bytes: Uint8Array, entry: SheetEntry): void => {
-    if (scene.textures.exists(key)) scene.textures.remove(key);
     // Phaser addSpriteSheet needs a Blob URL -> Image; build via DOM decode.
+    // ATOMIC swap: the old texture stays alive until the new one is decoded;
+    // remove+add happen back-to-back inside onload so sprites never point at
+    // a missing/half-cut sheet (a setFrame on one used to kill the scene).
     const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
-      if (scene.textures.exists(key)) scene.textures.remove(key);
-      scene.textures.addSpriteSheet(key, img, {
+      const old = scene.textures.exists(key) ? scene.textures.get(key) : null;
+      const created = scene.textures.addSpriteSheet(key, img, {
         frameWidth: entry.frame_w,
         frameHeight: entry.frame_h,
       });
+      // addSpriteSheet returns null if the key already existed — drop the old
+      // one first in that case and retry once.
+      if (!created && old) {
+        scene.textures.remove(key);
+        scene.textures.addSpriteSheet(key, img, {
+          frameWidth: entry.frame_w,
+          frameHeight: entry.frame_h,
+        });
+      }
       URL.revokeObjectURL(url);
     };
     img.src = url;

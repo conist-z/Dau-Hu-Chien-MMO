@@ -564,6 +564,12 @@ export class WorldScene extends Phaser.Scene {
       // (spawning earlier rendered the Phaser green "missing texture" box).
       const trySpawn = (): void => {
         if (this.paperdollReady || !this.textures.exists("pd-base")) return;
+        // Only flip to the doll when the sheet is actually CUT (frame 0 AND 1
+        // exist) — addSpriteSheet registers the key before/while cutting, and
+        // spawning mid-cut crashed setFrame ("no frame 1") inside the update
+        // loop and froze the whole scene (map dead, movement dead).
+        const tex = this.textures.get("pd-base");
+        if (!tex || !tex.has("0") || !tex.has("1")) return;
         this.paperdollReady = true;
         if (this.selfMarker && !this.selfDoll) {
           this.spawnSelfDoll();
