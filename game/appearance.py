@@ -41,6 +41,9 @@ _DIRS_WITH_LEFT = {"down", "up", "left", "right"}
 SPEEDS = {"idle": 250, "walk": 120, "atk": 50}
 
 # held item id -> weapon sheet stem under assets/players/weapon/.
+# The first 12 rows map to real Kaetram tool sheets; the GENERATED ones
+# (scripts/make_held_sheet.py from scripts/held_anchor_table.json) let any
+# item/block be held with the same paperdoll quality.
 WEAPON_SHEETS: Dict[str, str] = {
     "dirt_sword": "coppersword",
     "wood_sword": "ironsword",
@@ -54,6 +57,21 @@ WEAPON_SHEETS: Dict[str, str] = {
     "dirt_shovel": "spoon",
     "wood_shovel": "smithshammer",
     "stone_shovel": "ancientshovel",
+    # generated held-item sheets (blocks + common items)
+    "apple": "apple",
+    "stone": "stone",
+    "wood": "wood",
+    "leaves": "leaves",
+    "torch": "torch",
+    "stick": "stick",
+    "plank": "plank",
+    "coal": "coal",
+    "iron_ore": "ironore",
+    "iron_ingot": "ironbar",
+    "coin": "coin",
+    "cooked_meat": "cookedmeat",
+    "rotten_flesh": "rottenflesh",
+    "potion_hp": "potionhp",
 }
 
 

@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Anchor table for generated held-item sheets (scripts/make_held_sheet.py).",
+    "All numbers MEASURED from real Kaetram sheets (48x48 frames, 4x9).",
+    "",
+    "Model (from lolipop/balloon/spoon/ironsword): the art mass sits at HAND",
+    "height (~y23-26) and only a thin handle/stick reaches down to the grip",
+    "at y~32; idle_down items overlap the shoulder rows (authentic Kaetram).",
+    "centre12 = absolute (cx, cy) of the 12x12 art-block centre per column.",
+    "rot = per-frame art rotation (Kaetram REDRAWS swing poses; atk_right f1",
+    "is a raised windup, f2 the horizontal slash + streak, f3 follow-through).",
+    "atk_down f2/f3 = overhead smash landing low in front (y~35).",
+    "atk_up f2/f3 are EMPTY in the real sheets.",
+    "Left facing reuses *_right with flipX (client-side, existing)."
+  ],
+  "frame_w": 48,
+  "frame_h": 48,
+  "cols": 4,
+  "rows": {
+    "0_idle_down":  { "centre12": [[14, 24], [14, 23], [14, 23], [14, 24]] },
+    "1_idle_right": { "centre12": [[28, 24], [28, 23], [28, 23], [28, 24]] },
+    "2_idle_up":    { "centre12": [[35, 24], [35, 23], [35, 23], [35, 24]] },
+    "3_walk_down":  { "centre12": [[14, 24], [14, 25], [15, 24], [14, 25]] },
+    "4_walk_right": { "centre12": [[28, 25], [27, 25], [28, 25], [27, 24]] },
+    "5_walk_up":    { "centre12": [[35, 24], [35, 25], [34, 24], [35, 25]] },
+    "6_atk_down":   { "centre12": [[14, 24], [14, 22], [27, 35], [27, 34]],
+                      "rot": [null, null, -90, -90] },
+    "7_atk_right":  { "centre12": [[28, 24], [16, 22], [33, 31], [33, 24]],
+                      "rot": [null, -45, -90, -45],
+                      "streak": { "frame": 2, "color": [199, 191, 173], "alpha": [60, 120],
+                                  "px": [[34, 29], [35, 29], [36, 29], [37, 29], [38, 29], [39, 29], [40, 29], [41, 29], [42, 29], [43, 29], [35, 30], [36, 30], [37, 30], [38, 30], [39, 30], [40, 30], [41, 30], [42, 30], [36, 31], [37, 31], [38, 31], [39, 31], [40, 31], [41, 31], [42, 31], [37, 32], [38, 32], [39, 32], [40, 32], [41, 32], [38, 33], [39, 33], [40, 33], [41, 33]] } },
+    "8_atk_up":     { "centre12": [[35, 24], [34, 22], null, null] }
+  }
+}

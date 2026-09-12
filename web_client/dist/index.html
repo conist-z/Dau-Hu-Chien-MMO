@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-P6RVazVQ.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-ByqdHEL5.css">
+    <title>Discord Map — Web Client</title>
+    <script type="module" crossorigin src="./assets/index-CpawrEiU.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C9ruUZwa.css">
   </head>
   <body>
     <div id="game-root">
@@ -59,11 +59,15 @@
           <div id="inv-items-wrap" class="panel-wrap">
             <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
           </div>
-          <!-- CRAFT (V5 frame3_03): 198×117 frame, inputs 3×5 @(10,33),
-               outputs 3×3 @(74,17), result [108,90,16,16], button [75,68,43,14],
-               description [133,21,54,87] -->
+          <!-- CRAFT (V5 frame3_03): 198×117 frame — quick-craft 3×5 @(10,33),
+               materials 3×3 @(74,17), result [108,90,16,16], create [76,69].
+               The INVENTORY panel below is the drag partner for materials. -->
           <div id="inv-craft-wrap" class="panel-wrap hidden">
             <img class="panel" src="ui/v5/layers/craft_frame.png" alt="" draggable="false">
+          </div>
+          <!-- Inventory panel is ALSO visible on the craft tab (drag source) -->
+          <div id="inv-items-craft" class="panel-wrap hidden">
+            <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
           </div>
           <!-- Selected recipe detail (inputs → output, needs-table hint) -->
           <div id="craft-detail" class="hidden"></div>
@@ -88,6 +92,6 @@
           </div>
         </div>
       </div>
-    </div>
+    </div>
   </body>
 </html>

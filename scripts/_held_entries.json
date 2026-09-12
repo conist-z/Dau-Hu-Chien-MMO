@@ -1,0 +1,128 @@
+{
+  "apple": {
+    "file": "weapon/apple.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "stone": {
+    "file": "weapon/stone.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "wood": {
+    "file": "weapon/wood.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "leaves": {
+    "file": "weapon/leaves.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "torch": {
+    "file": "weapon/torch.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "stick": {
+    "file": "weapon/stick.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "plank": {
+    "file": "weapon/plank.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "coal": {
+    "file": "weapon/coal.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "ironore": {
+    "file": "weapon/ironore.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "ironbar": {
+    "file": "weapon/ironbar.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "coin": {
+    "file": "weapon/coin.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "cookedmeat": {
+    "file": "weapon/cookedmeat.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "rottenflesh": {
+    "file": "weapon/rottenflesh.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  },
+  "potionhp": {
+    "file": "weapon/potionhp.png",
+    "frame_w": 48,
+    "frame_h": 48,
+    "cols": 4,
+    "rows": 9,
+    "offset_x": -8,
+    "offset_y": -24
+  }
+}

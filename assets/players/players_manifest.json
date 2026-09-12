@@ -18,6 +18,15 @@
       "offset_x": -8,
       "offset_y": -24
     },
+    "apple": {
+      "file": "weapon/apple.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
     "bronzeaxe": {
       "file": "weapon/bronzeaxe.png",
       "frame_w": 48,
@@ -36,6 +45,15 @@
       "offset_x": -8,
       "offset_y": -24
     },
+    "coal": {
+      "file": "weapon/coal.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
     "cobaltaxe": {
       "file": "weapon/cobaltaxe.png",
       "frame_w": 48,
@@ -47,6 +65,24 @@
     },
     "cobaltpickaxe": {
       "file": "weapon/cobaltpickaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "coin": {
+      "file": "weapon/coin.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "cookedmeat": {
+      "file": "weapon/cookedmeat.png",
       "frame_w": 48,
       "frame_h": 48,
       "cols": 4,
@@ -81,6 +117,24 @@
       "offset_x": -8,
       "offset_y": -24
     },
+    "ironbar": {
+      "file": "weapon/ironbar.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "ironore": {
+      "file": "weapon/ironore.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
     "ironpickaxe": {
       "file": "weapon/ironpickaxe.png",
       "frame_w": 48,
@@ -99,6 +153,42 @@
       "offset_x": -8,
       "offset_y": -24
     },
+    "leaves": {
+      "file": "weapon/leaves.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "plank": {
+      "file": "weapon/plank.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "potionhp": {
+      "file": "weapon/potionhp.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "rottenflesh": {
+      "file": "weapon/rottenflesh.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
     "smithshammer": {
       "file": "weapon/smithshammer.png",
       "frame_w": 48,
@@ -110,6 +200,42 @@
     },
     "spoon": {
       "file": "weapon/spoon.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "stick": {
+      "file": "weapon/stick.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "stone": {
+      "file": "weapon/stone.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "torch": {
+      "file": "weapon/torch.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "wood": {
+      "file": "weapon/wood.png",
       "frame_w": 48,
       "frame_h": 48,
       "cols": 4,
