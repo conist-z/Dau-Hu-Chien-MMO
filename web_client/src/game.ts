@@ -4,7 +4,7 @@
 
 import Phaser from "phaser";
 import type { DropPayload, PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
-import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdoll";
+import { PaperdollBody, b64ToBytes, registerPaperdollTextures, registerWeaponSheet } from "./paperdoll";
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
@@ -554,6 +554,10 @@ export class WorldScene extends Phaser.Scene {
     } else if (name.startsWith("players/weapon/")) {
       const stem = name.slice("players/weapon/".length).replace(/\.png$/i, "");
       this.pdBytes[stem] = b64ToBytes(b64);
+      // Weapon sheets arrive AFTER base (and the once-only registration fix
+      // means a full re-run would skip them) — register each one directly so
+      // setWeapon finds its texture and the item actually shows in hand.
+      registerWeaponSheet(this, this.playersManifest, stem, this.pdBytes[stem]);
     } else {
       return;
     }

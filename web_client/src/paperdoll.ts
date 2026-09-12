@@ -236,6 +236,37 @@ export function registerPaperdollTextures(
   }
 }
 
+/** Register ONE late-arriving weapon sheet (asset pipeline).
+ *
+ * The full registerPaperdollTextures runs once when base.png arrives, but
+ * weapon sheets stream in AFTER it — and since the once-only guard
+ * ("Texture key already in use" crash fix), a later re-run would skip them
+ * forever, so setWeapon waited on a texture that never registered and
+ * nothing appeared in the hand. Each arrival registers itself directly.
+ */
+export function registerWeaponSheet(
+  scene: Phaser.Scene,
+  manifest: PlayersManifest,
+  stem: string,
+  bytes: Uint8Array,
+): void {
+  const entry = manifest.weapons[stem];
+  if (!entry) return;
+  const key = `pd-weapon-${stem}`;
+  if (scene.textures.exists(key)) return; // static asset: register once
+  const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    scene.textures.addSpriteSheet(key, img, {
+      frameWidth: entry.frame_w,
+      frameHeight: entry.frame_h,
+    });
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
 /** Decode a base64 payload to bytes (shared with the main asset path). */
 export function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
