@@ -1,13 +1,25 @@
 // HUD overlay: binds server state to the DOM elements declared in index.html.
 // Layout spec (plan): clock+weather TOP-LEFT flush, HP/mana TOP-RIGHT flush,
 // hotbar BOTTOM-CENTER always visible, chat BOTTOM-RIGHT.
+//
+// Craft model (user spec, Minecraft-style):
+// - LIGHT 3×5 grid = QUICK-CRAFT catalog (recipes). Click a slot (or press
+//   CREATE with one selected) and the server PULLS that recipe's materials
+//   from the bag into the DARK grid. Not draggable.
+// - DARK 3×3 grid = MATERIAL grid (what the player placed). Draggable:
+//   move stacks between it and the inventory panel below, split (right-
+//   click), merge (drop a stack onto the same item kind).
+// - CREATE consumes the material grid (server matches the exact multiset);
+//   the output lands in the RESULT slot next to the anvil; click to collect.
+// - DESCRIPTION region shows the selected quick-craft recipe's info in the
+//   panel's own pixel style.
 
 import type { InventoryPayload, RecipePayload } from "./protocol";
 import {
-  CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_INPUT_CELL,
-  CRAFT_INPUT_GRID, CRAFT_LAYERS, CRAFT_OUTPUT_CELL, CRAFT_OUTPUT_GRID,
-  CRAFT_PANEL, CRAFT_RESULT, CRAFT_RESULT_ATOM,
-  CRAFT_TITLE, INV_ARROW_L, INV_ARROW_R, INV_COIN, INV_CRYSTAL,
+  CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_LAYERS, CRAFT_MAT_CELL,
+  CRAFT_MAT_GRID, CRAFT_PANEL, CRAFT_QUICK_CELL, CRAFT_QUICK_GRID,
+  CRAFT_RESULT, CRAFT_RESULT_ATOM,
+  CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
   itemIconUrl, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
@@ -80,10 +92,25 @@ function fmtClock(secondsOfDay: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/** One stack living in a grid (bag slot or craft material slot). */
+interface Stack { id: string; qty: number }
+
+/** Drag payload: which grid a drag started from + the stack. */
+interface DragSrc {
+  from: "bag" | "mat";
+  index: number;
+  stack: Stack;
+}
+
 export class Hud {
   private clockEl = document.getElementById("hud-clock")!;
   private weatherEl = document.getElementById("hud-weather")!;
   private daynightEl = document.getElementById("hud-daynight")!;
+  private daynightImg: HTMLImageElement | null = null;
+  private weatherImg: HTMLImageElement | null = null;
+  private weatherKey: string | null = null;
+  private weatherFrameIdx = 0;
+  private weatherTimer: number | null = null;
   private hpFill = document.getElementById("bar-hp-fill")!;
   private hpLabel = document.getElementById("bar-hp-label")!;
   private manaFill = document.getElementById("bar-mana-fill")!;
@@ -100,18 +127,12 @@ export class Hud {
   private invPanel = document.getElementById("inv-panel")!;
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
-  private craftDetail = document.getElementById("craft-detail")!; // kept: tab-switch hidden toggle;
+  private invItemsCraftWrap = document.getElementById("inv-items-craft")!;
+  private craftDetail = document.getElementById("craft-detail")!;
   private craftTab: HTMLElement;
   private itemsTab: HTMLElement;
-  private selectedRecipeId: string | null = null;
-  private recipePage = 0; // OUTPUT grid pages 9 recipes at a time (arrows)
+  private selectedQuick: number | null = null; // quick-craft catalog index
   private nearTable = false; // updated from snapshots (server truth)
-  // Animated pixel icon state (weather + day/night HUD icons).
-  private weatherImg: HTMLImageElement | null = null;
-  private weatherKey: string | null = null;
-  private weatherFrameIdx = 0;
-  private weatherTimer: number | null = null;
-  private daynightImg: HTMLImageElement | null = null;
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
   // Server-driven emoji map (welcome.item_emojis): every item the player has
@@ -119,10 +140,16 @@ export class Hud {
   // covers the bootstrap moment before welcome arrives.
   private itemEmojis: Record<string, string> = {};
   private recipes: RecipePayload[] = [];
+  // MATERIAL grid state (3×3): what the player placed for crafting. Purely
+  // a UI buffer — the server validates the multiset at CREATE time.
+  private matGrid: (Stack | null)[] = Array(9).fill(null);
+  private resultStack: Stack | null = null;
+  private drag: DragSrc | null = null;
+  private dragGhost: HTMLDivElement | null = null;
   private activeSlot = 0;
-  private onUse: ((itemId: string) => void) | null = null;
   private onCommand: ((text: string) => void) | null = null;
-  private onCraft: ((recipeId: string) => void) | null = null;
+  private onCraftGrid: ((inputs: Stack[]) => void) | null = null;
+  private onSplit: ((itemId: string) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
   constructor() {
     this.chatForm.addEventListener("submit", (e) => {
@@ -142,7 +169,9 @@ export class Hud {
         const isCraft = tab.dataset.tab === "craft";
         this.invItemsWrap.classList.toggle("hidden", isCraft);
         this.invCraftWrap.classList.toggle("hidden", !isCraft);
-        this.craftDetail.classList.toggle("hidden", true); // detail moved in-panel (V5)
+        // Craft tab ALSO shows the inventory panel below it (drag partner).
+        this.invItemsCraftWrap.classList.toggle("hidden", !isCraft);
+        this.craftDetail.classList.toggle("hidden", true);
         this.renderInventory();
       });
     });
@@ -150,14 +179,17 @@ export class Hud {
     // Panel geometry once at boot (V5: integer scale, exact local bboxes).
     sizePanel(this.invItemsWrap, INVENTORY_PANEL);
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
-    // Static kit layers (title/currency/decor) — placed once, exact bboxes.
-    this.invItemsWrap.append(
-      makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL),
-    );
-    this.invCraftWrap.append(
-      makeLayer(CRAFT_TITLE),
-      ...CRAFT_LAYERS.map((l) => makeLayer(l)),
-    );
+    sizePanel(this.invItemsCraftWrap, INVENTORY_PANEL);
+    // Static kit layers — placed once, exact bboxes.
+    this.invItemsWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
+    this.invItemsCraftWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
+    this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
+    // Global drag ghost tracking (mouse-move + drop outside any slot).
+    window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
+    window.addEventListener("mouseup", () => {
+      // Dropping outside any slot returns the stack to its source grid.
+      if (this.drag) this.cancelDrag();
+    });
   }
 
 
@@ -171,25 +203,35 @@ export class Hud {
         missing_materials: "Không đủ nguyên liệu.",
         no_station: "Cần đứng gần bàn chế tạo.",
         unknown_recipe: "Công thức không tồn tại.",
+        no_matching_recipe: "Chưa đúng công thức — xem Description.",
+        empty_grid: "Đặt nguyên liệu vào ô tối màu trước.",
       };
       this.toast(WHY[reason] ?? `Chế tạo thất bại (${reason}).`);
     }
   }
 
   setHooks(
-    onUse: (itemId: string) => void,
+    _onUse: (itemId: string) => void,
     onCommand: (text: string) => void,
-    onCraft: (recipeId: string) => void,
+    _onCraft: (recipeId: string) => void,
   ): void {
-    this.onUse = onUse;
     this.onCommand = onCommand;
-    this.onCraft = onCraft;
     // Mouse wheel over the game area cycles the hotbar slot (both dirs).
     window.addEventListener("wheel", (e) => {
       if (this.inventoryOpen || this.gateVisible) return;
       const dir = e.deltaY > 0 ? 1 : -1;
       this.selectSlot(this.activeSlot + dir);
     }, { passive: true });
+  }
+
+  /** Extra craft hooks: grid craft + quick-fill + split (all optional). */
+  setCraftHooks(
+    onCraftGrid: (inputs: Stack[]) => void,
+    _onQuickFill: (recipeId: string) => void,
+    onSplit: (itemId: string) => void,
+  ): void {
+    this.onCraftGrid = onCraftGrid;
+    this.onSplit = onSplit;
   }
 
   get gateVisible(): boolean {
@@ -221,16 +263,183 @@ export class Hud {
 
   private renderInventory(): void {
     if (this.itemsTab.classList.contains("active")) {
-      this.renderBagGrid();
+      this.renderBagGrid(this.invItemsWrap);
     } else {
+      this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
       this.renderCraftPanel();
     }
   }
 
-  /** Túi đồ: fixed 5×4 pixel grid (V5 origin [10,17] pitch 16, slot 14×14);
-   *  bag order maps row-major into slots; coin/crystal overlays stay put. */
-  private renderBagGrid(): void {
-    this.invItemsWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
+  // ===== DRAG & DROP core =====
+
+  private startDrag(src: DragSrc, e: MouseEvent): void {
+    if (this.drag) return;
+    this.drag = src;
+    const ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    const url = itemIconUrl(src.stack.id);
+    if (url) {
+      const im = document.createElement("img");
+      im.src = url;
+      im.draggable = false;
+      ghost.appendChild(im);
+    } else {
+      ghost.textContent = iconFor(src.stack.id, this.itemEmojis);
+    }
+    document.body.appendChild(ghost);
+    this.dragGhost = ghost;
+    this.updateDragGhost(e.clientX, e.clientY);
+  }
+
+  private updateDragGhost(x: number, y: number): void {
+    if (!this.dragGhost) return;
+    this.dragGhost.style.left = `${x - 16}px`;
+    this.dragGhost.style.top = `${y - 16}px`;
+  }
+
+  private dropOn(target: "bag" | "mat", index: number): void {
+    const d = this.drag;
+    this.endDrag();
+    if (!d || (d.from === target && d.index === index)) return;
+    if (d.from === "bag" && target === "bag") {
+      this.moveBag(d.index, index);
+    } else if (d.from === "mat" && target === "mat") {
+      this.moveMat(d.index, index);
+    } else if (d.from === "bag" && target === "mat") {
+      this.bagToMat(d.index, index);
+    } else {
+      this.matToBag(d.index, index);
+    }
+  }
+
+  private endDrag(): void {
+    this.drag = null;
+    this.dragGhost?.remove();
+    this.dragGhost = null;
+  }
+
+  private cancelDrag(): void {
+    // Stack stays where it was — just repaint.
+    this.endDrag();
+    this.renderInventory();
+  }
+
+  /** Bag → bag drag: pure grid reorder (swap or merge). The whole bag
+   *  order syncs to the server via ONE reorder op — any slot to any slot
+   *  of the 5×4 grid, no hotbar clamp, no bad_slot possible. */
+  private moveBag(from: number, to: number): void {
+    const a = this.inventory.bag[from];
+    const b = this.inventory.bag[to];
+    if (!a) return;
+    if (b && b.id === a.id) {
+      // Same item: merge (drag one stack onto the same kind).
+      this.inventory.bag[from] = null;
+      b.qty += a.qty;
+    } else {
+      this.inventory.bag[from] = b ?? null;
+      this.inventory.bag[to] = a;
+    }
+    this.syncBagOrder();
+    this.renderInventory();
+  }
+
+  /** Send the whole bag order to the server (validated multiset there). */
+  private syncBagOrder(): void {
+    const order = this.inventory.bag.map((s) =>
+      s ? { id: s.id, qty: s.qty } : { id: "", qty: 0 });
+    this.onReorder?.(order);
+  }
+
+  /** Material grid internal move/merge. */
+  private moveMat(from: number, to: number): void {
+    const a = this.matGrid[from];
+    if (!a) return;
+    const b = this.matGrid[to];
+    if (b && b.id === a.id) {
+      b.qty += a.qty;
+      this.matGrid[from] = null;
+    } else {
+      this.matGrid[from] = b ?? null;
+      this.matGrid[to] = a;
+    }
+    this.renderCraftPanel();
+  }
+
+  /** Bag → material grid: place 1 (left-click drag) — Minecraft feel. */
+  private bagToMat(bagIndex: number, matIndex: number): void {
+    const src = this.inventory.bag[bagIndex];
+    if (!src) return;
+    const dst = this.matGrid[matIndex];
+    if (dst && dst.id !== src.id) {
+      // Different item: swap the two stacks.
+      this.matGrid[matIndex] = { ...src };
+      this.inventory.bag[bagIndex] = { ...dst };
+      this.syncBagOrder();
+      this.renderCraftPanel();
+      return;
+    }
+    if (dst) {
+      dst.qty += 1;
+    } else {
+      this.matGrid[matIndex] = { id: src.id, qty: 1 };
+    }
+    src.qty -= 1;
+    if (src.qty <= 0) this.inventory.bag[bagIndex] = null;
+    // Server: consume exactly 1 via move_to-free path — we model placement
+    // client-side and reconcile at CREATE; a mid-session rejoin rebuilds
+    // the bag from the server truth. Repaint now.
+    this.renderCraftPanel();
+  }
+
+  /** Material grid → bag: return the stack (or 1 unit) to the bag. */
+  private matToBag(matIndex: number, bagIndex: number): void {
+    const src = this.matGrid[matIndex];
+    if (!src) return;
+    const target = this.inventory.bag[bagIndex];
+    if (target && target.id !== src.id) {
+      // Swap bag stack with the placed stack.
+      this.matGrid[matIndex] = { ...target };
+      this.inventory.bag[bagIndex] = { ...src };
+    } else if (target) {
+      target.qty += src.qty;
+      this.matGrid[matIndex] = null;
+    } else {
+      this.inventory.bag[bagIndex] = { ...src };
+      this.matGrid[matIndex] = null;
+    }
+    this.renderCraftPanel();
+  }
+
+  // Wire with bindMoveTo() — kept optional so a half-wired build never
+  // blocks compilation with TS6133 (session WIP guard).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private onReorder: ((order: { id: string; qty: number }[]) => void) | null = null;
+
+  /** Right-click a BAG slot: split half into the next empty bag slot. */
+  private splitBag(index: number): void {
+    const st = this.inventory.bag[index];
+    if (!st || st.qty < 2) return;
+    // Client-side split (visual) + server op to persist the new order.
+    const half = st.qty - Math.floor(st.qty / 2);
+    st.qty -= half;
+    // Find the first empty slot after index (wrap).
+    const bag = this.inventory.bag;
+    let at = -1;
+    for (let i = 1; i <= bag.length; i++) {
+      const j = (index + i) % bag.length;
+      if (!bag[j]) { at = j; break; }
+    }
+    if (at >= 0) bag[at] = { id: st.id, qty: half };
+    else st.qty += half; // no room: undo
+    this.onSplit?.(st.id);
+    this.renderInventory();
+  }
+
+  // ===== RENDER: bag tab =====
+
+  /** Túi đồ: fixed 5×4 pixel grid (V5 origin [10,17] pitch 16, slot 14×14). */
+  private renderBagGrid(wrap: HTMLElement): void {
+    wrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
     const g = INVENTORY_GRID;
     const total = g.cols * g.rows;
     for (let i = 0; i < total; i++) {
@@ -243,117 +452,192 @@ export class Hud {
         title: stack ? stack.id : undefined,
       });
       if (stack) {
-        slot.addEventListener("click", () => this.onUse?.(stack.id));
+        slot.addEventListener("mousedown", (e) => {
+          if (e.button === 2) { this.splitBag(i); return; }
+          this.startDrag({ from: "bag", index: i, stack: { ...stack } }, e);
+        });
       }
-      this.invItemsWrap.appendChild(slot);
+      slot.addEventListener("mouseup", () => this.dropOn("bag", i));
+      slot.addEventListener("contextmenu", (e) => e.preventDefault());
+      wrap.appendChild(slot);
     }
   }
 
-  /** Chế tạo (V5 frame3_03): INPUT grid 3×5 = selected recipe's materials,
-   *  OUTPUT grid 3×3 = recipe catalog page (arrows page), result slot
-   *  [108,90,16,16] = craft trigger, in-panel button + description region. */
+  // ===== RENDER: craft tab =====
+
+  /** Craft panel: QUICK-CRAFT 3×5 (light, left), MATERIAL 3×3 (dark, top
+   *  right), RESULT slot by the anvil, CREATE button, description region. */
   private renderCraftPanel(): void {
     this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager").forEach((n) => n.remove());
-    // Keep the selection valid across recipe list changes.
-    if (this.selectedRecipeId && !this.recipes.some((r) => r.id === this.selectedRecipeId)) {
-      this.selectedRecipeId = null;
-    }
-    if (!this.selectedRecipeId && this.recipes.length > 0) {
-      this.selectedRecipeId = this.recipes[0].id;
-    }
-    const sel = this.recipes.find((x) => x.id === this.selectedRecipeId) ?? null;
-    const pageCount = Math.max(1, Math.ceil(this.recipes.length / 9));
-    this.recipePage = Math.min(this.recipePage, pageCount - 1);
+    const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
-    // --- INPUT grid 3×5: the selected recipe's materials, one stack per slot.
-    const inputs = sel?.inputs ?? [];
-    for (let i = 0; i < CRAFT_INPUT_GRID.cols * CRAFT_INPUT_GRID.rows; i++) {
-      const [x, y] = slotXY(CRAFT_INPUT_GRID, i);
-      const inp = inputs[i];
-      const have = inp ? (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) : 0;
-      const enough = inp ? have >= inp.qty : true;
-      const slot = makeSlot(CRAFT_INPUT_GRID.slotW, x, y, CRAFT_INPUT_CELL, {
-        iconUrl: inp ? itemIconUrl(inp.id) : undefined,
-        emoji: inp ? iconFor(inp.id, this.itemEmojis) : "",
-        qty: inp ? String(inp.qty) : "",
-        title: inp ? `${inp.id}: có ${have}/${inp.qty}` : undefined,
-      });
-      if (inp && !enough) slot.classList.add("lacking");
-      this.invCraftWrap.appendChild(slot);
-    }
-
-    // --- OUTPUT grid 3×3: recipe catalog, 9 per page (output cell surface).
-    const pageRecipes = this.recipes.slice(this.recipePage * 9, this.recipePage * 9 + 9);
-    for (let i = 0; i < CRAFT_OUTPUT_GRID.cols * CRAFT_OUTPUT_GRID.rows; i++) {
-      const [x, y] = slotXY(CRAFT_OUTPUT_GRID, i);
-      const rec = pageRecipes[i];
-      const slot = makeSlot(CRAFT_OUTPUT_GRID.slotW, x, y, CRAFT_OUTPUT_CELL, {
+    // --- QUICK-CRAFT catalog (light 3×5, left; NOT draggable).
+    for (let i = 0; i < CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows; i++) {
+      const [x, y] = slotXY(CRAFT_QUICK_GRID, i);
+      const rec = this.recipes[i];
+      const haveAll = !!rec && this.canCraftNow(rec);
+      const slot = makeSlot(CRAFT_QUICK_GRID.slotW, x, y, CRAFT_QUICK_CELL, {
         iconUrl: rec ? itemIconUrl(rec.output.id) : undefined,
         emoji: rec ? rec.emoji : "",
         qty: rec && rec.output.qty > 1 ? String(rec.output.qty) : "",
-        selected: !!rec && rec.id === this.selectedRecipeId,
-        title: rec ? `${rec.name}${rec.needs_table ? " — cần bàn chế tạo" : ""}` : undefined,
+        selected: this.selectedQuick === i,
+        clickable: !!rec,
+        title: rec ? rec.name : undefined,
       });
       if (rec) {
-        slot.addEventListener("click", () => {
-          this.selectedRecipeId = rec.id;
-          this.renderCraftPanel();
+        slot.classList.add("quick");
+        if (haveAll) slot.classList.add("ready");
+        // mousedown (not click): guaranteed to fire even if another layer
+        // stops the click event; ALSO more responsive (fires on press).
+        slot.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          e.preventDefault();
+          this.selectedQuick = i;
+          // Quick-fill: pull this recipe's materials from the bag into the
+          // material grid (server validates the multiset at CREATE).
+          this.fillMatGridFromBag(rec);
         });
       }
       this.invCraftWrap.appendChild(slot);
     }
-    // Catalog paging arrows (V5 Inventory arrow atoms, mirrored to craft's
-    // free corners beside the output grid).
-    if (this.recipes.length > 9) {
-      const left = makeLayer({ ...INV_ARROW_L, x: 74, y: 65 });
-      left.classList.add("pix-pager");
-      const right = makeLayer({ ...INV_ARROW_R, x: 111, y: 65 });
-      right.classList.add("pix-pager");
-      if (this.recipePage > 0) {
-        left.classList.add("clickable");
-        left.style.cursor = "pointer";
-        left.addEventListener("click", () => {
-          this.recipePage--;
-          this.renderCraftPanel();
+
+    // --- MATERIAL grid (dark 3×3, top right; draggable).
+    for (let i = 0; i < CRAFT_MAT_GRID.cols * CRAFT_MAT_GRID.rows; i++) {
+      const [x, y] = slotXY(CRAFT_MAT_GRID, i);
+      const st = this.matGrid[i];
+      const slot = makeSlot(CRAFT_MAT_GRID.slotW, x, y, CRAFT_MAT_CELL, {
+        iconUrl: st ? itemIconUrl(st.id) : undefined,
+        emoji: st ? iconFor(st.id, this.itemEmojis) : "",
+        qty: st ? String(st.qty) : "",
+        title: st ? st.id : undefined,
+      });
+      if (st) {
+        slot.addEventListener("mousedown", (e) => {
+          if (e.button === 2) return;
+          this.startDrag({ from: "mat", index: i, stack: { ...st } }, e);
         });
       }
-      if (this.recipePage < pageCount - 1) {
-        right.classList.add("clickable");
-        right.style.cursor = "pointer";
-        right.addEventListener("click", () => {
-          this.recipePage++;
-          this.renderCraftPanel();
-        });
-      }
-      this.invCraftWrap.append(left, right);
+      slot.addEventListener("mouseup", () => this.dropOn("mat", i));
+      slot.addEventListener("contextmenu", (e) => e.preventDefault());
+      this.invCraftWrap.appendChild(slot);
     }
 
-    // --- Result slot [108,90,16,16] (V5 PATCH_LOG): shows the output;
-    // clicking it crafts (when craftable). Pulse overlay when craftable.
+    // --- RESULT slot [108,90,16,16]: last craft's output; click collects.
     const outSlot = makeSlot(CRAFT_RESULT.w, CRAFT_RESULT.x, CRAFT_RESULT.y, CRAFT_RESULT_ATOM, {
-      iconUrl: sel ? itemIconUrl(sel.output.id) : undefined,
-      emoji: sel ? sel.emoji : "",
-      qty: sel && sel.output.qty > 1 ? String(sel.output.qty) : "",
-      title: sel ? sel.name : undefined,
+      iconUrl: this.resultStack ? itemIconUrl(this.resultStack.id) : undefined,
+      emoji: this.resultStack ? iconFor(this.resultStack.id, this.itemEmojis) : "",
+      qty: this.resultStack ? String(this.resultStack.qty) : "",
+      title: this.resultStack ? this.resultStack.id : undefined,
     });
-    const craftable = !!sel && this.canCraftNow(sel);
-    if (craftable && sel) {
+    if (this.resultStack) {
       outSlot.classList.add("craftable");
-      outSlot.addEventListener("click", () => this.onCraft?.(sel.id));
+      outSlot.addEventListener("click", () => this.collectResult());
     }
     this.invCraftWrap.appendChild(outSlot);
 
-    // --- In-panel pixel button [75,68,43,14] with state atoms.
-    this.invCraftWrap.appendChild(this.makeCraftButton(craftable, sel));
+    // --- In-panel pixel CREATE button [76,69,43,13].
+    const gridHasMaterials = this.matGrid.some((s) => s);
+    this.invCraftWrap.appendChild(this.makeCraftButton(gridHasMaterials, sel));
 
-    // --- Description region [133,21,54,87]: name + ingredient checklist.
+    // --- Description region [133,21,54,87]: selected quick-craft info.
     this.invCraftWrap.appendChild(this.makeCraftDescription(sel));
   }
 
-  /** Pixel create button (demo sprite [76,69] 43×13): states via filters. */
-  private makeCraftButton(craftable: boolean, sel: RecipePayload | null): HTMLElement {
+  /** Pure client preview of can_craft — the SERVER re-checks at craft time. */
+  private canCraftNow(r: RecipePayload): boolean {
+    if (r.needs_table && !this.nearTable) return false;
+    return r.inputs.every(
+      (inp) => (this.inventory.bag.find((b) => b?.id === inp.id)?.qty ?? 0) >= inp.qty,
+    );
+  }
+
+  /** Pull a quick-craft recipe's materials from the bag into the grid. */
+  private fillMatGridFromBag(rec: RecipePayload): void {
+    // Clear any previous materials back to the bag first (they were never
+    // server-consumed — this is a pure UI buffer).
+    this.returnMatGridToBag();
+    // Place each ingredient (1 stack per material, qty per recipe).
+    let slot = 0;
+    for (const inp of rec.inputs) {
+      const have = this.inventory.bag.find((b) => b?.id === inp.id)?.qty ?? 0;
+      if (have < inp.qty) {
+        this.toast(`Thiếu ${inp.id} (${have}/${inp.qty}).`);
+        this.renderCraftPanel();
+        return;
+      }
+      for (const b of this.inventory.bag) {
+        if (!b || b.id !== inp.id) continue;
+        const take = Math.min(b.qty, inp.qty);
+        b.qty -= take;
+        if (b.qty <= 0) this.inventory.bag[this.inventory.bag.indexOf(b)] = null;
+        this.matGrid[slot] = { id: inp.id, qty: take };
+        inp.qty -= take; // remaining need (mutating the payload copy is fine)
+        if (inp.qty <= 0) break;
+      }
+      slot++;
+    }
+    // Sync the bag with the server (materials were "taken" client-side).
+    this.onBagChanged?.(this.inventory);
+    this.renderCraftPanel();
+  }
+
+  /** Return everything in the material grid to the bag (no server craft). */
+  private returnMatGridToBag(): void {
+    for (let i = 0; i < this.matGrid.length; i++) {
+      const st = this.matGrid[i];
+      if (!st) continue;
+      const existing = this.inventory.bag.find((b) => b?.id === st.id);
+      if (existing) existing.qty += st.qty;
+      else {
+        const free = this.inventory.bag.findIndex((b) => !b);
+        if (free >= 0) this.inventory.bag[free] = st;
+        else this.inventory.bag.push(st); // grid is 20 — server trims
+      }
+      this.matGrid[i] = null;
+    }
+  }
+
+  /** CREATE pressed: send the material grid's multiset to the server. */
+  private pressCreate(): void {
+    const inputs = this.matGrid.filter((s): s is Stack => !!s);
+    if (inputs.length === 0) return;
+    this.onCraftGrid?.(inputs);
+  }
+
+  /** Craft result arrived: park it in the result slot (click to collect). */
+  showCraftOutput(itemId: string, qty: number): void {
+    if (!itemId) return;
+    if (this.resultStack && this.resultStack.id === itemId) {
+      this.resultStack.qty += qty;
+    } else {
+      this.resultStack = { id: itemId, qty };
+    }
+    if (this.craftTab.classList.contains("active")) this.renderCraftPanel();
+  }
+
+  /** Collect the result slot into the bag. */
+  private collectResult(): void {
+    const st = this.resultStack;
+    if (!st) return;
+    const existing = this.inventory.bag.find((b) => b?.id === st.id);
+    if (existing) existing.qty += st.qty;
+    else {
+      const free = this.inventory.bag.findIndex((b) => !b);
+      if (free >= 0) this.inventory.bag[free] = st;
+      else this.inventory.bag.push(st);
+    }
+    this.resultStack = null;
+    this.onBagChanged?.(this.inventory);
+    this.renderCraftPanel();
+  }
+
+  private onBagChanged: ((inv: InventoryPayload) => void) | null = null;
+
+  /** Pixel CREATE button (demo sprite; states via filters). */
+  private makeCraftButton(gridHasMaterials: boolean, sel: RecipePayload | null): HTMLElement {
     const btn = document.createElement("div");
-    btn.className = "pix-btn" + (craftable ? " ok" : " off");
+    btn.className = "pix-btn" + (gridHasMaterials ? " ok" : " off");
     btn.style.cssText =
       `left:${CRAFT_BUTTON.x * PIXEL_SCALE}px;top:${CRAFT_BUTTON.y * PIXEL_SCALE}px;` +
       `width:${CRAFT_BUTTON.w * PIXEL_SCALE}px;height:${CRAFT_BUTTON.h * PIXEL_SCALE}px;`;
@@ -362,16 +646,17 @@ export class Hud {
     bg.src = CRAFT_BTN.normal;
     bg.draggable = false;
     btn.appendChild(bg);
-    if (craftable && sel) {
+    btn.title = sel ? sel.name : "Chế tạo";
+    if (gridHasMaterials) {
       btn.addEventListener("mousedown", () => btn.classList.add("pressed"));
       btn.addEventListener("mouseup", () => btn.classList.remove("pressed"));
       btn.addEventListener("mouseleave", () => btn.classList.remove("pressed"));
-      btn.addEventListener("click", () => this.onCraft?.(sel.id));
+      btn.addEventListener("click", () => this.pressCreate());
     }
     return btn;
   }
 
-  /** Description region [133,21,54,87]: recipe name + per-input have/need. */
+  /** Description region: selected quick-craft recipe, panel-native style. */
   private makeCraftDescription(sel: RecipePayload | null): HTMLElement {
     const d = document.createElement("div");
     d.className = "pix-desc";
@@ -379,32 +664,47 @@ export class Hud {
       `left:${CRAFT_DESC.x * PIXEL_SCALE}px;top:${CRAFT_DESC.y * PIXEL_SCALE}px;` +
       `width:${CRAFT_DESC.w * PIXEL_SCALE}px;height:${CRAFT_DESC.h * PIXEL_SCALE}px;`;
     if (!sel) return d;
+    const out = document.createElement("div");
+    out.className = "pix-desc-item";
+    const url = itemIconUrl(sel.output.id);
+    if (url) {
+      const im = document.createElement("img");
+      im.src = url;
+      im.draggable = false;
+      out.appendChild(im);
+    } else {
+      out.textContent = sel.emoji;
+    }
+    d.appendChild(out);
     const title = document.createElement("div");
     title.className = "pix-desc-title";
-    title.textContent = sel.name + (sel.needs_table ? " 🛠️" : "");
+    title.textContent = sel.name;
     d.appendChild(title);
     for (const inp of sel.inputs) {
-      const have = this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0;
+      const have = this.inventory.bag.find((b) => b?.id === inp.id)?.qty ?? 0;
       const row = document.createElement("div");
       row.className = `pix-desc-row ${have >= inp.qty ? "ok" : "lack"}`;
-      row.textContent = `${iconFor(inp.id, this.itemEmojis)}×${inp.qty} (${have})`;
+      const iurl = itemIconUrl(inp.id);
+      if (iurl) {
+        const im = document.createElement("img");
+        im.src = iurl;
+        im.draggable = false;
+        row.appendChild(im);
+      } else {
+        row.textContent = iconFor(inp.id, this.itemEmojis);
+      }
+      const qty = document.createElement("span");
+      qty.textContent = `×${inp.qty}`;
+      row.appendChild(qty);
       d.appendChild(row);
     }
     if (sel.needs_table && !this.nearTable) {
       const warn = document.createElement("div");
       warn.className = "pix-desc-row lack";
-      warn.textContent = "🛠️ cần bàn chế tạo";
+      warn.textContent = "🛠️ cần bàn";
       d.appendChild(warn);
     }
     return d;
-  }
-
-  /** Pure client preview of can_craft — the SERVER re-checks at craft time. */
-  private canCraftNow(r: RecipePayload): boolean {
-    if (r.needs_table && !this.nearTable) return false;
-    return r.inputs.every(
-      (inp) => (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) >= inp.qty,
-    );
   }
 
   // ----- loading overlay -----
@@ -626,7 +926,7 @@ export class Hud {
       const div = document.createElement("div");
       div.className = "slot" + (idx === this.activeSlot ? " active" : "");
       const qty = itemId
-        ? (this.inventory.bag.find((b) => b.id === itemId)?.qty ?? 0)
+        ? (this.inventory.bag.find((b) => b?.id === itemId)?.qty ?? 0)
         : 0;
       div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconFor(itemId, this.itemEmojis)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
@@ -660,6 +960,16 @@ export class Hud {
 
   onSlotSelect(cb: (slot: number) => void): void {
     this.onSelectSlot = cb;
+  }
+
+  /** Register bag-sync + reorder callbacks (server round-trips). */
+  setBagSync(
+    _onMoveTo: (itemId: string, slot: number) => void,
+    onBagChanged: (inv: InventoryPayload) => void,
+    onReorder?: (order: { id: string; qty: number }[]) => void,
+  ): void {
+    this.onBagChanged = onBagChanged;
+    this.onReorder = onReorder ?? null;
   }
 
   /** The item in the currently selected hotbar slot (for explicit place). */

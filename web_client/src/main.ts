@@ -341,6 +341,7 @@ hud.setCraftHooks(
 hud.setBagSync(
   (itemId, slot) => net.inventoryOp("move_to", { item_id: itemId, slot }),
   (_inv) => { /* client buffer already updated; server delta repaints */ },
+  (order) => net.inventoryOp("reorder", { order }),
 );
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held

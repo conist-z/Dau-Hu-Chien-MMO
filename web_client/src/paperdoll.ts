@@ -141,7 +141,8 @@ export class PaperdollBody {
     this.weapon = this.scene.add
       .sprite(this.weaponX(), this.weaponY(), key, 0)
       .setOrigin(0.5, 1) // feet anchor: sprite bottom sits at (x, y)
-      .setDepth(this.base.depth + 0.1)
+      .setDepth(this.base.depth - 0.1) // UNDER the body: held items read as
+      // being gripped (the hand overlaps them) instead of pasted on top
       .setScale(this.scale);
     this.syncWeaponFrame();
   }

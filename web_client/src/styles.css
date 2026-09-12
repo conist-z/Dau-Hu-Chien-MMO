@@ -221,6 +221,10 @@ html, body {
   position: relative;
   image-rendering: pixelated;
 }
+/* Kit layers (frame image included) must never eat clicks aimed at slots
+   — the craft quick-craft grid lost its clicks to the frame img before. */
+.panel-wrap .pix-layer { pointer-events: none; }
+.panel-wrap .slot-pix, .panel-wrap .pix-btn { pointer-events: auto; }
 .panel-wrap img.panel {
   display: block;
   image-rendering: pixelated;
@@ -301,8 +305,55 @@ html, body {
 }
 
 /* Craft detail strip under the panel — RETIRED: the V5 craft panel carries
-   its own button [75,68,43,14] + description region [133,21,54,87]. */
+   its own create button + description region [133,21,54,87]. */
 #craft-detail { display: none; }
+
+/* Description region [133,21,54,87] — panel-native pixel style. The V5 kit
+   renders its text in small Tahoma caps over the text layer's parchment. */
+@font-face {
+  font-family: "PixelTahoma";
+  src: url("/fonts/tahoma.ttf") format("truetype");
+  font-display: swap;
+}
+.pix-desc {
+  font-family: "PixelTahoma", Tahoma, monospace;
+}
+.pix-desc-item {
+  display: flex; align-items: center; justify-content: center;
+  margin: 2px 0;
+}
+.pix-desc-item img {
+  width: calc(var(--pix-scale, 3) * 10px);
+  height: calc(var(--pix-scale, 3) * 10px);
+  image-rendering: pixelated;
+}
+.pix-desc-title {
+  font-size: 10px; font-weight: 700; color: #4a3220;
+  text-align: center; line-height: 1.2;
+}
+.pix-desc-row {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 700; color: #4a3220;
+}
+.pix-desc-row img {
+  width: calc(var(--pix-scale, 3) * 7px);
+  height: calc(var(--pix-scale, 3) * 7px);
+  image-rendering: pixelated;
+}
+.pix-desc-row.ok { color: #2e6b3c; }
+.pix-desc-row.lack { color: #a03030; }
+
+/* Drag ghost: floating item following the cursor during a drag. */
+.drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; line-height: 1;
+  filter: drop-shadow(2px 2px 3px rgba(0, 0, 0, 0.6));
+}
+.drag-ghost img { width: 32px; height: 32px; image-rendering: pixelated; }
 
 /* V5 kit layers inside a panel wrap (title, currency, decor, pagers). */
 .pix-layer {
@@ -325,37 +376,50 @@ html, body {
 .pix-btn.ok.pressed img.slot-bg { filter: brightness(0.8); }
 .pix-btn.off { cursor: default; filter: grayscale(0.6) brightness(0.75); }
 
-/* Description region [133,21,54,87]: recipe name + ingredient checklist. */
+/* Description region [133,21,54,87]: selected quick-craft recipe info,
+   rendered over the text layer's parchment in the panel's pixel font. */
 .pix-desc {
   position: absolute;
   z-index: 2;
   overflow: hidden;
   display: flex; flex-direction: column; gap: 3px;
   padding: 4px 5px;
-  font-family: "Segoe UI", system-ui, sans-serif;
 }
-.pix-desc-title {
-  font-size: 12px; font-weight: 700; color: #f3e9d2;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.85);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.pix-desc-row {
-  font-size: 11px; font-weight: 600; line-height: 1.25;
-  color: #cfd4dd; text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.85);
-  white-space: nowrap;
-}
-.pix-desc-row.ok { color: #9fd6ab; }
-.pix-desc-row.lack { color: #ff8f95; }
 
-/* Input slot missing materials: red inner edge (selection stays accent). */
-.slot-pix.lacking img.slot-bg { filter: brightness(0.7) sepia(0.4) hue-rotate(-40deg); }
-.slot-pix.lacking::after {
+/* Quick-craft catalog slot ready-state: soft glow when craftable now. */
+.slot-pix.quick.ready::after {
   content: "";
   position: absolute; inset: 0;
-  box-shadow: inset 0 0 0 2px rgba(229, 72, 77, 0.7);
+  box-shadow: inset 0 0 0 2px rgba(74, 222, 128, 0.55);
   z-index: 4;
 }
-#craft-detail button:disabled { opacity: 0.4; cursor: default; }
+
+/* Hover: 4-corner bracket highlight (pixel-art style — no rounded glow).
+   Drawn as 4 small L-shapes on ::before so ::after stays free for state
+   overlays (selected/craftable/ready). */
+.slot-pix::before {
+  content: "";
+  position: absolute; inset: -3px;
+  z-index: 6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.08s ease;
+  --c: rgba(255, 235, 170, 0.95);
+  --t: 3px; /* arm thickness */
+  --l: 8px; /* arm length */
+  background:
+    linear-gradient(var(--c), var(--c)) 0 0 / var(--l) var(--t),
+    linear-gradient(var(--c), var(--c)) 0 0 / var(--t) var(--l),
+    linear-gradient(var(--c), var(--c)) 100% 0 / var(--l) var(--t),
+    linear-gradient(var(--c), var(--c)) 100% 0 / var(--t) var(--l),
+    linear-gradient(var(--c), var(--c)) 0 100% / var(--l) var(--t),
+    linear-gradient(var(--c), var(--c)) 0 100% / var(--t) var(--l),
+    linear-gradient(var(--c), var(--c)) 100% 100% / var(--l) var(--t),
+    linear-gradient(var(--c), var(--c)) 100% 100% / var(--t) var(--l);
+  background-repeat: no-repeat;
+}
+.slot-pix:hover::before { opacity: 1; }
+.slot-pix.quick.clickable, .slot-pix .icon, .slot-pix .icon-img { pointer-events: auto; }
 
 /* Loading overlay (only during a genuine asset fetch; auto-hides) */
 #loading-overlay {
