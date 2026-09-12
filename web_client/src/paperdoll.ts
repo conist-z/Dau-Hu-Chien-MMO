@@ -207,28 +207,24 @@ export function registerPaperdollTextures(
   weaponBytes: Record<string, Uint8Array>,
 ): void {
   const addSheet = (key: string, bytes: Uint8Array, entry: SheetEntry): void => {
+    // Paperdoll sheets are STATIC assets: register each key EXACTLY ONCE.
+    // onPaperdollAsset re-invokes this whole function on every asset arrival
+    // (base + ~26 sheets => dozens of re-registers): re-adding an existing
+    // key warns "already in use" and, worse, removing a texture that a live
+    // doll sprite is rendering nulled its glTexture and killed the render
+    // loop. Already present => skip (the bytes are identical anyway).
+    if (scene.textures.exists(key)) return;
     // Phaser addSpriteSheet needs a Blob URL -> Image; build via DOM decode.
-    // ATOMIC swap: the old texture stays alive until the new one is decoded;
-    // remove+add happen back-to-back inside onload so sprites never point at
-    // a missing/half-cut sheet (a setFrame on one used to kill the scene).
     const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
-      const old = scene.textures.exists(key) ? scene.textures.get(key) : null;
-      const created = scene.textures.addSpriteSheet(key, img, {
+      // Key cannot exist here (the exists-check above is the only gate and
+      // this key is registered exactly once), so addSpriteSheet always wins.
+      scene.textures.addSpriteSheet(key, img, {
         frameWidth: entry.frame_w,
         frameHeight: entry.frame_h,
       });
-      // addSpriteSheet returns null if the key already existed — drop the old
-      // one first in that case and retry once.
-      if (!created && old) {
-        scene.textures.remove(key);
-        scene.textures.addSpriteSheet(key, img, {
-          frameWidth: entry.frame_w,
-          frameHeight: entry.frame_h,
-        });
-      }
       URL.revokeObjectURL(url);
     };
     img.src = url;
