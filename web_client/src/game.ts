@@ -526,7 +526,13 @@ export class WorldScene extends Phaser.Scene {
       // server round-trip). Until it decodes, cracks simply don't show —
       // the next hit's echo will draw them.
       if (!this.textures.exists("fx-cracks")) {
-        this.load.image("fx-cracks", "ui/fx/cracks.png");
+        // SPRITESHEET (not image): the file is a 10-frame 32x32 strip —
+        // loading it as a plain image crams the whole chain into one frame
+        // and setFrame draws the entire strip squashed onto the block.
+        this.load.spritesheet("fx-cracks", "ui/fx/cracks.png", {
+          frameWidth: 32,
+          frameHeight: 32,
+        });
         this.load.once("complete", () => { this.crackTextureReady = true; });
         this.load.start();
       }
