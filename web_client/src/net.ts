@@ -24,12 +24,21 @@ export interface NetHandlers {
   onConnectionChange: (connected: boolean) => void;
   /** Optional RTT report (EMA ms) after each pong — feeds reconciliation. */
   onRtt?: (rttMs: number) => void;
+  /** Each seq'd input as it is flushed to the wire (replay buffer feed). */
+  onSeqInput?: (seq: number, dx: number, dy: number, running: boolean) => void;
 }
 
 export class Net {
   private ws: WebSocket | null = null;
   private token = "";
   private joined = false;
+  /** Monotonic input sequence (input-sequence reconciliation): every input
+   * frame carries seq; the snapshot acks last_seq and the game scene replays
+   * unacked inputs from its buffer. Reset per connection. */
+  private inputSeq = 0;
+  /** Delivery callback for each seq'd input, so the scene can buffer exact
+   * inputs for replay (set by main.ts right after construction). */
+  onSeqInput: ((seq: number, dx: number, dy: number, running: boolean) => void) | null = null;
   private handlers: NetHandlers;
   private pendingInput = { dx: 0, dy: 0, running: false, dirty: false };
   private inputTimer: number | null = null;
@@ -153,7 +162,12 @@ export class Net {
     const p = this.pendingInput;
     if (!p.dirty || !this.joined) return;
     p.dirty = false;
-    this.send({ type: MSG_INPUT, dx: p.dx, dy: p.dy, running: p.running });
+    const seq = ++this.inputSeq;
+    this.send({ type: MSG_INPUT, seq, dx: p.dx, dy: p.dy, running: p.running });
+    // Hand the exact input to the scene's replay buffer (same seq the server
+    // will ack). Buffered even for the idle zero vector — replay needs it to
+    // stop moving at the right instant.
+    if (this.onSeqInput) this.onSeqInput(seq, p.dx, p.dy, p.running);
     if (p.dx === 0 && p.dy === 0 && this.inputTimer !== null) {
       // Idle: one zero vector sent, stop the timer until the next keypress.
       window.clearInterval(this.inputTimer);
@@ -183,12 +197,20 @@ export class Net {
     this.send({ type: "action", name: "turn", dir });
   }
 
-  inventoryOp(op: "move_to" | "use", payload: { item_id?: string; slot?: number }): void {
+  inventoryOp(op: "move_to" | "use" | "split", payload: { item_id?: string; slot?: number }): void {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }
 
   craftOp(recipeId: string): void {
     this.send({ type: "craft_op", recipe_id: recipeId });
+  }
+
+  /** Grid craft: send exactly what sits in the material grid. */
+  craftGrid(inputs: { id: string; qty: number }[]): void {
+    this.send({
+      type: "craft_op",
+      inputs: inputs.map((s) => ({ id: s.id, qty: s.qty })),
+    });
   }
 
   chatCommand(text: string): void {
@@ -237,6 +259,7 @@ export class Net {
         break;
       case "welcome":
         this.joined = true;
+        this.inputSeq = 0; // fresh connection: restart the input sequence
         this.handlers.onWelcome(frame);
         break;
       case "snapshot":

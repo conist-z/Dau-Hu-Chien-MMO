@@ -10,10 +10,15 @@ import time as _time
 
 from typing import Dict, List
 
-from game.crafting import RECIPE_REGISTRY
+from config import HOTBAR_SLOTS
+from game.crafting import RECIPE_REGISTRY, nearest_station
+from game.drops import drops_payload
 from game.manager import ScenarioRuntime
 from game.zombies import iter_web_zombies
 from rendering.daynight import ingame_seconds
+
+# Web client bag = the V5 inventory panel's 5x4 grid.
+BAG_SLOTS = 20
 
 _PLAYERS_MANIFEST_CACHE: Dict | None = None
 
@@ -58,12 +63,15 @@ def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
 
 
 def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
-    """WEB-pack zombies: [id, x, y, hp, max_hp, kind, facing, anim].
+    """WEB-pack zombies: [id, x, y, hp, max_hp, kind, facing, anim, anim_t].
 
     Float x/y (tile units) so the client interpolates smoothly at 60 fps.
     facing (N/S/E/W/NE/NW/SE/SW) + anim ("walk"|"idle"|"atk") are
     server-authoritative: the client cuts the matching row/frame from its own
-    zombie sheet copy instead of stretching the whole sheet.
+    zombie sheet copy instead of stretching the whole sheet. ``anim_t`` is
+    the monotonic start of the CURRENT anim in SECONDS — an atk re-arm on the
+    same string (repeat bites) still changes it, so the client replays the
+    swing instead of freezing on the lunge frame.
     """
     out = []
     for z in iter_web_zombies(rt.state):
@@ -77,6 +85,7 @@ def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
                 "hunter" if getattr(z, "hunter", False) else "walker",
                 str(getattr(z, "facing", "S")),
                 str(getattr(z, "anim", "idle")),
+                round(float(getattr(z, "anim_t", 0.0)), 3),
             ])
         except Exception:
             continue
@@ -106,12 +115,71 @@ def _blocks_payload(rt: ScenarioRuntime) -> List[list]:
     return [[x, y, bid] for (x, y), bid in rt.state.blocks.items()]
 
 
+# ---- world-signature cache (perf: snapshot pump runs at 20 Hz) -------------
+# Blocks / resource tiles / felled nodes only change on discrete actions, not
+# every tick — but _blocks_payload et al. rebuild hundreds of rows 20x/second
+# per client (the "game lag" report). A per-call signature over cheap
+# counters lets the snapshot skip the rebuild when the world is unchanged.
+# Inventories are deliberately NOT cached (cheap to build, changes often).
+_WORLD_SIG_CACHE: Dict[int, str] = {}
+_HEAVY_CACHE: Dict[int, dict] = {}
+
+
+def _world_sig(rt: ScenarioRuntime) -> str:
+    """Cheap change-detector for the heavy (mostly static) snapshot parts:
+    block count + total block-id characters, chopped-node count, in-progress
+    node count, resource-tile count. Any discrete action changes at least one
+    of these; no tick-driven state touches them."""
+    parts = [len(rt.state.blocks)]
+    # NOTE: items() yields ((x, y), bid) — a 2-tuple whose key is a tuple.
+    # Unpacking it flat as 3 values raised ValueError inside the snapshot
+    # build, which killed the relay pump ("relay error ... retrying") every
+    # time a client joined → constant reconnects + massive lag.
+    parts.append(sum(len(bid) for (_x, _y), bid in rt.state.blocks.items()))
+    grid = getattr(rt, "resources", None)
+    if grid is not None:
+        parts.append(len(grid.chopped_at))
+        parts.append(len(grid.progress))
+        parts.append(len(grid._tile_index))
+    else:
+        parts.extend((0, 0, 0))
+    return ";".join(str(p) for p in parts)
+
+
+def _heavy_payloads(rt: ScenarioRuntime) -> dict:
+    """Build the heavy snapshot parts ONLY when the world signature changed.
+
+    Returns {"blocks":…, "resources":…, "res_felled":…} — fresh or the cached
+    copies from the previous build for this runtime. Player positions, zombie
+    states and self HP are NEVER cached — they move every tick. The cached
+    LISTS are treated as immutable by the client (it rebuilds from them when
+    the signature changes), so sharing one instance across snapshots is safe.
+    """
+    sig = _world_sig(rt)
+    if _WORLD_SIG_CACHE.get(rt.channel_id) == sig and rt.channel_id in _HEAVY_CACHE:
+        return _HEAVY_CACHE[rt.channel_id]
+    payload = {
+        "blocks": _blocks_payload(rt),
+        "resources": _resource_tiles_payload(rt),
+        "res_felled": _resource_felled_payload(rt),
+    }
+    _WORLD_SIG_CACHE[rt.channel_id] = sig
+    _HEAVY_CACHE[rt.channel_id] = payload
+    return payload
+
+
 def _inventory_payload(rt: ScenarioRuntime, user_id: int) -> dict:
     inv = rt.inventories.get(user_id)
     items: Dict[str, int] = inv.items if inv is not None else {}
     hotbar = inv.hotbar() if inv is not None else {}
+    # Sparse bag: index = pixel-grid slot; None = empty slot. The bag order
+    # is the stacked dict order (first HOTBAR_SLOTS = hotbar projection).
+    bag: list = [None] * BAG_SLOTS
+    for i, (iid, qty) in enumerate(items.items()):
+        if i < BAG_SLOTS:
+            bag[i] = {"id": iid, "qty": qty}
     return {
-        "bag": [{"id": iid, "qty": qty} for iid, qty in items.items()],
+        "bag": bag,
         "hotbar": [hotbar.get(s) for s in range(len(hotbar))],
     }
 
@@ -153,6 +221,11 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
     """The full initial payload after join: map + self + economy + recipes."""
     md = rt.map_data
     player = rt.state.get_player(user_id)
+    near_station = (
+        nearest_station(rt.state.blocks, player)
+        if player is not None
+        else False
+    )
     return {
         "type": "welcome",
         # Paperdoll manifest: frame grid + animation rows for the player
@@ -189,6 +262,9 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         },
         "inventory": _inventory_payload(rt, user_id),
         "recipes": _recipes_payload(),
+        # True when self stands within STATION_RANGE of a crafting table
+        # (gates the web craft UI's button; server re-checks at craft time).
+        "near_station": near_station,
         # Item id -> emoji for the client's inventory/hotbar icons.
         "item_emojis": _item_emojis_payload(),
         # What THIS player holds right now (hotbar slot -> item id). The
@@ -197,14 +273,17 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "held": _held_of(rt, user_id),
         # Placeable block catalog (id + emoji + name) for the build UI.
         "blocks_catalog": _blocks_catalog_payload(),
-        "blocks": _blocks_payload(rt),
-        # Resource node tiles (trees/bushes/ore) the client renders as a
-        # separate layer so chopped nodes can disappear per node.
-        "resources": _resource_tiles_payload(rt),
+        # Heavy world parts come from the signature cache (rebuilt only when
+        # blocks/resources actually changed — perf at 20 Hz).
+        **_heavy_payloads(rt),
         "res_progress": _resource_progress_payload(rt),
-        "res_felled": _resource_felled_payload(rt),
         "players": _players_payload(rt, user_id),
         "zombies": _zombies_payload(rt),
+        "drops": drops_payload(
+            rt.state,
+            player.x_f if player else 0.5,
+            player.y_f if player else 0.5,
+        ),
     }
 
 
@@ -242,9 +321,21 @@ def _blocks_catalog_payload() -> List[dict]:
     ]
 
 
+def _web_session_of(rt: ScenarioRuntime, user_id: int):
+    """The live WebSession for this player, if any (None on Discord-only)."""
+    return getattr(rt, "web_sessions", {}).get(user_id)
+
+
 def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
     """One 20 Hz world snapshot (per connected client, self-view included)."""
     player = rt.state.get_player(user_id)
+    # Station proximity for the web craft UI's button gating (client-side
+    # preview only — can_craft re-checks server-side at craft time).
+    near_station = (
+        nearest_station(rt.state.blocks, player)
+        if player is not None
+        else False
+    )
     return {
         "type": "snapshot",
         "seq": seq,
@@ -252,8 +343,15 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "clock": ingame_seconds() % 86400,
         "weather": rt.weather_key,
         "players": _players_payload(rt, user_id),
-        "blocks": _blocks_payload(rt),
+        **_heavy_payloads(rt),
         "zombies": _zombies_payload(rt),
+        # Drop entities ("linh khí") near the player — the vortex magnet
+        # targets the collector from the server, the client only animates.
+        "drops": drops_payload(
+            rt.state,
+            player.x_f if player else 0.5,
+            player.y_f if player else 0.5,
+        ),
         "self": {
             "hp": player.hp if player else 0,
             "max_hp": player.max_hp if player else 100,
@@ -287,15 +385,27 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             # What I hold (echo of the hotbar slot). Remote hands come from
             # each entry of `players[].held`; self uses this (no clone entry).
             "held": _held_of(rt, user_id),
+            # Input-seq ack (input-sequence reconciliation): the client rewinds
+            # to (x, y) and replays every input with seq > last_seq. Absent on
+            # pre-seq servers — the client falls back to threshold-free glide.
+            # NOTE: the seq lives on the CONNECTION session (web_api.protocol
+            # WebSession, written by core._handle_input), NOT on the runtime
+            # web_sessions entry (manager.WebSession — a different class that
+            # has no input_seq; reading it blind killed the whole 20 Hz
+            # snapshot loop with AttributeError => frozen map, no movement).
+            # getattr() keeps this tolerant whichever session object is bound.
+            "last_seq": (
+                getattr(_cs, "input_seq", -1)
+                if (_cs := _web_session_of(rt, user_id)) is not None
+                else -1
+            ),
         },
         "inventory": _inventory_payload(rt, user_id),
         # Resource nodes (trees/bushes/ore): every VISIBLE tile as (x, y, gid)
         # plus per-node chop progress "ax,ay" -> hits landed. The client draws
         # resource tiles from this (so chopped nodes disappear) and shows a
         # progress bar over the node being harvested.
-        "resources": _resource_tiles_payload(rt),
         "res_progress": _resource_progress_payload(rt),
-        "res_felled": _resource_felled_payload(rt),
         # Night zombies (Kaetram-style mob): [id, x, y, hp, max_hp, kind].
         # Client interpolates + draws the sprite sheet (mobs/zombie.png via
         # asset_request) with walk/attack/death animation by state.

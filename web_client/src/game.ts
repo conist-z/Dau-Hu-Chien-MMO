@@ -93,6 +93,22 @@ export class WorldScene extends Phaser.Scene {
   private collision: number[][] = []; // collision[y][x] = 1 blocks
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
+  /** Input-sequence reconciliation (Source-engine style): buffer of recent
+   * seq'd inputs (newest last). On each snapshot the scene rewinds self to
+   * the server position, replays every buffered input with seq > acked
+   * last_seq through the SAME collision used by prediction, and drops the
+   * replayed prefix. Makes prediction match authority to ~0 error: no
+   * threshold glide, no visible correction, no direction mis-guessing. */
+  private inputLog: { seq: number; dx: number; dy: number; running: boolean; dt: number }[] = [];
+  /** Highest seq acknowledged by the server. */
+  private lastAckedSeq = -1;
+  /** dt accumulated since the last seq'd input was flushed (replay needs
+   * per-input real dt; see setLocalInput / recordInputDt). */
+  private pendingDt = 0;
+  /** True once a snapshot with last_seq has arrived (server supports it). */
+  private seqReplayActive = false;
+  /** Wall-clock time of the last update() frame — feeds pendingDt. */
+  private lastFrameT = 0;
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
   // True while hp == 0 (server-authoritative): prediction frozen, overlay on.
   private selfDead = false;
@@ -169,40 +185,17 @@ export class WorldScene extends Phaser.Scene {
 
   private sessionStartT = 0;
 
-  /** Wire the measured websocket RTT (from net ping/pong EMA) into
-   * echoSlack — input transit is half the round trip. Also marks the
-   * session start for the join-warmup grace window. */
+  /** Wire the measured websocket RTT (from net ping/pong EMA) — telemetry
+   * now (the threshold glide that consumed it was replaced by input-seq
+   * replay); kept for diagnostics. Marks the session start. */
   setNetRtt(rttMs: number): void {
     if (this.sessionStartT === 0) this.sessionStartT = performance.now();
     this.netRttMs = rttMs;
   }
   /** Rolling stats of real snapshot arrival gaps (ms), updated in
-   * applySnapshot: average + max over the last few seconds. Feeds
-   * echoSlack() so reconciliation adapts to each player's actual link
-   * instead of a fixed threshold. */
-  private snapGapAvg = 50;
-  private snapGapMax = 150; // pessimistic init: assume a bursty first seconds
-
-  /** Lead (tiles) tolerated before any pull-back: the natural echo lag of
-   * THIS connection — input transit (half RTT), server tick interval, the
-   * worst recent snapshot gap, valued at the current run speed, with a
-   * small floor. A stop after a normal run never exceeds it, so the player
-   * is never dragged back for just having lagged.
-   *
-   * RESTORED: with slack = INF the pull-back NEVER fired, so on a laggy link
-   * the predicted avatar ran 7-8+ tiles ahead of the server truth — the
-   * server-side player (what zombies chase + bite!) was an INVISIBLE GHOST
-   * far from the sprite on screen ("zombie đuổi thực thể vô hình, mình đứng
-   * xa 7-8 ô vẫn bị đánh"). A bounded, generous slack keeps movement smooth
-   * while the ghost stays close enough that bites feel legitimate. */
-  private echoSlack(): number {
-    const speed = this.welcome?.self?.run_speed ?? 6.0;
-    const rttHalfS = Math.max(0, Math.min(0.4, this.netRttMs / 2000));
-    const gapS = Math.max(0, Math.min(0.4, this.snapGapMax / 1000));
-    // 2.0 floor + generous lag headroom, hard-capped at 4.5 tiles so the
-    // ghost can never roam far even on a terrible link.
-    return Math.min(4.5, Math.max(2.0, speed * (0.05 + rttHalfS + gapS)));
-  }
+   * applySnapshot. Telemetry only since the input-seq replay rewrite. */
+  snapGapAvg = 50;
+  snapGapMax = 150; // pessimistic init: assume a bursty first seconds
   // Progress bar PER NODE: one bar centred over the node's whole bbox
   // (a 2x2 tree gets a 64px-wide bar, not a sliver on the anchor tile).
   private progressBars = new Map<string, Phaser.GameObjects.Container>();
@@ -336,6 +329,19 @@ export class WorldScene extends Phaser.Scene {
     if (this.selfMarker) {
       this.cameras.main.startFollow(this.selfMarker, true, 0.15, 0.15);
     }
+  }
+
+  /** Receive one seq'd input (mirrors what net just sent to the server).
+   * Appended to the replay buffer with the wall-clock dt accumulated since
+   * the previous flushed input — exactly the time slice the server will
+   * integrate this vector for. */
+  noteSeqInput(seq: number, dx: number, dy: number, running: boolean): void {
+    const dt = Math.max(0.001, this.pendingDt);
+    this.pendingDt = 0;
+    this.inputLog.push({ seq, dx, dy, running, dt });
+    // ~2s of buffered inputs at 20 Hz flushes is plenty: anything older is
+    // guaranteed acked (and if not — a lost frame replays at most once).
+    while (this.inputLog.length > 40) this.inputLog.shift();
   }
 
   /** Called 20 Hz from main.ts: store the current input vector. */
@@ -712,6 +718,14 @@ export class WorldScene extends Phaser.Scene {
     // Clamp to 0.2s like the server's dt clamp so a stalled tab can never
     // teleport the player through walls on resume.
     this.frameDtSec = Math.min(0.2, Math.max(0.001, (delta ?? 16.7) / 1000));
+    // Accumulate real frame time against the current input vector — when the
+    // next seq'd input is flushed it carries this dt so the replay buffer can
+    // re-integrate the EXACT same wall-clock slices the server will.
+    const nowT = performance.now();
+    if (this.lastFrameT > 0) {
+      this.pendingDt = Math.min(0.25, this.pendingDt + (nowT - this.lastFrameT) / 1000);
+    }
+    this.lastFrameT = nowT;
     // Mouse tile + hover box derive FRESH each frame from the last cursor
     // position: the camera moves under a still cursor (follow lerp, tab
     // switch) and a tile cached at mousemove time would be stale.
@@ -980,50 +994,26 @@ export class WorldScene extends Phaser.Scene {
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);
       this.selfY += this.freeY(this.selfX, this.selfY, stepY);
     }
-    // Reconciliation against the LATEST authority (never a stale echo) — a
-    // collision-aware GLIDE that only ever fires on REAL divergence. The
-    // prediction mirrors the server's integration exactly (same speed, same
-    // real dt, same slide collision), so normal-play drift is just the
-    // snapshot echo lag: speed x (tick interval + network one-way latency).
-    // On a high-latency link (VN -> Railway can be 150-300ms RTT) that lag
-    // reaches ~1.5-2 tiles at run speed — correcting it per-frame is what
-    // made the avatar stutter (giật). The glide threshold (3.0) sits ABOVE
-    // that worst case, so normal play is NEVER corrected. Real divergence
-    // (server freeze, direction change mid-lag) is eased back THROUGH the
-    // collision grid (freeX/freeY), so the marker can never visually pass
-    // through a block (the old instant snap teleported across walls).
-    // A > 20-tile gap is a portal/respawn — an instant jump is correct.
-    const age = performance.now() - this.lastServerRecv;
-    if (age < 600) {
-      const drift = Math.hypot(
-        this.selfX - this.selfServerPos.x,
-        this.selfY - this.selfServerPos.y,
-      );
-      if (drift > 20) {
-        this.selfX = this.selfServerPos.x;
-        this.selfY = this.selfServerPos.y;
-      } else if (drift > this.echoSlack() + 0.1) {
-        // Pull back WHILE MOVING too (not only when standing still): with
-        // the old idle-only correction a laggy client kept drifting further
-        // and further ahead while running — the server ghost ended up tiles
-        // away from the sprite, and that ghost is what zombies chase + bite.
-        // The slack formula already includes the full echo lag, so this only
-        // fires on REAL excess divergence, never on normal echo lag.
-        // Standing-still and moving cases share the SAME glide: target is
-        // (serverPos + slack along the drift axis) — the legit lag lead is
-        // never reclaimed; the step is capped at the excess (no overshoot
-        // below the slack line); the glide runs THROUGH collision (freeX/
-        // freeY) so the marker never slides into a wall.
-        const slack = this.echoSlack();
-        const excess = drift - slack;
-        const step = Math.min(
-          Math.min(0.3 * 60 * this.frameDtSec, excess * 0.15 + 0.03),
-          excess,
+    // Reconciliation lives in applySnapshot now (input-sequence replay):
+    // every snapshot rewinds self to the acked authority position and replays
+    // unacked inputs — error converges to ~0 per snapshot with NO glide and
+    // NO threshold, so there is never a visible correction yank. The only
+    // hard corrections left are in applySnapshot: a >20-tile jump (portal/
+    // respawn) snaps instantly, and a dead player freezes on the authority.
+    // Safety net for pre-seq servers (no last_seq in snapshots): snap only on
+    // an extreme divergence, never glide — a glide was the exact "bi kéo"
+    // feel this rewrite removes.
+    if (!this.seqReplayActive) {
+      const age = performance.now() - this.lastServerRecv;
+      if (age < 600) {
+        const drift = Math.hypot(
+          this.selfX - this.selfServerPos.x,
+          this.selfY - this.selfServerPos.y,
         );
-        const ux = (this.selfX - this.selfServerPos.x) / Math.max(1e-6, drift);
-        const uy = (this.selfY - this.selfServerPos.y) / Math.max(1e-6, drift);
-        this.selfX += this.freeX(this.selfX, this.selfY, -ux * step);
-        this.selfY += this.freeY(this.selfX, this.selfY, -uy * step);
+        if (drift > 20) {
+          this.selfX = this.selfServerPos.x;
+          this.selfY = this.selfServerPos.y;
+        }
       }
     }
     // Invariant guard: the collision box must NEVER sit inside a solid tile.
@@ -1873,6 +1863,49 @@ export class WorldScene extends Phaser.Scene {
       this.snapGapMax = Math.max(50, this.snapGapMax * 0.98, gap); // decays over ~2s
     }
     this.lastServerRecv = nowMs;
+    // --- input-sequence reconciliation (Source-engine style) ---
+    // Rewind to the server's authoritative position at last_seq, then replay
+    // every buffered input newer than that ack through the same collision
+    // the prediction uses. Error converges to ~0 every snapshot: no glide,
+    // no threshold, no visible correction, no direction mis-guessing.
+    const acked = snap.self.last_seq;
+    if (typeof acked === "number" && acked >= 0) {
+      this.seqReplayActive = true;
+      if (acked > this.lastAckedSeq) {
+        this.lastAckedSeq = acked;
+        // Drop everything the server already integrated.
+        while (this.inputLog.length > 0 && this.inputLog[0].seq <= acked) {
+          this.inputLog.shift();
+        }
+        // Big divergence (portal/respawn/death): snap HARD, skip replay —
+        // the inputs that led here are invalid on the new authority state.
+        const jump = Math.hypot(
+          this.selfX - this.selfServerPos.x,
+          this.selfY - this.selfServerPos.y,
+        );
+        if (jump > 20 || this.selfDead) {
+          this.selfX = this.selfServerPos.x;
+          this.selfY = this.selfServerPos.y;
+          this.inputLog = [];
+        } else {
+          // Rewind + replay: only when inputs are pending (otherwise the
+          // server pos IS our pos up to the usual echo lag — leave it).
+          if (this.inputLog.length > 0) {
+            this.selfX = this.selfServerPos.x;
+            this.selfY = this.selfServerPos.y;
+            const s = this.welcome?.self;
+            for (const inp of this.inputLog) {
+              if (inp.dx === 0 && inp.dy === 0) continue;
+              const sp = inp.running ? (s?.run_speed ?? 6.0) : (s?.walk_speed ?? 4.0);
+              const sx = inp.dx * sp * inp.dt;
+              const sy = inp.dy * sp * inp.dt;
+              this.selfX += this.freeX(this.selfX, this.selfY, sx);
+              this.selfY += this.freeY(this.selfX, this.selfY, sy);
+            }
+          }
+        }
+      }
+    }
     // Death state: on dead, HARD-snap the prediction to the authority (the
     // server teleported/hid us — any predicted position is fiction). stepSelf
     // reads selfDead and stops integrating input while dead (no more

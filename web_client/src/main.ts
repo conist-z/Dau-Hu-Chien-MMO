@@ -149,6 +149,13 @@ const net = new Net({
   onRtt: (rttMs) => {
     scene.setNetRtt(rttMs);
   },
+  // Feed the scene's replay buffer with every seq'd input the moment it is
+  // sent — before any snapshot can ack it (ordering guarantee: flushInput
+  // fires onSeqInput synchronously after the ws.send, and snapshots arrive
+  // on this same thread, so the buffer can never miss an acked input).
+  onSeqInput: (seq, dx, dy, running) => {
+    scene.noteSeqInput(seq, dx, dy, running);
+  },
   onWelcome: (frame) => {
     welcome = frame;
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
@@ -194,7 +201,10 @@ const net = new Net({
     });
   },
   onInventory: applyInventory,
-  onCraftResult: (ok, reason, itemId, qty) => hud.craftResult(ok, reason, itemId, qty),
+  onCraftResult: (ok, reason, itemId, qty) => {
+    hud.craftResult(ok, reason, itemId, qty);
+    if (ok && itemId) hud.showCraftOutput(itemId, qty);
+  },
   onPush: (message) => hud.toast(message),
   onError: (code) => {
     // Any auth/session error before joining: wipe the stale token and fall
@@ -317,6 +327,20 @@ hud.setHooks(
     net.chatCommand(text);
   },
   (recipeId) => net.craftOp(recipeId),
+);
+
+// Craft-grid hooks: CREATE sends the material grid's multiset; the result
+// frame parks in the result slot (hud.showCraftOutput). Bag reorder/split
+// ops persist via inventory_op; quick-fill syncs the local buffer to the
+// server (full inventory frame re-sent from the client buffer).
+hud.setCraftHooks(
+  (inputs) => net.craftGrid(inputs.map((s) => ({ id: s.id, qty: s.qty }))),
+  (_recipeId) => { /* quick-fill handled client-side + onBagChanged */ },
+  (itemId) => net.inventoryOp("split", { item_id: itemId }),
+);
+hud.setBagSync(
+  (itemId, slot) => net.inventoryOp("move_to", { item_id: itemId, slot }),
+  (_inv) => { /* client buffer already updated; server delta repaints */ },
 );
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held

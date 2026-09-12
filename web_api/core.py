@@ -453,6 +453,12 @@ class WebHub:
     async def _handle_input(self, sess: WebSession, frame: dict) -> None:
         if not sess.input_allowed():
             return  # flood: silently dropped (client sends <=30/s by design)
+        # Input-sequence reconciliation: remember the client's monotonic seq
+        # so snapshots can ack it (client rewinds + replays unacked inputs).
+        # A missing/non-int seq (old client) just leaves input_seq untouched.
+        raw_seq = frame.get("seq")
+        if isinstance(raw_seq, int) and raw_seq > sess.input_seq:
+            sess.input_seq = raw_seq
         self.manager.web_input(
             sess.channel_id, sess.user_id,
             float(frame.get("dx", 0.0)), float(frame.get("dy", 0.0)),
@@ -470,6 +476,17 @@ class WebHub:
             except ValueError:
                 await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_slot"})
                 return
+        elif op == "split":
+            inv = self.manager.get_inventory(cid, uid)
+            ok = inv.split_at(frame.get("item_id", ""))
+            if not ok:
+                await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_split"})
+                return
+            if self.manager.db is not None:
+                from persistence.repositories import save_inventory_order
+
+                await save_inventory_order(
+                    self.manager.db, cid, uid, list(inv.items))
         elif op == "use":
             await self.manager.use_item(cid, uid, frame.get("item_id", ""))
         else:
@@ -486,6 +503,29 @@ class WebHub:
 
     async def _handle_craft_op(self, sess: WebSession, frame: dict) -> None:
         cid, uid = sess.channel_id, sess.user_id
+        placed = frame.get("inputs")
+        if placed is not None:
+            # Grid model: the client sends exactly what sits in the craft
+            # input grid; the server matches it to a recipe and consumes
+            # from the bag.
+            res = await self.manager.craft_from_inputs(cid, uid, placed)
+            await self.send_to_client_conn(sess, {
+                "type": MSG_CRAFT_RESULT,
+                "ok": res["ok"],
+                "reason": res["reason"],
+                "item_id": res["item_id"],
+                "qty": res["qty"],
+            })
+            if res["ok"]:
+                rt = self.manager.get_runtime_for(cid, uid)
+                if rt is not None:
+                    from web_api.snapshots import _inventory_payload
+
+                    await self.send_to_client_conn(sess, {
+                        "type": MSG_INV_DELTA,
+                        "inventory": _inventory_payload(rt, uid),
+                    })
+            return
         ok, reason, out_id, out_qty = await self.manager.craft_item(
             cid, uid, frame.get("recipe_id", "")
         )
@@ -805,7 +845,16 @@ class WebHub:
                 if rt is None:
                     continue
                 conn.seq += 1
-                frame = build_snapshot(rt, conn.session.user_id, conn.seq)
+                try:
+                    frame = build_snapshot(rt, conn.session.user_id, conn.seq)
+                except Exception:
+                    # Never let one bad snapshot kill the loop: a dead loop =
+                    # every client frozen (welcome arrives, snapshots never
+                    # do => no map, no movement). Log and keep pumping.
+                    log.exception(
+                        "[WEB] build_snapshot failed for %s", conn.session.user_id
+                    )
+                    continue
                 await self.send_to_client(conn.cid, frame)
             elapsed = asyncio.get_running_loop().time() - started
             await asyncio.sleep(max(0.001, interval - elapsed))

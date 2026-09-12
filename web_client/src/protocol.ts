@@ -133,6 +133,10 @@ export interface SnapshotPayload {
     // freezes prediction + shows a respawn overlay (Kaetram dead parity).
     dead?: boolean;
     respawn_s?: number;
+    // Input-seq ack: the client rewinds to (x, y) and replays every local
+    // input with seq > last_seq. Absent on pre-seq servers — the client
+    // keeps prediction-only movement with no correction in that case.
+    last_seq?: number;
   };
   inventory: InventoryPayload;
   // Station proximity for the craft button gate (server truth per snapshot).
@@ -162,7 +166,8 @@ export interface PlayerPayload {
 export type ZombiePayload = [string, number, number, number, number, string];
 
 export interface InventoryPayload {
-  bag: { id: string; qty: number }[];
+  // Sparse bag slots: null = empty slot (index = the pixel grid position).
+  bag: ({ id: string; qty: number } | null)[];
   hotbar: (string | null)[];
 }
 

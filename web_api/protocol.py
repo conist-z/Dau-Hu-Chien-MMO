@@ -49,6 +49,12 @@ class WebSession:
     selected_slot: int = 0
     # Input flood control: timestamps of recent input frames.
     _input_times: list = field(default_factory=list)
+    # Highest input sequence number seen from this client (input-sequence
+    # reconciliation): the client tags every input frame with a monotonically
+    # increasing seq; snapshots echo back (last_seq, server pos) and the
+    # client rewinds + replays unacked inputs. Only a MONOTONIC ack is kept
+    # here — never trust a lower seq (reordered frames, replay attacks).
+    input_seq: int = -1
 
     def input_allowed(self) -> bool:
         now = time.monotonic()

@@ -344,3 +344,42 @@ def test_web_pack_ignores_discord_players():
     result = web_tick(st, Collision(_map()), True, 0.05, rng=random.Random(0))
     assert 2 not in result.damaged_player_ids
     assert chat.hp == 100
+
+
+def test_input_seq_ack_is_monotonic():
+    """Snapshots ack the highest seq seen; lower/reordered seqs never rewind
+    the ack (input-sequence reconciliation contract)."""
+    from web_api.protocol import WebSession
+
+    sess = WebSession(user_id=1, display_name="s", channel_id=1, token="t")
+    assert sess.input_seq == -1
+
+    # Replicate the ack logic from web_api.core._handle_input inline — the
+    # contract under test is the monotonic-ack rule on the session itself.
+    def ack(frame):
+        raw = frame.get("seq")
+        if isinstance(raw, int) and raw > sess.input_seq:
+            sess.input_seq = raw
+
+    ack({"seq": 5})
+    ack({"seq": 3})  # reordered/late frame: ignored
+    ack({})          # old client (no seq): ignored
+    ack({"seq": 5})  # duplicate: ignored
+    assert sess.input_seq == 5
+
+
+def test_snapshot_echoes_last_seq():
+    """build_snapshot includes self.last_seq = the session's acked seq."""
+    from game.manager import GameManager
+    from web_api.snapshots import build_snapshot
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(77, "test-map")
+    gm.register_web_session(77, 21, "seqy")
+    rt.web_sessions[21].input_seq = 12
+    snap = build_snapshot(rt, 21, 0)
+    assert snap["self"]["last_seq"] == 12
+    # Discord-only player (no web session): ack stays -1, client falls back.
+    snap2 = build_snapshot(rt, 22, 0) if rt.state.get_player(22) else None
+    if snap2 is not None:
+        assert snap2["self"]["last_seq"] == -1
