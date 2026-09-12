@@ -879,10 +879,25 @@ export class WorldScene extends Phaser.Scene {
   private updateDrops(now: number): void {
     for (const d of this.drops.values()) {
       const age = now - d.bornT;
-      // Smooth toward the server position (magnet moves the drop fast).
+      // MAGNET phases home to the LIVE SELF position, not the 20 Hz server
+      // sample: the server target is the real player, but its sample lags a
+      // beat, so a running player saw the drop fly toward empty air ("chui
+      // vào không khí"). While the server says magnet and our self marker is
+      // live, steer the render target toward the self sprite every frame;
+      // the server pos still anchors it (anti-desync) via a weak pull.
+      let gx = d.tx;
+      let gy = d.ty;
+      if (d.phase === "magnet" && this.selfMarker && !this.selfDead) {
+        const px = this.selfMarker.x;
+        const py = this.selfMarker.y - 10; // torso, not feet
+        const w = 1 - Math.exp(-8 * this.frameDtSec); // weak anchor
+        gx = d.tx + (px - d.tx) * w;
+        gy = d.ty + (py - d.ty) * w;
+      }
+      // Smooth toward the goal (magnet moves the drop fast).
       const k = 1 - Math.exp(-18 * this.frameDtSec);
-      const cx = d.container.x + (d.tx - d.container.x) * k;
-      const cy = d.container.y + (d.ty - d.container.y) * k;
+      const cx = d.container.x + (gx - d.container.x) * k;
+      const cy = d.container.y + (gy - d.container.y) * k;
       // Idle bob after landing (server z already carries the arc; add a
       // gentle client bob of ±2 px so the drop feels alive).
       const bob = Math.sin(now / 350 + d.bobSeed) * 2;
