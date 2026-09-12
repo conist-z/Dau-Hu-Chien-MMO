@@ -44,7 +44,7 @@ FRAME = 48
 COLS = 4
 
 
-def load_icon(path: Path, size: int = 16) -> Image.Image:
+def load_icon(path: Path, size: int = 13) -> Image.Image:
     """Load the icon, snap to a size x size RGBA art block (pixel-art look)."""
     im = Image.open(path).convert("RGBA")
     im = im.resize((size, size), Image.LANCZOS)
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--icon", required=True, type=Path)
     ap.add_argument("--stem", required=True, help="sheet stem, e.g. apple")
-    ap.add_argument("--size", type=int, default=16, help="art block size (px)")
+    ap.add_argument("--size", type=int, default=13, help="art block size (px)")
     ap.add_argument("--out", type=Path, default=ROOT / "assets" / "players" / "weapon")
     ap.add_argument("--base", type=Path, default=ROOT / "assets" / "players" / "base.png")
     ap.add_argument("--contact", type=Path, default=None)
