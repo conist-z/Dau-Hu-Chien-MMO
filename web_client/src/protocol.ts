@@ -59,6 +59,7 @@ export interface WelcomePayload {
   // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
   res_felled: [number, number, number, number][];
   players: PlayerPayload[];
+  drops?: DropPayload[];
   // Item id currently held by self (hotbar slot -> item). Null = empty hand
   // (the hand dot still renders — plan A — just without a tool icon).
   held: string | null;
@@ -101,6 +102,11 @@ export type WebZombiePayload = [
   number?, // anim_t: server anim start (seconds, monotonic) — re-arms atk
 ];
 
+// Drop entity ("linh khí"): [id, item_id, qty, x, y, z, phase].
+// Float x/y tile units; z = height above ground (arc); phase drives the
+// client animation: idle (bob) | magnet (vortex pull) | collected (burst).
+export type DropPayload = [string, string, number, number, number, number, string];
+
 export interface SnapshotPayload {
   type: "snapshot";
   seq: number;
@@ -110,6 +116,7 @@ export interface SnapshotPayload {
   players: PlayerPayload[];
   blocks: [number, number, string][];
   zombies: WebZombiePayload[];
+  drops?: DropPayload[];
   self: {
     hp: number;
     max_hp: number;

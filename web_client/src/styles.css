@@ -56,8 +56,19 @@ html, body {
   backdrop-filter: blur(4px);
 }
 
-/* Top-left: clock + weather — flush to the corner */
+/* Top-left: clock + weather — flush to the corner. The clock gets a FIXED
+   ch-width so digit swaps (0->1 etc.) can never resize the flex box: without
+   it the whole weather/time/daynight panel visibly inhaled and exhaled
+   whenever a narrow glyph replaced a wide one. font-variant-numeric keeps
+   the digits tabular even where the fixed width is overridden by long text
+   fallbacks. */
 #hud-topleft { top: 10px; left: 10px; font-size: 15px; font-weight: 600; }
+#hud-clock {
+  display: inline-block;
+  width: 5ch; /* "HH:MM" — constant 5-glyph layout */
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
 #hud-weather { font-size: 20px; }
 #hud-daynight { font-size: 20px; }
 /* Real pixel-art HUD icons (same tiles as the Discord hub): 16x16 weather

@@ -255,6 +255,11 @@ const net = new Net({
     // phantom until some unrelated snapshot change.
     if (frame.name === "place" || frame.name === "break") {
       scene.reconcileBlockAction(frame.name, frame.ok, frame.tx, frame.ty);
+      // Progressive crack: the echo carries (damage, needed) = crack progress
+      // for the hit block. A break (block gone) clears the overlay.
+      if (frame.name === "break" && frame.ok) {
+        scene.setBlockCrack(frame.tx, frame.ty, frame.damage ?? 0, frame.needed ?? 0);
+      }
     }
     // Zombie kill echo (shared pack with Discord): death anim + loot pop.
     if (frame.kind === "zombie") {
@@ -376,10 +381,12 @@ const input = new KeyboardInput({
       net.actionAt(breaking ? "break" : "chop", target.x, target.y);
       scene.swingSelfHand();
       if (breaking) {
-        // Optimistic local collision: the block stops blocking movement NOW
-        // (the echo confirms, or reconcileBlockAction restores it fast if
-        // the server rejected the break).
-        scene.optimisticBreak(target.x, target.y);
+        // Progressive hardness: one click is one HIT, not a break — keep the
+        // block solid optimistically and just pre-show a light crack; the
+        // server echo (setBlockCrack) draws the real damage and the snapshot
+        // removes the block when it finally breaks. (The old unconditional
+        // optimisticBreak made the block walkable on hit #1 of N.)
+        scene.setBlockCrack(target.x, target.y, 1, 3);
       }
       return;
     }

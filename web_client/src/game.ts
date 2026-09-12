@@ -3,7 +3,7 @@
 // 60 fps rendering, follows the camera on the local player.
 
 import Phaser from "phaser";
-import type { PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
+import type { DropPayload, PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
 import { PaperdollBody, b64ToBytes, registerPaperdollTextures } from "./paperdoll";
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 
@@ -124,6 +124,23 @@ export class WorldScene extends Phaser.Scene {
   private zombieLayer: Phaser.GameObjects.Layer | null = null;
   // Kaetram hitsplat state: floating damage numbers (spawnSplat/updateSplats).
   private splats = new Set<{ txt: Phaser.GameObjects.Text; t0: number; x: number; y: number }>();
+  // Progressive block-break cracks: tileKey -> jagged crack lines drawn
+  // over the block sprite; density/opacity scale with damage/hardness.
+  private crackOverlays = new Map<string, Phaser.GameObjects.Graphics>();
+  // Drop entities ("linh khí"): id -> live sprite group. Server-authoritative
+  // position/phase at 20 Hz; the client animates bob/glow/collect locally.
+  private dropLayer: Phaser.GameObjects.Layer | null = null;
+  private drops = new Map<string, {
+    container: Phaser.GameObjects.Container;
+    glow: Phaser.GameObjects.Arc;
+    icon: Phaser.GameObjects.Text;
+    tx: number; ty: number; // latest server tile-pos (px)
+    z: number;              // latest server height (px)
+    phase: string;
+    bornT: number;
+    collectedT: number;
+    bobSeed: number;
+  }>();
   private zombies = new Map<string, {
     container: Phaser.GameObjects.Container;
     body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
@@ -311,6 +328,8 @@ export class WorldScene extends Phaser.Scene {
     // Resource tiles from the welcome payload (trees etc.).
     this.updateResourceLayer(welcome.resources);
     this.felledTiles = new Set((welcome.res_felled ?? []).map(([x, y]) => `${x},${y}`));
+    // Any drops already lying around (welcome carries the same payload).
+    this.syncDrops(welcome.drops ?? []);
 
     // Camera follows the SELF MARKER every frame — the marker itself is
     // driven by prediction in update(), so camera lag = marker lag.
@@ -472,6 +491,42 @@ export class WorldScene extends Phaser.Scene {
         this.blockSprites.delete(tileKey);
       }
     }
+  }
+
+  /** Progressive crack overlay for a block being broken (server echo carries
+   * damage/hardness). ratio >= 1 or a gone block clears the overlay. */
+  setBlockCrack(tx: number | null, ty: number | null, damage: number, needed: number): void {
+    if (tx === null || ty === null) return;
+    const key = `${tx},${ty}`;
+    const existing = this.crackOverlays.get(key);
+    const ratio = needed > 0 ? Math.max(0, Math.min(1, damage / needed)) : 0;
+    if (ratio <= 0 || ratio >= 1 || !this.blockSet.has(key)) {
+      existing?.destroy();
+      this.crackOverlays.delete(key);
+      return;
+    }
+    let g = existing;
+    if (!g) {
+      g = this.add.graphics();
+      if (this.blockLayer) this.blockLayer.add(g);
+      this.crackOverlays.set(key, g);
+    }
+    g.clear();
+    // Deterministic jagged cracks radiating from the block centre; more
+    // cracks + darker as damage accumulates (no per-hit random flicker).
+    const cx = tx * 32 + 16;
+    const cy = ty * 32 + 16;
+    const n = 1 + Math.floor(ratio * 3);
+    g.lineStyle(1.5, 0x1a130a, 0.9);
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + 0.7;
+      g.beginPath();
+      g.moveTo(cx + Math.cos(ang) * 2.5, cy + Math.sin(ang) * 2.5);
+      g.lineTo(cx + Math.cos(ang + 0.35) * 8, cy + Math.sin(ang + 0.35) * 8);
+      g.lineTo(cx + Math.cos(ang - 0.2) * 14, cy + Math.sin(ang - 0.2) * 14);
+      g.strokePath();
+    }
+    g.setAlpha(0.45 + ratio * 0.55);
   }
 
   /** A block face PNG arrived: register + redraw with the real sprite. */
@@ -722,8 +777,88 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.updateZombieFrames();
+    // Drop entities: per-frame bob/glow/collect animation (server phase).
+    this.updateDrops(performance.now());
     // Kaetram hitsplats: float + fade every frame (spawned from action_result).
     this.updateSplats(performance.now());
+  }
+
+  /** Sync the drop-entity layer with the server payload (20 Hz). */
+  syncDrops(list: DropPayload[]): void {
+    const now = performance.now();
+    const seen = new Set<string>();
+    for (const [id, itemId, qty, x, y, z, phase] of list) {
+      seen.add(id);
+      let d = this.drops.get(id);
+      if (!d) {
+        if (!this.dropLayer) this.dropLayer = this.add.layer();
+        const container = this.add.container(x * 32, y * 32);
+        const glow = this.add.circle(0, 0, 7, 0x8fd6ff, 0.35);
+        const label = qty > 1 ? `×${qty}` : "";
+        const icon = this.add.text(0, -4, (this.itemEmojis[itemId] ?? "❖") + label, {
+          fontSize: "13px",
+          stroke: "#0a0d12", strokeThickness: 3,
+        }).setOrigin(0.5);
+        container.add([glow, icon]);
+        container.setDepth(6);
+        this.dropLayer.add(container);
+        d = {
+          container, glow, icon,
+          tx: x * 32, ty: y * 32, z: z * 32,
+          phase, bornT: now, collectedT: 0,
+          bobSeed: Math.random() * Math.PI * 2,
+        };
+        this.drops.set(id, d);
+        // Spawn pop: scale from 0 with a small overshoot.
+        container.setScale(0.1);
+      } else {
+        d.tx = x * 32;
+        d.ty = y * 32;
+        d.z = z * 32;
+        if (d.phase !== phase) {
+          d.phase = phase;
+          if (phase === "collected") d.collectedT = now;
+        }
+      }
+    }
+    for (const [id, d] of this.drops) {
+      if (!seen.has(id)) {
+        d.container.destroy();
+        this.drops.delete(id);
+      }
+    }
+  }
+
+  /** Per-frame drop animation: spawn pop, bob + glow pulse, collect burst. */
+  private updateDrops(now: number): void {
+    for (const d of this.drops.values()) {
+      const age = now - d.bornT;
+      // Smooth toward the server position (magnet moves the drop fast).
+      const k = 1 - Math.exp(-18 * this.frameDtSec);
+      const cx = d.container.x + (d.tx - d.container.x) * k;
+      const cy = d.container.y + (d.ty - d.container.y) * k;
+      // Idle bob after landing (server z already carries the arc; add a
+      // gentle client bob of ±2 px so the drop feels alive).
+      const bob = Math.sin(now / 350 + d.bobSeed) * 2;
+      d.container.setPosition(cx, cy - d.z - bob);
+      // Glow pulse.
+      const pulse = 0.28 + 0.14 * Math.sin(now / 260 + d.bobSeed);
+      d.glow.setFillStyle(0x8fd6ff, pulse);
+      // Spawn pop scale (0.1 -> 1 with overshoot at ~150 ms).
+      if (age < 220) {
+        const t = age / 220;
+        d.container.setScale(t < 0.7 ? 0.1 + t * 1.4 : 1.08 - (t - 0.7) * 0.26);
+      } else if (d.phase !== "collected") {
+        d.container.setScale(1);
+      }
+      // Collect burst: quick scale-up + fade-out.
+      if (d.phase === "collected" && d.collectedT > 0) {
+        const t = Math.min(1, (now - d.collectedT) / 400);
+        d.container.setScale(1 + t * 0.8);
+        d.container.setAlpha(1 - t);
+        d.glow.setFillStyle(0xfff3b0, 0.5 * (1 - t));
+      }
+    }
   }
 
   /** Per-frame zombie animation + position smoothing (60 fps).
@@ -1769,6 +1904,8 @@ export class WorldScene extends Phaser.Scene {
     for (const p of snap.players) this.upsertPlayer(p);
     // Night zombies (web realtime pack): interpolate + animate.
     this.syncZombies(snap.zombies ?? []);
+    // Drop entities ("linh khí"): spawn/magnet/collect animation.
+    this.syncDrops(snap.drops ?? []);
     // Despawn players no longer present.
     const seen = new Set(snap.players.map((p) => p.id));
     for (const [id, rp] of this.players) {
