@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-BUYzG69Y.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CP3nXFAH.css">
+    <script type="module" crossorigin src="./assets/index-DRo3LReq.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Bff0_1q-.css">
   </head>
   <body>
     <div id="game-root">
@@ -64,6 +64,16 @@
           </div>
           <!-- Selected recipe detail (inputs → output, needs-table hint) -->
           <div id="craft-detail" class="hidden"></div>
+        </div>
+        <!-- Loading overlay: shown ONLY when the world genuinely needs to
+             fetch assets (fresh session). When everything is already cached
+             (re-join in the same session) it never appears. -->
+        <div id="loading-overlay" class="hidden">
+          <div class="loading-panel">
+            <h2>Đang tải map…</h2>
+            <div class="loading-bar"><div id="loading-fill"></div></div>
+            <p id="loading-status">0 / 0</p>
+          </div>
         </div>
         <!-- Login / join gate -->
         <div id="login-gate">

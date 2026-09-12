@@ -3,6 +3,10 @@
 // hotbar BOTTOM-CENTER always visible, chat BOTTOM-RIGHT.
 
 import type { InventoryPayload, RecipePayload } from "./protocol";
+import {
+  CRAFT_GRID, CRAFT_OUTPUT, CRAFT_PANEL, INVENTORY_GRID, INVENTORY_PANEL,
+  makeSlot, sizePanel, slotXY,
+} from "./pixel_ui";
 
 const WEATHER_ICONS: Record<string, string> = {
   sun_clouds: "⛅", sun: "☀️", sunny: "☀️", clouds: "☁️", cloudy: "☁️",
@@ -62,8 +66,13 @@ export class Hud {
   private listEl = document.getElementById("scenario-list")!;
   private btnLogin = document.getElementById("btn-login") as HTMLButtonElement;
   private invPanel = document.getElementById("inv-panel")!;
-  private invItems = document.getElementById("inv-items")!;
-  private invCraft = document.getElementById("inv-craft")!;
+  private invItemsWrap = document.getElementById("inv-items-wrap")!;
+  private invCraftWrap = document.getElementById("inv-craft-wrap")!;
+  private craftDetail = document.getElementById("craft-detail")!;
+  private craftTab: HTMLElement;
+  private itemsTab: HTMLElement;
+  private selectedRecipeId: string | null = null;
+  private nearTable = false; // updated from snapshots (server truth)
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
   // Server-driven emoji map (welcome.item_emojis): every item the player has
@@ -76,7 +85,6 @@ export class Hud {
   private onCommand: ((text: string) => void) | null = null;
   private onCraft: ((recipeId: string) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
-
   constructor() {
     this.chatForm.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -86,16 +94,39 @@ export class Hud {
       this.chatInput.blur();
     });
     // Tab switching
-    document.querySelectorAll<HTMLElement>(".inv-tab").forEach((tab) => {
+    this.itemsTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=items]")!;
+    this.craftTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=craft]")!;
+    [this.itemsTab, this.craftTab].forEach((tab) => {
       tab.addEventListener("click", () => {
         document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
         const isCraft = tab.dataset.tab === "craft";
-        this.invItems.classList.toggle("hidden", isCraft);
-        this.invCraft.classList.toggle("hidden", !isCraft);
+        this.invItemsWrap.classList.toggle("hidden", isCraft);
+        this.invCraftWrap.classList.toggle("hidden", !isCraft);
+        this.craftDetail.classList.toggle("hidden", !isCraft);
+        this.renderInventory();
       });
     });
     document.getElementById("inv-close")!.addEventListener("click", () => this.toggleInventory(false));
+    // Panel geometry once at boot (handoff: integer scale, absolute slots).
+    sizePanel(this.invItemsWrap, INVENTORY_PANEL);
+    sizePanel(this.invCraftWrap, CRAFT_PANEL);
+  }
+
+
+  /** Frame from the server after craft_op: success toast / error message. */
+  craftResult(ok: boolean, reason: string, itemId: string | null, qty: number): void {
+    if (ok) {
+      const r = this.recipes.find((x) => x.output.id === itemId);
+      this.toast(`Đã chế tạo ${r?.name ?? itemId} ×${qty}`);
+    } else {
+      const WHY: Record<string, string> = {
+        missing_materials: "Không đủ nguyên liệu.",
+        no_station: "Cần đứng gần bàn chế tạo.",
+        unknown_recipe: "Công thức không tồn tại.",
+      };
+      this.toast(WHY[reason] ?? `Chế tạo thất bại (${reason}).`);
+    }
   }
 
   setHooks(
@@ -142,41 +173,167 @@ export class Hud {
   }
 
   private renderInventory(): void {
-    // Items tab: one cell per bag stack.
-    this.invItems.innerHTML = "";
-    for (const stack of this.inventory.bag) {
-      const cell = document.createElement("div");
-      cell.className = "inv-item";
-      cell.title = stack.id;
-      cell.innerHTML = `<span>${iconFor(stack.id, this.itemEmojis)}</span><span class="qty">${stack.qty}</span>`;
-      cell.addEventListener("click", () => this.onUse?.(stack.id));
-      this.invItems.appendChild(cell);
+    if (this.itemsTab.classList.contains("active")) {
+      this.renderBagGrid();
+    } else {
+      this.renderCraftPanel();
     }
-    if (this.inventory.bag.length === 0) {
-      this.invItems.innerHTML = `<p style="grid-column:1/-1;font-size:12px;opacity:0.6">Túi trống.</p>`;
+  }
+
+  /** Túi đồ: fixed 5×4 pixel grid; bag order maps row-major into slots. */
+  private renderBagGrid(): void {
+    this.invItemsWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
+    const g = INVENTORY_GRID;
+    const total = g.cols * g.rows;
+    for (let i = 0; i < total; i++) {
+      const [x, y] = slotXY(g, i);
+      const stack = this.inventory.bag[i];
+      const [r, c] = [Math.floor(i / g.cols), i % g.cols];
+      const slot = makeSlot("inventory", r, c, x, y, g, {
+        icon: stack ? iconFor(stack.id, this.itemEmojis) : "",
+        qty: stack ? String(stack.qty) : "",
+        title: stack ? stack.id : undefined,
+      });
+      if (stack) {
+        slot.addEventListener("click", () => this.onUse?.(stack.id));
+        slot.classList.add("has-item");
+      }
+      this.invItemsWrap.appendChild(slot);
     }
-    // Craft tab: recipes with material check.
-    this.invCraft.innerHTML = "";
-    for (const r of this.recipes) {
-      const row = document.createElement("div");
-      row.className = "craft-row";
-      const canMake = r.inputs.every(
-        (inp) => (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) >= inp.qty,
-      );
-      const mats = r.inputs
-        .map((i) => `${itemEmoji(i.id)}×${i.qty}`)
-        .join(" + ");
-      row.innerHTML =
-        `<span style="font-size:18px">${r.emoji}</span>` +
-        `<span class="info"><b>${r.name}</b><br>${mats}</span>`;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Chế tạo";
-      btn.disabled = !canMake;
-      btn.addEventListener("click", () => this.onCraft?.(r.id));
-      row.appendChild(btn);
-      this.invCraft.appendChild(row);
+  }
+
+  /** Chế tạo: 4×4 recipe grid (pick one) + output slot + detail strip. */
+  private renderCraftPanel(): void {
+    this.invCraftWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
+    const g = CRAFT_GRID;
+    const total = g.cols * g.rows;
+    // Keep the selection valid across recipe list changes.
+    if (this.selectedRecipeId && !this.recipes.some((r) => r.id === this.selectedRecipeId)) {
+      this.selectedRecipeId = null;
     }
+    if (!this.selectedRecipeId && this.recipes.length > 0) {
+      this.selectedRecipeId = this.recipes[0].id;
+    }
+    for (let i = 0; i < total; i++) {
+      const [x, y] = slotXY(g, i);
+      const rec = this.recipes[i];
+      const [r, c] = [Math.floor(i / g.cols), i % g.cols];
+      const sel = !!rec && rec.id === this.selectedRecipeId;
+      const slot = makeSlot("recipe", r, c, x, y, g, {
+        icon: rec ? rec.emoji : "",
+        selected: sel,
+        title: rec ? `${rec.name}${rec.needs_table ? " — cần bàn chế tạo" : ""}` : undefined,
+      });
+      if (rec) {
+        slot.addEventListener("click", () => {
+          this.selectedRecipeId = rec.id;
+          this.renderCraftPanel();
+        });
+        slot.classList.add("has-item");
+      }
+      this.invCraftWrap.appendChild(slot);
+    }
+    // Output slot: FIXED (107,91) — never flex/grid (handoff §3.3).
+    const sel = this.recipes.find((x) => x.id === this.selectedRecipeId) ?? null;
+    const outSlot = makeSlot("output", 0, 0, CRAFT_OUTPUT.x, CRAFT_OUTPUT.y, CRAFT_GRID, {
+      icon: sel ? sel.emoji : "",
+      qty: sel && sel.output.qty > 1 ? String(sel.output.qty) : "",
+      title: sel ? sel.name : undefined,
+    });
+    if (sel && this.canCraftNow(sel)) {
+      outSlot.classList.add("craftable");
+      outSlot.addEventListener("click", () => this.onCraft?.(sel.id));
+    }
+    this.invCraftWrap.appendChild(outSlot);
+    this.renderCraftDetail(sel);
+  }
+
+  /** Pure client preview of can_craft — the SERVER re-checks at craft time. */
+  private canCraftNow(r: RecipePayload): boolean {
+    if (r.needs_table && !this.nearTable) return false;
+    return r.inputs.every(
+      (inp) => (this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0) >= inp.qty,
+    );
+  }
+
+  /** Detail strip under the craft panel: name, inputs ×qty (green/red), button. */
+  private renderCraftDetail(sel: RecipePayload | null): void {
+    const d = this.craftDetail;
+    d.innerHTML = "";
+    if (!sel) {
+      d.classList.add("hidden");
+      return;
+    }
+    d.classList.remove("hidden");
+    const title = document.createElement("div");
+    title.className = "craft-title";
+    title.textContent = `${sel.emoji} ${sel.name}` +
+      (sel.needs_table ? " 🛠️" : "");
+    const mats = document.createElement("div");
+    mats.className = "craft-mats";
+    for (const inp of sel.inputs) {
+      const have = this.inventory.bag.find((b) => b.id === inp.id)?.qty ?? 0;
+      const chip = document.createElement("span");
+      chip.className = `mat-chip ${have >= inp.qty ? "ok" : "lack"}`;
+      chip.textContent = `${iconFor(inp.id, this.itemEmojis)}×${inp.qty}`;
+      chip.title = `${inp.id}: có ${have}/${inp.qty}`;
+      mats.appendChild(chip);
+    }
+    if (sel.needs_table && !this.nearTable) {
+      const warn = document.createElement("span");
+      warn.className = "mat-chip lack";
+      warn.textContent = "🛠️ cần bàn";
+      mats.appendChild(warn);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Chế tạo";
+    btn.disabled = !this.canCraftNow(sel);
+    btn.addEventListener("click", () => this.onCraft?.(sel.id));
+    d.append(title, mats, btn);
+  }
+
+  // ----- loading overlay -----
+  // Shown ONLY when the world genuinely needs to fetch blocking assets
+  // (tilesets + block faces on a FRESH session). When every asset is already
+  // cached (re-join within the same session) showLoading is never called —
+  // the player drops straight into the world.
+  private loadingTotal = 0;
+  private loadingDone = 0;
+
+  /** Begin a load pass for ``total`` blocking assets. No-op when total <= 0
+   * (everything cached — the overlay never flashes on screen). */
+  showLoading(total: number): void {
+    if (total <= 0) return;
+    this.loadingTotal = total;
+    this.loadingDone = 0;
+    const el = document.getElementById("loading-overlay")!;
+    el.classList.remove("hidden");
+    this.updateLoadingUI("0 / " + total);
+  }
+
+  /** One blocking asset arrived. Auto-hides at 100%. */
+  tickLoading(): void {
+    if (this.loadingTotal <= 0) return;
+    this.loadingDone = Math.min(this.loadingDone + 1, this.loadingTotal);
+    if (this.loadingDone >= this.loadingTotal) {
+      this.hideLoading();
+      return;
+    }
+    this.updateLoadingUI(this.loadingDone + " / " + this.loadingTotal);
+  }
+
+  hideLoading(): void {
+    this.loadingTotal = 0;
+    this.loadingDone = 0;
+    document.getElementById("loading-overlay")!.classList.add("hidden");
+  }
+
+  private updateLoadingUI(status: string): void {
+    const pct = this.loadingTotal > 0 ? (this.loadingDone / this.loadingTotal) * 100 : 0;
+    const fill = document.getElementById("loading-fill")!;
+    fill.style.width = pct.toFixed(0) + "%";
+    document.getElementById("loading-status")!.textContent = status;
   }
 
   // ----- gate -----
@@ -272,6 +429,12 @@ export class Hud {
 
   setRecipes(recipes: RecipePayload[]): void {
     this.recipes = recipes;
+  }
+
+  setNearStation(near: boolean): void {
+    if (near === this.nearTable) return;
+    this.nearTable = near;
+    if (this.inventoryOpen) this.renderInventory();
   }
 
   /** Authoritative id->emoji map from the server's item registries. */

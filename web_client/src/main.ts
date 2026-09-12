@@ -84,6 +84,7 @@ function applyTexture(name: string, b64: string): void {
     if (name.startsWith("blocks/")) {
       // Block face arrived: redraw the block layer with the real sprite.
       scene.onBlockTexture(name.slice("blocks/".length).replace(/\.png$/i, ""));
+      onBlockingAssetDone(key);
       return;
     }
     if (name.startsWith("mobs/")) {
@@ -97,6 +98,8 @@ function applyTexture(name: string, b64: string): void {
       scene.onPaperdollAsset(name, b64);
       return;
     }
+    // Tileset image arrived (blocking asset) — tick the loading overlay.
+    onBlockingAssetDone(name.replace(/\.png$/i, ""));
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
     // rebuilding duplicated players and reset the camera).
     scene.onTilesetLoaded(name);
@@ -112,6 +115,36 @@ function applyInventory(inv: InventoryPayload): void {
   scene.setSelfHeldFromHotbar(inv.hotbar ?? [], hud.currentSlot);
 }
 
+// Asset-load tracking for the loading overlay. Only BLOCKING assets count:
+// the map tilesets + block faces (without them the world renders as grey
+// rectangles / an empty canvas). Mobs + paperdoll sheets stream in later and
+// never block the overlay. When every needed asset is ALREADY cached (map
+// revisited in the same session) the count is 0 -> no overlay, no flash.
+let loadSafetyTimer: number | null = null;
+
+function beginLoadTracking(frame: WelcomePayload): void {
+  const mapKeys = frame.map.tilesets
+    .filter((t) => t.image)
+    .map((t) => t.image!.replace(/\.png$/i, ""));
+  const blockKeys = [...new Set(frame.blocks.map(([, , bid]) => bid))]
+    .map((bid) => `block-${bid}`);
+  // Count only what is NOT already registered in the texture cache.
+  const keys = [...mapKeys, ...blockKeys].filter(
+    (k) => !assetTextures.has(k) && !(game.textures && game.textures.exists(k)),
+  );
+  hud.showLoading(keys.length);
+  if (keys.length === 0) return;
+  // Safety net: a lost asset frame must never trap the player behind the
+  // overlay — force-hide after 12 s no matter what.
+  if (loadSafetyTimer !== null) window.clearTimeout(loadSafetyTimer);
+  loadSafetyTimer = window.setTimeout(() => hud.hideLoading(), 12000);
+}
+
+function onBlockingAssetDone(key: string): void {
+  if (!assetTextures.has(key)) return; // not a blocking asset we track
+  hud.tickLoading();
+}
+
 const net = new Net({
   onRtt: (rttMs) => {
     scene.setNetRtt(rttMs);
@@ -119,6 +152,7 @@ const net = new Net({
   onWelcome: (frame) => {
     welcome = frame;
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
+    beginLoadTracking(frame);
     hud.hideGate();
     hud.setInventory(frame.inventory);
     hud.setRecipes(frame.recipes);

@@ -162,87 +162,157 @@ html, body {
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 
-/* Inventory + craft panel (tabbed, center-left) */
+/* Inventory + craft panels — pixel asset panels (ui_panel_demo handoff).
+   Geometry comes from pixel_ui.ts (absolute integer coords × one shared
+   integer scale); CSS only styles layers, never re-spaces slots. */
 #inv-panel {
   position: absolute;
   left: 12px; top: 64px;
-  width: 300px; max-height: 60vh;
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: calc(100vh - 140px);
 }
 #inv-panel.hidden { display: none; }
-.inv-box {
-  display: flex; flex-direction: column;
-  background: rgba(12, 14, 20, 0.92);
-  border: 1px solid var(--hud-border);
-  border-radius: 12px;
-  overflow: hidden;
-}
 .inv-tabs {
   display: flex; gap: 4px;
-  padding: 8px 8px 0;
-  border-bottom: 1px solid var(--hud-border);
 }
 .inv-tab {
-  flex: 1;
-  background: transparent;
-  border: none;
-  border-radius: 8px 8px 0 0;
-  padding: 8px;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  padding: 6px 14px;
   color: rgba(232, 234, 240, 0.6);
-  font-size: 13px; font-weight: 600;
+  font-size: 12px; font-weight: 600;
   cursor: pointer;
 }
-.inv-tab.active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.inv-tab.active { color: #fff; background: rgba(88, 101, 242, 0.35); }
 .inv-close {
   background: transparent; border: none;
   color: rgba(232, 234, 240, 0.6);
   font-size: 14px; cursor: pointer; padding: 4px 8px;
 }
 .inv-close:hover { color: #fff; }
-.inv-body {
-  padding: 10px;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-.inv-body.hidden { display: none; }
-.inv-item {
+
+/* Pixel panel wrap: img fills wrap; slots are absolutely positioned INSIDE
+   the wrap in SCALED px (slotXY × PIXEL_SCALE from pixel_ui.ts). */
+.panel-wrap {
   position: relative;
-  aspect-ratio: 1;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--hud-border);
-  border-radius: 8px;
-  font-size: 20px;
-  cursor: pointer;
+  image-rendering: pixelated;
 }
-.inv-item:hover { border-color: var(--accent); }
-.inv-item .qty {
-  position: absolute; right: 3px; bottom: 1px;
-  font-size: 10px; font-weight: 700;
-  text-shadow: 0 1px 2px #000;
+.panel-wrap img.panel {
+  display: block;
+  image-rendering: pixelated;
+  pointer-events: none;
 }
-.inv-item small {
-  font-size: 8px; opacity: 0.65;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+.slot-pix {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  image-rendering: pixelated;
+  cursor: default;
 }
-.craft-row {
-  grid-column: 1 / -1;
+.slot-pix img.slot-bg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.slot-pix .icon {
+  position: relative; z-index: 2;
+  font-size: calc(var(--pix-scale, 3) * 8px);
+  line-height: 1;
+  transform: translateY(-1px);
+  filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.8));
+}
+.slot-pix .qty {
+  position: absolute; z-index: 3;
+  right: 1px; bottom: 0;
+  font: 700 15px/1 ui-monospace, monospace;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+.slot-pix .pix-key {
+  position: absolute; z-index: 3;
+  left: 2px; top: 0;
+  font: 700 12px/1.2 ui-monospace, monospace;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 1px 1px 0 #000;
+}
+.slot-pix.has-item { cursor: pointer; }
+/* Selected recipe slot: dim + accent glow (overlay only — never the sprite). */
+.slot-pix.selected img.slot-bg { filter: brightness(1.35); }
+.slot-pix.selected::after {
+  content: "";
+  position: absolute; inset: 0;
+  box-shadow: inset 0 0 0 3px rgba(88, 101, 242, 0.85);
+  z-index: 4;
+}
+/* Craftable output slot: gentle pulse to invite the click. */
+.slot-pix.craftable::after {
+  content: "";
+  position: absolute; inset: 0;
+  box-shadow: inset 0 0 0 3px rgba(74, 222, 128, 0.9);
+  z-index: 4;
+}
+/* Debug mode (localStorage.pixel_ui_debug=1): red outline + coord label. */
+.slot-pix.debug { outline: 2px solid rgba(255, 0, 0, 0.85); }
+.slot-pix .dbg-label {
+  position: absolute; z-index: 5;
+  left: 0; bottom: -18px;
+  font: 10px/1.2 ui-monospace, monospace;
+  color: #ff8080; white-space: nowrap;
+}
+
+/* Craft detail strip under the panel (selected recipe summary + button). */
+#craft-detail {
   display: flex; align-items: center; gap: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hud-bg);
   border: 1px solid var(--hud-border);
-  border-radius: 8px;
-  padding: 6px 8px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  width: fit-content;
 }
-.craft-row .info { flex: 1; font-size: 11px; }
-.craft-row .info b { font-size: 12px; }
-.craft-row button {
+#craft-detail.hidden { display: none; }
+.craft-title { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.craft-mats { display: flex; gap: 4px; }
+.mat-chip {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+}
+.mat-chip.ok { color: #9fd6ab; }
+.mat-chip.lack { color: #ff8f95; }
+#craft-detail button {
   background: var(--accent); border: none; border-radius: 6px;
-  color: #fff; font-size: 11px; font-weight: 600;
-  padding: 5px 10px; cursor: pointer;
+  color: #fff; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; cursor: pointer;
 }
-.craft-row button:disabled { opacity: 0.4; cursor: default; }
+#craft-detail button:disabled { opacity: 0.4; cursor: default; }
+
+/* Loading overlay (only during a genuine asset fetch; auto-hides) */
+#loading-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 6, 10, 0.82);
+  z-index: 5; /* under the login gate (10) but above the HUD */
+  pointer-events: none; /* purely informational — inputs pass through */
+}
+#loading-overlay.hidden { display: none; }
+.loading-panel { text-align: center; }
+.loading-panel h2 { font-size: 18px; margin-bottom: 12px; opacity: 0.9; }
+.loading-bar {
+  width: min(300px, 70vw); height: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--hud-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+#loading-fill {
+  height: 100%; width: 0%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+#loading-status { margin-top: 8px; font-size: 12px; opacity: 0.65; }
 
 /* Login gate */
 #login-gate {

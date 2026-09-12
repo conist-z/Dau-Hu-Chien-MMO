@@ -45,16 +45,33 @@
             <p id="death-timer">Hồi sinh sau 5s…</p>
           </div>
         </div>
-        <!-- Inventory + Craft panel (tabbed) -->
+        <!-- Inventory + Craft panels (pixel asset panels, handoff geometry) -->
         <div id="inv-panel" class="hidden">
-          <div class="inv-box">
-            <div class="inv-tabs">
-              <button class="inv-tab active" data-tab="items" type="button">Túi đồ</button>
-              <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
-              <button class="inv-close" id="inv-close" type="button">✕</button>
-            </div>
-            <div class="inv-body" id="inv-items"></div>
-            <div class="inv-body hidden" id="inv-craft"></div>
+          <!-- Tab strip mirrors the pixel look but stays plain DOM (no panel art). -->
+          <div class="inv-tabs">
+            <button class="inv-tab active" data-tab="items" type="button">Túi đồ</button>
+            <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
+            <button class="inv-close" id="inv-close" type="button">✕</button>
+          </div>
+          <!-- INVENTORY: inventory.png 98×101 + 5×4 slot grid (10,17) step 16 -->
+          <div id="inv-items-wrap" class="panel-wrap">
+            <img class="panel" src="ui/inventory.png" alt="" draggable="false">
+          </div>
+          <!-- CRAFT: craft_a.png 198×117 + recipe 4×4 grid + output (107,91) -->
+          <div id="inv-craft-wrap" class="panel-wrap hidden">
+            <img class="panel" src="ui/craft_a.png" alt="" draggable="false">
+          </div>
+          <!-- Selected recipe detail (inputs → output, needs-table hint) -->
+          <div id="craft-detail" class="hidden"></div>
+        </div>
+        <!-- Loading overlay: shown ONLY when the world genuinely needs to
+             fetch assets (fresh session). When everything is already cached
+             (re-join in the same session) it never appears. -->
+        <div id="loading-overlay" class="hidden">
+          <div class="loading-panel">
+            <h2>Đang tải map…</h2>
+            <div class="loading-bar"><div id="loading-fill"></div></div>
+            <p id="loading-status">0 / 0</p>
           </div>
         </div>
         <!-- Login / join gate -->
