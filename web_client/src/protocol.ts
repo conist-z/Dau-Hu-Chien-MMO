@@ -138,7 +138,9 @@ export interface SnapshotPayload {
     // keeps prediction-only movement with no correction in that case.
     last_seq?: number;
   };
-  inventory: InventoryPayload;
+  // Present only when the bag changed since our last ack.
+  inventory?: InventoryPayload;
+  inv_version?: number;
   // Station proximity for the craft button gate (server truth per snapshot).
   near_station?: boolean;
   resources: [number, number, number][];

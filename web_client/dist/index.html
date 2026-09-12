@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-BWArj8Lg.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-dBT7YYz5.css">
+    <title>Discord Map — Web Client</title>
+    <script type="module" crossorigin src="./assets/index-BrAIoH7y.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-02-RJ28n.css">
   </head>
   <body>
     <div id="game-root">
@@ -15,6 +15,10 @@
           <span id="hud-clock">--:--</span>
           <span id="hud-daynight" title="Buổi">🌅</span>
           <span id="hud-weather">☀️</span>
+        </div>
+        <!-- Bottom-left: live connection ping (ms) -->
+        <div id="hud-bottomleft" class="hud-box">
+          <span id="hud-ping" title="Độ trễ kết nối">--</span>
         </div>
         <!-- Top-right: HP + mana bars (flush corner) -->
         <div id="hud-topright" class="hud-box">
@@ -92,6 +96,6 @@
           </div>
         </div>
       </div>
-    </div>
+    </div>
   </body>
 </html>

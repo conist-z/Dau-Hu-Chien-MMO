@@ -45,6 +45,14 @@ export class Net {
   private pingTimer: number | null = null;
   private lastRttMs = 0;
   onRtt: ((rttMs: number) => void) | null = null;
+  // --- auto-reconnect (tab-return freshness) ---
+  /** Last joined channel id — replayed verbatim on reconnect. */
+  private lastChannel: string | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
+  private connecting = false;
+  /** True once the session ever joined a scenario (gates auto-rejoin). */
+  private everJoined = false;
 
   constructor(handlers: NetHandlers) {
     this.handlers = handlers;
@@ -59,22 +67,79 @@ export class Net {
   }
 
   connect(): Promise<void> {
+    if (this.connecting) return Promise.resolve();
+    this.connecting = true;
     return new Promise((resolve, reject) => {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${proto}//${location.host}${WS_PATH}`;
       this.ws = new WebSocket(url);
       this.ws.onopen = () => {
+        this.connecting = false;
+        this.reconnectAttempt = 0; // healthy again
         this.handlers.onConnectionChange(true);
         this.startPing();
         resolve();
       };
-      this.ws.onerror = () => reject(new Error("ws_error"));
+      this.ws.onerror = () => {
+        this.connecting = false;
+        reject(new Error("ws_error"));
+      };
       this.ws.onclose = () => {
         this.joined = false;
         this.handlers.onConnectionChange(false);
+        // Auto-reconnect with capped backoff — the tab-return freshness
+        // story: rAF pauses while hidden, the OS may drop the idle socket,
+        // and on return the client silently reconnects + rejoins the map.
+        this.scheduleReconnect();
       };
       this.ws.onmessage = (ev) => this.onMessage(ev.data as string);
     });
+  }
+
+  /** Exponential backoff reconnect: 1s, 2s, 4s… capped at 8s, forever.
+   * Skipped when no gameplay session ever joined (boot flow owns that). */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer !== null) return;
+    if (!this.everJoined) return;
+    const delay = Math.min(8000, 1000 * 2 ** this.reconnectAttempt);
+    this.reconnectAttempt = Math.min(4, this.reconnectAttempt + 1);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.reconnect();
+    }, delay);
+  }
+
+  /** Immediate reconnect (watchdog / tab-return path): drop the current
+   * socket, clear any pending backoff timer, then reconnect + rejoin now. */
+  forceReconnect(): void {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      // onclose fires synchronously-ish and calls scheduleReconnect —
+      // suppress that by marking the socket as the one we just closed.
+      this.ws.onclose = null;
+      this.ws.close();
+    }
+    this.joined = false;
+    void this.reconnect();
+  }
+
+  /** Fresh socket + rejoin the last channel. The server-side session lives
+   * in an in-memory registry, so the rejoin re-authenticates with the SAME
+   * token; a stale guest token falls back via main.ts's error handler. */
+  private async reconnect(): Promise<void> {
+    if (this.isConnected) return;
+    try {
+      await this.connect();
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+    if (this.lastChannel) {
+      this.joinScenario(this.lastChannel, this.token || undefined);
+    }
   }
 
   // ----- Discord OAuth (authorization-code + PKCE, redirect back here) -----
@@ -134,6 +199,7 @@ export class Net {
   // channelId stays a string: Discord snowflakes exceed JS Number precision.
   joinScenario(channelId: string | number, token?: string): void {
     if (token) this.token = token;
+    this.lastChannel = String(channelId); // reconnect replays this join
     this.send({ type: MSG_JOIN, token: this.token, channel_id: String(channelId) });
   }
 
@@ -258,11 +324,13 @@ export class Net {
           this.handlers.onLoginFail(frame.error ?? "login_failed");
         }
         break;
-      case "welcome":
+      case "welcome": {
         this.joined = true;
+        this.everJoined = true;
         this.inputSeq = 0; // fresh connection: restart the input sequence
         this.handlers.onWelcome(frame);
         break;
+      }
       case "snapshot":
         this.handlers.onSnapshot(frame);
         break;

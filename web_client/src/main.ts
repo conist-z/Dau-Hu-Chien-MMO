@@ -108,8 +108,8 @@ function applyTexture(name: string, b64: string): void {
   assetTextures.set(key, key);
 }
 
-function applyInventory(inv: InventoryPayload): void {
-  hud.setInventory(inv);
+function applyInventory(inv: InventoryPayload, version?: number): void {
+  hud.setInventory(inv, version);
   // Plan A instant hand: self tool icon follows the LOCAL hotbar at once
   // (no 20 Hz wait) — snapshot.held converges it with server truth after.
   scene.setSelfHeldFromHotbar(inv.hotbar ?? [], hud.currentSlot);
@@ -148,6 +148,7 @@ function onBlockingAssetDone(key: string): void {
 const net = new Net({
   onRtt: (rttMs) => {
     scene.setNetRtt(rttMs);
+    hud.setPing(rttMs); // live ms readout (green/amber/red)
   },
   // Feed the scene's replay buffer with every seq'd input the moment it is
   // sent — before any snapshot can ack it (ordering guarantee: flushInput
@@ -180,6 +181,7 @@ const net = new Net({
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
   onSnapshot: (frame) => {
+    lastSnapshotAt = performance.now();
     scene.applySnapshot(frame);
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
@@ -191,7 +193,9 @@ const net = new Net({
     // prediction and this overlay explains why (5s respawn).
     hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
     if (frame.self.dead) input.clearKeys();
-    applyInventory(frame.inventory);
+    // Bag rides along only when it changed (inv_version ack) — otherwise
+    // this is a no-op and the grid never re-renders mid-drag.
+    if (frame.inventory) applyInventory(frame.inventory, frame.inv_version);
   },
   onScenarioList: (items) => {
     hud.showScenarioList(items, (channelId) => {
@@ -459,8 +463,34 @@ document.addEventListener("visibilitychange", () => {
     input.clearKeys();
     scene.setLocalInput(0, 0, false);
     net.setInput(0, 0, false);
+    // Returning to a long-hidden tab: the OS may have silently dropped the
+    // idle socket (no onclose fired). If the last snapshot is stale (>4s —
+    // normal cadence is 50ms), force a reconnect immediately instead of
+    // waiting for the backoff to discover it.
+    if (net.isJoined && lastSnapshotAgeMs() > 4000) {
+      net.forceReconnect();
+    }
   }
 });
+
+/** ms since the last snapshot arrived (Infinity before the first one). */
+let lastSnapshotAt = 0;
+function lastSnapshotAgeMs(): number {
+  return lastSnapshotAt === 0 ? Infinity : performance.now() - lastSnapshotAt;
+}
+
+// Snapshot freshness watchdog (2s cadence): if we are joined but snapshots
+// stopped (hidden-tab socket drop, relay hiccup), show a stale ping and
+// start reconnecting. setInterval is throttled to 1 Hz in hidden tabs but
+// still fires — exactly what the watchdog needs.
+window.setInterval(() => {
+  if (!net.isJoined) return;
+  const age = lastSnapshotAgeMs();
+  if (age > 4000) {
+    hud.setPing(-1); // "⚠ mất" in the HUD
+    net.forceReconnect();
+  }
+}, 2000);
 
 // --- boot: OAuth return or direct connect ---
 

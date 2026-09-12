@@ -105,6 +105,7 @@ interface DragSrc {
 export class Hud {
   private clockEl = document.getElementById("hud-clock")!;
   private weatherEl = document.getElementById("hud-weather")!;
+  private pingEl = document.getElementById("hud-ping")!;
   private daynightEl = document.getElementById("hud-daynight")!;
   private daynightImg: HTMLImageElement | null = null;
   private weatherImg: HTMLImageElement | null = null;
@@ -525,11 +526,13 @@ export class Hud {
 
     // --- RESULT slot [108,90,16,16]: last craft's output; click collects.
     const outSlot = makeSlot(CRAFT_RESULT.w, CRAFT_RESULT.x, CRAFT_RESULT.y, CRAFT_RESULT_ATOM, {
+      // class hook for the larger result-icon CSS rule
       iconUrl: this.resultStack ? itemIconUrl(this.resultStack.id) : undefined,
       emoji: this.resultStack ? iconFor(this.resultStack.id, this.itemEmojis) : "",
       qty: this.resultStack ? String(this.resultStack.qty) : "",
       title: this.resultStack ? this.resultStack.id : undefined,
     });
+    outSlot.classList.add("result");
     if (this.resultStack) {
       outSlot.classList.add("craftable");
       outSlot.addEventListener("click", () => this.collectResult());
@@ -791,6 +794,18 @@ export class Hud {
 
   // ----- HUD state -----
 
+  /** Live connection ping (ms), colour-coded. Negative = stale/dead link. */
+  setPing(rttMs: number): void {
+    const el = this.pingEl;
+    if (rttMs < 0) {
+      el.textContent = "⚠ mất";
+      el.className = "dead";
+      return;
+    }
+    el.textContent = `${Math.round(rttMs)}ms`;
+    el.className = rttMs < 120 ? "good" : rttMs < 300 ? "ok" : "bad";
+  }
+
   setClock(secondsOfDay: number): void {
     this.clockEl.textContent = fmtClock(secondsOfDay);
     // Day/night phase PIXEL icon ("buổi") — mirrors the Discord hub renderer's
@@ -892,7 +907,13 @@ export class Hud {
     if (t) t.textContent = respawnS > 0 ? `Hồi sinh sau ${Math.ceil(respawnS)}s…` : "Đang hồi sinh…";
   }
 
-  setInventory(inv: InventoryPayload): void {
+  private invVersion = -1;
+
+  setInventory(inv: InventoryPayload, version?: number): void {
+    // Same-version payloads (20 Hz snapshots that simply ack the bag) are
+    // skipped: rebuilding the grid mid-drag is the inventory "jitter".
+    if (version !== undefined && version === this.invVersion) return;
+    this.invVersion = version ?? this.invVersion;
     this.inventory = inv;
     this.renderHotbar();
     if (this.inventoryOpen) this.renderInventory();

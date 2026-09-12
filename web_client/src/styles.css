@@ -70,7 +70,21 @@ html, body {
   text-align: center;
 }
 #hud-weather { font-size: 20px; }
+/* Bottom-left: live ping readout — flush corner, unobtrusive. */
+#hud-bottomleft { bottom: 10px; left: 10px; font-size: 13px; }
 #hud-daynight { font-size: 20px; }
+/* Ping (ms) — tabular digits, colour-coded by health (good/ok/bad). */
+#hud-ping {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  min-width: 5ch;
+  text-align: right;
+  opacity: 0.9;
+}
+#hud-ping.good { color: #7ee787; }
+#hud-ping.ok { color: #f2cc60; }
+#hud-ping.bad { color: #ff7b72; }
+#hud-ping.dead { color: #ff7b72; font-weight: 700; }
 /* Real pixel-art HUD icons (same tiles as the Discord hub): 16x16 weather
    frames + 17x17 day/night phases, upscaled 2x with nearest-neighbour so
    every art pixel maps 1:1 to a screen pixel (crisp, never blurred). */
@@ -254,11 +268,17 @@ html, body {
 /* Real PNG item icon (bundled Twemoji): ~80% of the slot core, centered. */
 .slot-pix .icon-img {
   position: relative; z-index: 2;
-  width: calc(var(--pix-scale, 3) * 11px);
-  height: calc(var(--pix-scale, 3) * 11px);
+  /* 12/14 of the slot core: bigger, readable item art (was 11/14). */
+  width: calc(var(--pix-scale, 3) * 12.5px);
+  height: calc(var(--pix-scale, 3) * 12.5px);
   image-rendering: pixelated;
   filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.6));
   pointer-events: none;
+}
+/* Result slot is 16×16 — its item renders larger to fill it. */
+.slot-pix.result .icon-img {
+  width: calc(var(--pix-scale, 3) * 14px);
+  height: calc(var(--pix-scale, 3) * 14px);
 }
 .slot-pix .qty {
   position: absolute; z-index: 3;
@@ -308,8 +328,19 @@ html, body {
    its own create button + description region [133,21,54,87]. */
 #craft-detail { display: none; }
 
-/* Description region [133,21,54,87] — panel-native pixel style. The V5 kit
-   renders its text in small Tahoma caps over the text layer's parchment. */
+/* Description region [133,21,54,87] — panel-native pixel style. Fantasy
+   fonts: Jacquard 12 (pixel blackletter, made for 12px) for the title,
+   MedievalSharp for body rows — both OFL, bundled locally. */
+@font-face {
+  font-family: "Jacquard12";
+  src: url("/fonts/Jacquard12.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "MedievalSharp";
+  src: url("/fonts/MedievalSharp.ttf") format("truetype");
+  font-display: swap;
+}
 @font-face {
   font-family: "PixelTahoma";
   src: url("/fonts/tahoma.ttf") format("truetype");
@@ -320,24 +351,27 @@ html, body {
 }
 .pix-desc-item {
   display: flex; align-items: center; justify-content: center;
-  margin: 2px 0;
+  margin: 3px 0 4px;
 }
 .pix-desc-item img {
-  width: calc(var(--pix-scale, 3) * 10px);
-  height: calc(var(--pix-scale, 3) * 10px);
+  width: calc(var(--pix-scale, 3) * 13px);
+  height: calc(var(--pix-scale, 3) * 13px);
   image-rendering: pixelated;
 }
 .pix-desc-title {
-  font-size: 10px; font-weight: 700; color: #4a3220;
-  text-align: center; line-height: 1.2;
+  font-family: "Jacquard12", "PixelTahoma", monospace;
+  font-size: calc(var(--pix-scale, 3) * 11px); /* 12px font at its native size */
+  font-weight: 400; color: #3a2814;
+  text-align: center; line-height: 1.05;
 }
 .pix-desc-row {
-  display: flex; align-items: center; gap: 3px;
-  font-size: 9px; font-weight: 700; color: #4a3220;
+  display: flex; align-items: center; gap: 4px;
+  font-family: "MedievalSharp", "PixelTahoma", monospace;
+  font-size: 12px; font-weight: 700; color: #4a3220;
 }
 .pix-desc-row img {
-  width: calc(var(--pix-scale, 3) * 7px);
-  height: calc(var(--pix-scale, 3) * 7px);
+  width: calc(var(--pix-scale, 3) * 8px);
+  height: calc(var(--pix-scale, 3) * 8px);
   image-rendering: pixelated;
 }
 .pix-desc-row.ok { color: #2e6b3c; }
