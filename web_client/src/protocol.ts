@@ -46,6 +46,9 @@ export interface WelcomePayload {
   };
   inventory: InventoryPayload;
   recipes: RecipePayload[];
+  // True when self stands within STATION_RANGE of a crafting table (gates
+  // the craft button; server re-checks at craft time).
+  near_station?: boolean;
   // Item id -> emoji (server registries; authoritative for icons).
   item_emojis: Record<string, string>;
   blocks_catalog: { id: string; emoji: string; name: string }[];
@@ -93,7 +96,10 @@ export interface PlayersManifest {
 // "walk"|"idle"|"atk" cuts the matching row/frame from the local sheet copy
 // (Kaetram 5 cols x 9 rows of 32px: row 0 atk 5f, row 1 walk 4f, row 2
 // idle 2f) — never the whole stretched sheet.
-export type WebZombiePayload = [string, number, number, number, number, string, string, string];
+export type WebZombiePayload = [
+  string, number, number, number, number, string, string, string,
+  number?, // anim_t: server anim start (seconds, monotonic) — re-arms atk
+];
 
 export interface SnapshotPayload {
   type: "snapshot";
@@ -122,6 +128,8 @@ export interface SnapshotPayload {
     respawn_s?: number;
   };
   inventory: InventoryPayload;
+  // Station proximity for the craft button gate (server truth per snapshot).
+  near_station?: boolean;
   resources: [number, number, number][];
   // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
   res_progress: Record<string, [number, number, number[][]]>;

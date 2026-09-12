@@ -13,6 +13,7 @@ export interface NetHandlers {
   onSnapshot: (frame: Extract<ServerFrame, { type: "snapshot" }>) => void;
   onScenarioList: (items: ScenarioItem[]) => void;
   onInventory: (inv: InventoryPayload) => void;
+  onCraftResult: (ok: boolean, reason: string, itemId: string | null, qty: number) => void;
   onPush: (message: string) => void;
   onError: (code: string) => void;
   onAssetData: (name: string, b64: string | null) => void;
@@ -246,6 +247,11 @@ export class Net {
         break;
       case "inventory_delta":
         this.handlers.onInventory(frame.inventory);
+        break;
+      case "craft_result":
+        // Server verdict for craft_op (previously silently dropped): success
+        // toast + the inventory_delta that follows refreshes the bag grid.
+        this.handlers.onCraftResult(frame.ok, frame.reason, frame.item_id, frame.qty);
         break;
       case "push":
         this.handlers.onPush(frame.message);

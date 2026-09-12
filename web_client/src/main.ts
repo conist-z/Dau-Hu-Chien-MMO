@@ -122,6 +122,7 @@ const net = new Net({
     hud.hideGate();
     hud.setInventory(frame.inventory);
     hud.setRecipes(frame.recipes);
+    hud.setNearStation(!!frame.near_station);
     // Re-sync the server's held slot after (re)login — the session was
     // recreated server-side and defaults to slot 0. Self hand shows the
     // server echo at once (welcome.held), hotbar may still be resolving.
@@ -144,6 +145,7 @@ const net = new Net({
     weatherFx.setWeather(frame.weather);
     dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
+    hud.setNearStation(!!frame.near_station);
     // Death veil: server ignores our inputs while dead; the scene freezes
     // prediction and this overlay explains why (5s respawn).
     hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
@@ -158,6 +160,7 @@ const net = new Net({
     });
   },
   onInventory: applyInventory,
+  onCraftResult: (ok, reason, itemId, qty) => hud.craftResult(ok, reason, itemId, qty),
   onPush: (message) => hud.toast(message),
   onError: (code) => {
     // Any auth/session error before joining: wipe the stale token and fall
@@ -321,6 +324,14 @@ const input = new KeyboardInput({
         // Genuinely out of range: send the raw click — the server answers
         // out_of_range honestly ("Quá xa."), no optimistic state involved.
         net.actionAt("chop", tile.x, tile.y);
+        scene.swingSelfHand();
+        return;
+      }
+      // COMBAT FIRST: a zombie near the click is an ATTACK, never a chop —
+      // left click on a mob must damage it (melee resolves in a radius
+      // server-side; tile targeting only picks the swing direction).
+      if (scene.zombieNear(target)) {
+        net.action("attack");
         scene.swingSelfHand();
         return;
       }

@@ -134,6 +134,7 @@ export class WorldScene extends Phaser.Scene {
     lastX: number; lastY: number;
     anim: string; // last server anim (walk|idle|atk)
     animT0: number; // performance.now() when the server anim last changed
+    serverAnimT: number; // last server anim_t (seconds) — re-arm detector
     frame: number; // current local frame index inside the row
     frameT0: number; // performance.now() of the last local frame advance
     facing: string;
@@ -1429,7 +1430,7 @@ export class WorldScene extends Phaser.Scene {
   /** Sync the zombie layer from one snapshot payload (20 Hz). */
   private syncZombies(list: WebZombiePayload[]): void {
     const seen = new Set<string>();
-    for (const [id, x, y, hp, maxHp, kind, facing, anim] of list) {
+    for (const [id, x, y, hp, maxHp, kind, facing, anim, animT] of list) {
       seen.add(id);
       let z = this.zombies.get(id);
       if (!z) {
@@ -1457,6 +1458,7 @@ export class WorldScene extends Phaser.Scene {
           container, body, label, hpBg, hpFill,
           buf: [], lastX: x * 32, lastY: y * 32,
           anim: anim ?? "idle", animT0: performance.now(),
+          serverAnimT: animT ?? 0,
           frame: 0, frameT0: performance.now(),
           facing: facing ?? "S", dieT0: 0, hunter: kind === "hunter",
         };
@@ -1467,9 +1469,24 @@ export class WorldScene extends Phaser.Scene {
       if (z.buf.length > 12) z.buf.shift();
       z.hunter = kind === "hunter";
       z.facing = facing ?? z.facing;
-      if ((anim ?? z.anim) !== z.anim) {
+      // Restart the anim when (a) the anim STRING changes, or (b) the server
+      // re-armed the SAME anim (repeat bites keep anim="atk"; only anim_t
+      // advances). Without (b) every bite after the first froze on the lunge
+      // frame until the zombie moved again.
+      const atkReplayMs = 4 * 90; // one full atk swing on the client
+      const reArmed = animT != null && z.anim === "atk" && anim === "atk" &&
+        Math.abs(animT - z.serverAnimT) > 0.001;
+      if (reArmed || (anim ?? z.anim) !== z.anim) {
         z.anim = anim ?? z.anim;
         z.animT0 = now;
+        z.frame = 0;
+        z.frameT0 = now;
+      }
+      if (animT != null) z.serverAnimT = animT;
+      // Auto-unfreeze: the server holds anim="atk" between bites; drop back
+      // to idle locally once one swing has played so the pose never sticks.
+      if (z.anim === "atk" && now - z.animT0 >= atkReplayMs) {
+        z.anim = "idle";
         z.frame = 0;
         z.frameT0 = now;
       }
@@ -1588,6 +1605,19 @@ export class WorldScene extends Phaser.Scene {
       dy = Math.max(-3, Math.min(3, dy));
     }
     return { x: sx + dx, y: sy + dy };
+  }
+
+  /** True when a LIVE zombie sits within attack reach of the clicked tile
+   * (zombie tile hit, or a half-tile slack so near-misses still connect).
+   * The primary click routes to `attack` first — combat beats chopping. */
+  zombieNear(tile: { x: number; y: number }): boolean {
+    for (const z of this.zombies.values()) {
+      if (z.dieT0 !== 0) continue;
+      const zx = z.lastX / 32;
+      const zy = z.lastY / 32;
+      if (Math.hypot(zx - (tile.x + 0.5), zy - (tile.y + 0.5)) <= 0.75) return true;
+    }
+    return false;
   }
 
   /** Set the active Build-Mode cursor offset (from the server snapshot). */
