@@ -879,23 +879,17 @@ export class WorldScene extends Phaser.Scene {
   private updateDrops(now: number): void {
     for (const d of this.drops.values()) {
       const age = now - d.bornT;
-      // MAGNET phases home to the LIVE SELF position, not the 20 Hz server
-      // sample: the server target is the real player, but its sample lags a
-      // beat, so a running player saw the drop fly toward empty air ("chui
-      // vào không khí"). While the server says magnet and our self marker is
-      // live, steer the render target toward the self sprite every frame;
-      // the server pos still anchors it (anti-desync) via a weak pull.
-      let gx = d.tx;
-      let gy = d.ty;
-      if (d.phase === "magnet" && this.selfMarker && !this.selfDead) {
-        const px = this.selfMarker.x;
-        const py = this.selfMarker.y - 10; // torso, not feet
-        const w = 1 - Math.exp(-8 * this.frameDtSec); // weak anchor
-        gx = d.tx + (px - d.tx) * w;
-        gy = d.ty + (py - d.ty) * w;
-      }
-      // Smooth toward the goal (magnet moves the drop fast).
-      const k = 1 - Math.exp(-18 * this.frameDtSec);
+      // MAGNET phases home DIRECTLY to the live self sprite (60 fps, zero
+      // sample lag): the 20 Hz server target lagged a running player, so
+      // drops flew into empty air. The server still owns the phase/collect
+      // decision — this is render-only pursuit of the player we can SEE.
+      const self = this.selfMarker;
+      const magnet = d.phase === "magnet" && self !== null && !this.selfDead;
+      const gx = magnet && self ? self.x : d.tx;
+      const gy = magnet && self ? self.y - 10 : d.ty; // torso, not feet
+      // Snappier smoothing while magnet (the server sample moves in 0.55-tile
+      // jumps at 11 tiles/s; a slow lerp made the flight feel mushy/laggy).
+      const k = 1 - Math.exp((magnet ? -30 : -18) * this.frameDtSec);
       const cx = d.container.x + (gx - d.container.x) * k;
       const cy = d.container.y + (gy - d.container.y) * k;
       // Idle bob after landing (server z already carries the arc; add a
