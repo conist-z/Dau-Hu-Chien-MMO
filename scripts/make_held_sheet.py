@@ -85,9 +85,11 @@ def draw_streak(frame: Image.Image, streak: dict) -> None:
 
 def build_sheet(icon: Path, size: int = 13, block: bool = False) -> tuple[Image.Image, list[list[Image.Image]]]:
     table = json.loads(TABLE_PATH.read_text())
-    # Block faces read much chunkier than item icons at the same px (solid
-    # square vs sparse art): ~55% of the icon size per player feedback.
-    art = load_icon(icon, 7 if block else size)
+    # Blocks: bigger visual reduction (55% of icon size) + directional nudges
+    # baked per row (back rows shift left 2px, front rows down+right 2px) —
+    # the solid square reads wrong at the same anchor as sparse item art.
+    # Item icons: 75% of the original 13px per feedback (was full size).
+    art = load_icon(icon, 7 if block else int(size * 0.75))
 
     sheet = Image.new("RGBA", (FRAME * COLS, FRAME * len(ROW_NAMES)), (0, 0, 0, 0))
     frames: list[list[Image.Image]] = []
@@ -95,6 +97,15 @@ def build_sheet(icon: Path, size: int = 13, block: bool = False) -> tuple[Image.
         row = table["rows"][row_name]
         centres = row["centre12"]
         rots = row.get("rot") or [None] * COLS
+        # Block-only row nudges (baked, feedback-tuned): back/up rows tuck the
+        # block INTO the player (left 2px); front/down rows drop it 2px and
+        # out 2px right so it sits in front of the body like a carried cube.
+        row_nudge = (0, 0)
+        if block:
+            if ri == 2 or ri == 5 or ri == 8:   # *_up (walking away)
+                row_nudge = (-2, 0)
+            elif ri == 0 or ri == 3 or ri == 6: # *_down (facing camera)
+                row_nudge = (2, 2)
         frames.append([])
         for c in range(COLS):
             frame = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
@@ -107,7 +118,7 @@ def build_sheet(icon: Path, size: int = 13, block: bool = False) -> tuple[Image.
             rot = rots[c] if c < len(rots) else None
             if rot:
                 a = art.rotate(rot, expand=True, resample=Image.NEAREST)
-            paste_art(frame, a, *centre)
+            paste_art(frame, a, centre[0] + row_nudge[0], centre[1] + row_nudge[1])
             if ri == 7 and c == int(row.get("streak", {}).get("frame", -1)):
                 draw_streak(frame, row["streak"])
             sheet.paste(frame, (c * FRAME, ri * FRAME))
