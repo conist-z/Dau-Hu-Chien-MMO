@@ -425,6 +425,9 @@ export class WorldScene extends Phaser.Scene {
     const RESOURCE_LAYERS = new Set([
       "cay", "tree", "trees", "resources",
       "vat pham ko lien quan", "ore", "ores", "mine",
+      // mineable rocks (tảng đá nhỏ / tảng đá lớn) — choppable nodes, must
+      // NOT bake into the base or they'd stay visible after being felled
+      "tang da nho", "tang da lon",
     ]);
     const foldName = (s: string): string =>
       s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")

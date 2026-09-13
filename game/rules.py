@@ -17,7 +17,6 @@ from game.weather import WeatherState, compute_modifiers
 from game.zombies import (
     BARE_HAND_ATTACK_DAMAGE,
     ZOMBIE_DROP_TABLE,
-    ZOMBIE_PLAYER_ATTACK_DAMAGE,
     remove_zombie,
 )
 
@@ -45,8 +44,14 @@ def _held_item_id(state: GameState, player: Player) -> Optional[str]:
     return None
 
 
-def _has_weapon(state: GameState, player: Player) -> bool:
-    return _held_item_id(state, player) is not None
+def _attack_damage(state: GameState, player: Player) -> int:
+    """Damage of ONE hit: per-family/per-tier tool damage (game/tools.py
+    FAMILY_BASE_DAMAGE x TIER_MULT) when a weapon is held, bare-hand damage
+    otherwise. Data-driven — tune numbers in tools.py without touching rules."""
+    from game.tools import tool_damage
+
+    dmg = tool_damage(_held_item_id(state, player))
+    return dmg if dmg > 0 else BARE_HAND_ATTACK_DAMAGE
 
 # Build Mode aim cursor: max Chebyshev distance (tiles) from the player to the
 # placement target. Keeps building local — no placing across the whole map.
@@ -167,27 +172,25 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
                         True, state_changed=True, pos=(tx, ty), block_id=block_id,
                     )
             return ActionResult(False, "no_target")
-        inventories = getattr(state, "inventories", None) or {}
-        inv = inventories.get(player.user_id)
-        from game.tools import sword_damage
-
-        dmg = sword_damage(inv)
-        if dmg <= 0:
-            dmg = (
-                ZOMBIE_PLAYER_ATTACK_DAMAGE
-                if _has_weapon(state, player)
-                else BARE_HAND_ATTACK_DAMAGE
-            )
+        dmg = _attack_damage(state, player)
         best.hp = max(0, best.hp - dmg)
         target_id = best.zombie_id
         defeated = not best.alive
         drops = []
         if defeated:
             remove_web_zombie(state, target_id)
-            for item_id, chance, qty in ZOMBIE_DROP_TABLE:
-                import random
-                if random.random() < chance:
-                    drops.append((item_id, qty))
+            # Slain zombie: loot pops out as drop entities at the corpse —
+            # the killer (or anyone) walks over to vacuum it up.
+            from game.drops import spawn_drops
+
+            import random
+            rolled = [
+                (item_id, qty) for item_id, chance, qty in ZOMBIE_DROP_TABLE
+                if random.random() < chance
+            ]
+            if rolled:
+                spawn_drops(state, best.x, best.y, rolled)
+            drops = rolled
         return ActionResult(
             True, state_changed=True,
             pos=(best.x, best.y), block_id="zombie",
@@ -209,33 +212,29 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
                     True, state_changed=True, pos=(tx, ty), block_id=block_id,
                 )
         return ActionResult(False, "no_target")
-    # Damage depends on what the player is holding. A sword deals its tier
-    # damage (dirt tier ~= 3 hits per zombie); other weapon-class tools
-    # (axe/pickaxe) deal the legacy weapon damage; a bare hand punches for
-    # BARE_HAND_ATTACK_DAMAGE.
-    inventories = getattr(state, "inventories", None) or {}
-    inv = inventories.get(player.user_id)
-    from game.tools import sword_damage
-
-    dmg = sword_damage(inv)
-    if dmg <= 0:
-        dmg = (
-            ZOMBIE_PLAYER_ATTACK_DAMAGE
-            if _has_weapon(state, player)
-            else BARE_HAND_ATTACK_DAMAGE
-        )
+    # Damage depends on what the player is holding: per-family/per-tier tool
+    # damage (sword > axe > pickaxe > shovel, each scaled by material tier);
+    # a bare hand punches for BARE_HAND_ATTACK_DAMAGE.
+    dmg = _attack_damage(state, player)
     zombie.hp = max(0, zombie.hp - dmg)
     target_id = zombie.zombie_id
     defeated = not zombie.alive
     drops = []
     if defeated:
         remove_zombie(state, target_id)
-        for item_id, chance, qty in ZOMBIE_DROP_TABLE:
-            # Keep the drop roll in the pure action rule so every attack path
-            # has identical results and persistence remains adapter-free.
-            import random
-            if random.random() < chance:
-                drops.append((item_id, qty))
+        # Keep the drop roll in the pure action rule so every attack path
+        # has identical results; loot pops out as drop entities (the manager
+        # grants the bag on collect).
+        from game.drops import spawn_drops
+
+        import random
+        rolled = [
+            (item_id, qty) for item_id, chance, qty in ZOMBIE_DROP_TABLE
+            if random.random() < chance
+        ]
+        if rolled:
+            spawn_drops(state, zombie.x, zombie.y, rolled)
+        drops = rolled
     return ActionResult(
         True, state_changed=True,
         pos=(zombie.x, zombie.y), block_id="zombie",
@@ -380,19 +379,52 @@ def apply_break_block(
     block_id = blocks.get(tx, ty)
     if block_id is None:
         return ActionResult(False, "no_block")
-    # STONE GATE (user rule): stone blocks can only be broken with a pickaxe
-    # of dirt tier or better. Anyone else gets the "too_hard" reason.
-    if block_id in STONE_BLOCK_IDS:
-        inventories = getattr(state, "inventories", None) or {}
-        from game.tools import has_pickaxe_tier
+    # User rule 14/09: EVERY placed block breaks by hand — the pickaxe gate
+    # is gone. Holding the RIGHT tool still breaks faster (damage 2 vs 1
+    # below), which is the whole incentive to craft one.
+    bdef = blocks_mod.get_block(block_id)
+    hardness = max(1, bdef.hardness if bdef is not None else 1)
+    from game.tools import parse_tool_id
 
-        held = inventories.get(player.user_id, inventory)
-        if not has_pickaxe_tier(held):
-            return ActionResult(False, "too_hard")
+    # Resolve the held tool with the same fallback as the stone gate: the
+    # runtime-scoped map when present, else the passed inventory (tests and
+    # some adapters hand the bag straight in).
+    inventories = getattr(state, "inventories", None) or {}
+    held_inv = inventories.get(player.user_id, inventory)
+    held_id = None
+    if held_inv is not None:
+        for _slot, iid in held_inv.hotbar().items():
+            if iid and parse_tool_id(iid) is not None and held_inv.count(iid) > 0:
+                held_id = iid
+                break
+    td = parse_tool_id(held_id)
+    # The "right" family is a heuristic by block: stone-like -> pickaxe,
+    # wood-like -> axe, everything else -> any tool works full damage.
+    right_family = "pickaxe" if block_id in STONE_BLOCK_IDS else (
+        "axe" if block_id in ("wood", "crafting_table", "floor") else None
+    )
+    right_tool = (
+        td is not None and (right_family is None or td.family == right_family)
+    )
+    damage = 2 if right_tool else 1
+    total = blocks.add_damage(tx, ty, damage)
+    if total < hardness:
+        return ActionResult(
+            True, state_changed=True, pos=(tx, ty), block_id=block_id,
+            needed=hardness, damage=total,
+        )
+
+    # BROKEN: remove + spawn the "linh khí" drop entity (never straight to
+    # the bag — the player walks over to collect it).
     blocks.remove(tx, ty)
     if not blocks_mod.CREATIVE_MODE:
-        inventory.add(block_id, 1)
-    return ActionResult(True, state_changed=True, pos=(tx, ty), block_id=block_id)
+        from game.drops import spawn_drops
+
+        spawn_drops(state, tx, ty, [(block_id, 1)])
+    return ActionResult(
+        True, state_changed=True, pos=(tx, ty), block_id=block_id,
+        needed=hardness, damage=total, drops=[(block_id, 1)],
+    )
 
 
 def apply_weather_regen(player: Player, ws: WeatherState) -> None:
