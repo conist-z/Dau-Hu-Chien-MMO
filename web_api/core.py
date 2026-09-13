@@ -248,19 +248,13 @@ class WebHub:
         sess = self.registry.create(
             user_id, f"Khach-{raw[-4:]}", channel_id=0,
         )
-        # Bind the session to THIS connection NOW (not at join): reply helpers
         # route by conn.session identity — without this, scenario_list and
         # every pre-join reply silently vanish.
         conn = self.connections.get(cid)
         if conn is not None:
             conn.session = sess
         print(f"[WEB] guest login {user_id}", flush=True)
-        await self.send_to_client(cid, {
-            "type": "login_result", "ok": True,
-            "token": sess.token,
-            "user_id": sess.user_id,
-            "display_name": sess.display_name,
-        })
+        await self.send_to_client(cid, self._login_result(sess))
 
     async def _handle_login(
         self, cid: int, code: str, redirect_uri: str, code_verifier: str = ""
@@ -275,15 +269,28 @@ class WebHub:
         sess = self.registry.create(
             profile["user_id"], profile["display_name"], channel_id=0,
         )
+        sess.avatar_hash = str(profile.get("avatar_hash") or "")
         conn = self.connections.get(cid)
         if conn is not None:
             conn.session = sess
-        await self.send_to_client(cid, {
+        await self.send_to_client(cid, self._login_result(sess))
+
+    @staticmethod
+    def _login_result(sess) -> dict:
+        """login_result payload — avatar_url feeds the web dashboard profile
+        card (Discord CDN; guests render a letter badge instead)."""
+        frame: dict = {
             "type": "login_result", "ok": True,
             "token": sess.token,
             "user_id": sess.user_id,
             "display_name": sess.display_name,
-        })
+        }
+        if sess.avatar_hash:
+            frame["avatar_url"] = (
+                f"https://cdn.discordapp.com/avatars/{sess.user_id}/"
+                f"{sess.avatar_hash}.png?size=128"
+            )
+        return frame
 
     async def _handle_join(self, conn: ClientConnection, frame: dict) -> None:
         token = frame.get("token", "")
@@ -608,7 +615,9 @@ class WebHub:
             return
 
         if op == "collect":
-            res = await self.manager.craft_collect(cid, uid)
+            slot = frame.get("slot")
+            slot_arg = (int(slot) if isinstance(slot, int) else None)
+            res = await self.manager.craft_collect(cid, uid, slot=slot_arg)
             if res["ok"]:
                 from web_api.snapshots import (_craft_part,
                                                _inventory_payload,
@@ -873,11 +882,17 @@ class WebHub:
         safe = Path(name).name
         if name.startswith("players/weapon/"):
             safe = Path(name).parts[-2] + "/" + Path(name).parts[-1]
+        if name.startswith("icons/"):
+            # Item icon set (Kaetram-generated, scripts/make_item_icons.py) —
+            # subfolder kept out of the name, basename confined to the dir.
+            safe = Path(name).name
         if not safe.lower().endswith(".png"):
             await self.send_to_client(cid, {"type": "asset_data", "name": name, "b64": None})
             return
         if name.startswith("blocks/"):
             base_dir = ASSETS_DIR.parent / "blocks"
+        elif name.startswith("icons/"):
+            base_dir = ASSETS_DIR.parent / "gui" / "icons"
         elif name.startswith("mobs/"):
             base_dir = ASSETS_DIR.parent / "mobs"
         elif name.startswith("players/"):

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-BREdLfQH.js"></script>
+    <script type="module" crossorigin src="./assets/index-IlpPEJ-A.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-8APdf3-W.css">
   </head>
   <body>
@@ -86,9 +86,9 @@
             <p id="loading-status">0 / 0</p>
           </div>
         </div>
-        <!-- Login / join gate -->
+        <!-- Login / join gate + account dashboard -->
         <div id="login-gate">
-          <div class="panel">
+          <div class="panel gate-panel">
             <h1>Map Game</h1>
             <p class="gate-sub">Chơi ngay trên web — nhân vật dùng chung với Discord</p>
             <p id="login-status">Đang tải…</p>
@@ -96,7 +96,33 @@
               <button id="btn-login" type="button" class="gate-btn primary">🔑 Đăng nhập Discord</button>
               <button id="btn-quick" type="button" class="gate-btn">⚡ Vào nhanh (thử nghiệm)</button>
             </div>
-            <div id="scenario-list"></div>
+          </div>
+          <!-- Account dashboard: shown after login (profile + tabs) -->
+          <div class="panel dash-panel hidden" id="dash-panel">
+            <div class="dash-profile">
+              <img id="dash-avatar" alt="" draggable="false">
+              <div class="dash-id">
+                <span id="dash-name">—</span>
+                <span id="dash-sub">—</span>
+              </div>
+              <button id="dash-logout" type="button" title="Đăng xuất">⏻</button>
+            </div>
+            <div class="dash-tabs">
+              <button class="dash-tab active" data-tab="servers" type="button">🗺️ Server</button>
+              <button class="dash-tab" data-tab="settings" type="button">⚙️ Cài đặt</button>
+              <button class="dash-tab" data-tab="events" type="button">🎉 Sự kiện</button>
+            </div>
+            <div class="dash-body">
+              <div class="dash-tabpane" id="dash-tab-servers">
+                <div id="scenario-list"></div>
+              </div>
+              <div class="dash-tabpane hidden" id="dash-tab-settings">
+                <p class="dash-empty">Cài đặt sẽ ra mắt sau — hiện đang chỉnh trong game (Esc → Setting).</p>
+              </div>
+              <div class="dash-tabpane hidden" id="dash-tab-events">
+                <p class="dash-empty">Chưa có sự kiện nào đang diễn ra. Theo dõi kênh thông báo trên Discord!</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

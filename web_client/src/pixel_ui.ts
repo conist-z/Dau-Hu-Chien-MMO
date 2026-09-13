@@ -88,45 +88,24 @@ export const CRAFT_DESC = { x: 133, y: 21, w: 54, h: 87 };
 export const CRAFT_QUICK_CELL = "ui/v5/atoms/craft_input_cell.png";
 export const CRAFT_MAT_CELL = "ui/v5/atoms/craft_output_cell.png";
 
-// ---- Item icons: real bundled Twemoji PNGs (same pack the Discord hub
-// uses, assets/gui/items/<codepoint>.png) — no emoji-font drift. ----
-export const ITEM_ICONS: Record<string, string> = {
-  potion_hp: "ui/icons/1f48a.png",
-  potion_mp: "ui/icons/1f7e6.png",
-  key_stone: "ui/icons/1f511.png",
-  apple: "ui/icons/1f34e.png",
-  plank: "ui/icons/1f7eb.png",
-  stick: "ui/icons/1f962.png",
-  coin: "ui/icons/1fa99.png",
-  rotten_flesh: "ui/icons/1f969.png",
-  iron_ore: "ui/icons/1f348.png",
-  coal: "ui/icons/26ab.png",
-  iron_ingot: "ui/icons/1f948.png",
-  charcoal: "ui/icons/1f311.png",
-  raw_meat: "ui/icons/1f356.png",
-  cooked_meat: "ui/icons/1f357.png",
-  stone: "ui/icons/1faa8.png",
-  wood: "ui/icons/1fab5.png",
-  leaves: "ui/icons/1f33f.png",
-  torch: "ui/icons/1f56f.png",
-  floor: "ui/icons/1f7e4.png",
-  crafting_table: "ui/icons/1f6e0.png",
-  furnace: "ui/icons/1f525.png",
-  wood_axe: "ui/icons/1fa93.png",
-  wood_pickaxe: "ui/icons/26cf.png",
-  wood_sword: "ui/icons/1f5e1.png",
-  wood_shovel: "ui/icons/1f944.png",
-  iron_axe: "ui/icons/1fa93.png",
-  iron_pickaxe: "ui/icons/26cf.png",
-  iron_sword: "ui/icons/1f5e1.png",
-  gold_axe: "ui/icons/1fa93.png",
-  gold_pickaxe: "ui/icons/26cf.png",
-  gold_sword: "ui/icons/1f5e1.png",
-  steel_axe: "ui/icons/1fa93.png",
-  steel_pickaxe: "ui/icons/26cf.png",
-  steel_sword: "ui/icons/1f5e1.png",
-  dirt: "ui/icons/1f7e4.png",
-};
+// ---- Item icons: the generated Kaetram icon set (assets/gui/icons/<id>.png,
+// built by scripts/make_item_icons.py — pixel art served from public/ui/icons/)
+// — zero emoji-font dependency, so machines without an emoji font render the
+// exact same art. Emoji text remains only as a last-resort fallback.
+export const ITEM_ICONS: Record<string, string> = Object.fromEntries(
+  [
+    "apple", "charcoal", "coal", "coin", "cooked_meat", "crafting_table",
+    "dirt", "floor", "furnace", "gold_axe", "gold_pickaxe", "gold_sword",
+    "iron_axe", "iron_ingot", "iron_ore", "iron_pickaxe", "iron_sword",
+    "key_stone", "leaves", "plank", "potion_hp", "potion_mp", "raw_meat",
+    "rotten_flesh", "steel_axe", "steel_pickaxe", "steel_sword", "stick",
+    "stone", "torch", "wood", "wood_axe", "wood_pickaxe", "wood_shovel",
+    "wood_sword",
+  ].map((id) => [id, `ui/icons/${id}.png`]),
+);
+
+/** Every id with a bundled real icon (Phaser hand sprites + asset prefetch). */
+export const ICON_ITEM_IDS = Object.keys(ITEM_ICONS);
 
 /** Icon URL for an item id, or null (caller falls back to an emoji glyph). */
 export function itemIconUrl(id: string | null): string | null {

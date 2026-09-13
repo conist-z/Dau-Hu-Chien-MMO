@@ -6,6 +6,7 @@ import Phaser from "phaser";
 import type { DropPayload, PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
 import { PaperdollBody, b64ToBytes, registerPaperdollTextures, registerWeaponSheet } from "./paperdoll";
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
+import { ICON_ITEM_IDS } from "./pixel_ui";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 const ZOMBIE_SIZE = 48; // vs the 64px (2-tile) player doll
@@ -36,8 +37,9 @@ interface RemotePlayer {
   // Plan A hand: small circle same colour as the body, orbiting with facing.
   hand: Phaser.GameObjects.Arc;
   handColor: number;
-  // Tool/weapon icon over the hand (emoji Text). Empty text = bare hand.
-  toolIcon: Phaser.GameObjects.Text;
+  // Tool/weapon icon over the hand: Kaetram pixel-art PNG (Image) when the
+  // icon texture is in, emoji Text only as fallback. Empty = bare hand.
+  toolIcon: Phaser.GameObjects.Text | Phaser.GameObjects.Image;
   held: string | null;
   swingT0: number; // performance.now() of the last swing (0 = never)
   // interpolation buffer: [t_recv, x, y]
@@ -49,6 +51,9 @@ interface RemotePlayer {
 // self hand (not in a container) shares the exact same geometry.
 export const HAND_ORBIT = 20;
 export const HAND_RADIUS = 5;
+// Hand icon (Kaetram PNG) displayed size in px — 1.5 tiles read as a held
+// tool at this scale; emoji Text fallback keeps its own 13px font size.
+export const HAND_ICON_PX = 24;
 // Swing: on every harvest hit the hand thrusts out by SWING_EXTRA and back
 // over SWING_MS (sin curve), for self AND remote hands alike.
 const SWING_MS = 220;
@@ -78,7 +83,7 @@ export class WorldScene extends Phaser.Scene {
   // remote hand geometry (HAND_ORBIT/HAND_RADIUS) but lives in world space
   // next to selfMarker (self is predicted, not in a container).
   private selfHand: Phaser.GameObjects.Arc | null = null;
-  private selfToolIcon: Phaser.GameObjects.Text | null = null;
+  private selfToolIcon: Phaser.GameObjects.Text | Phaser.GameObjects.Image | null = null;
   private selfHeld: string | null = null;
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
@@ -261,6 +266,11 @@ export class WorldScene extends Phaser.Scene {
       for (const stem of new Set(Object.values(WEAPON_SHEET_BY_ITEM))) {
         fetchAsset(`players/weapon/${stem}.png`);
       }
+      // Hand icons: request the Kaetram icon PNG for every known item so
+      // hands show pixel art instead of font-dependent emoji glyphs.
+      for (const id of ICON_ITEM_IDS) {
+        fetchAsset(`icons/${id}.png`);
+      }
     }
     // Server item emojis FIRST: hand icons (self + remote) resolve through
     // this map, so it must be fresh before any setText call below.
@@ -268,7 +278,7 @@ export class WorldScene extends Phaser.Scene {
     // Rebuild existing hand icons with the fresh map (same ids, new glyphs).
     this.setSelfHeld(this.selfHeld);
     for (const rp of this.players.values()) {
-      rp.toolIcon.setText(this.emojiFor(rp.held));
+      rp.toolIcon = this.applyHandIcon(rp.toolIcon, rp.held);
     }
     const map = welcome.map;
 
@@ -696,6 +706,42 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Real icon texture key for a held item ("icon-<id>"), when registered. */
+  private iconTexFor(itemId: string | null): string | null {
+    if (!itemId) return null;
+    const tex = `icon-${itemId}`;
+    return this.textures.exists(tex) ? tex : null;
+  }
+
+  /** Point a hand icon at the best available art: Kaetram PNG (Image) when
+   * the texture is registered, emoji Text otherwise (font-less machines
+   * render tofu — PNG first is the whole point). May destroy + recreate the
+   * object when switching kind; returns the object to keep. */
+  private applyHandIcon(
+    icon: Phaser.GameObjects.Text | Phaser.GameObjects.Image,
+    itemId: string | null,
+  ): Phaser.GameObjects.Text | Phaser.GameObjects.Image {
+    const tex = this.iconTexFor(itemId);
+    const isImage = icon.type === "Image";
+    if (tex && isImage) {
+      (icon as Phaser.GameObjects.Image).setTexture(tex);
+      return icon;
+    }
+    if (!tex && !isImage) {
+      (icon as Phaser.GameObjects.Text).setText(this.emojiFor(itemId));
+      return icon;
+    }
+    const { x, y, depth, visible } = icon;
+    const parent = icon.parentContainer;
+    icon.destroy();
+    const next: Phaser.GameObjects.Text | Phaser.GameObjects.Image = tex
+      ? this.add.image(x, y, tex).setOrigin(0.5).setDisplaySize(HAND_ICON_PX, HAND_ICON_PX)
+      : this.add.text(x, y, this.emojiFor(itemId), { fontSize: "13px" }).setOrigin(0.5);
+    next.setDepth(depth).setVisible(visible);
+    if (parent) parent.add(next);
+    return next;
+  }
+
   /** Emoji for a held item id (server map first, "?" never — empty when unknown). */
   private emojiFor(itemId: string | null): string {
     if (!itemId) return "";
@@ -705,7 +751,7 @@ export class WorldScene extends Phaser.Scene {
   /** Update the SELF hand icon (called on held echo + inventory + snapshot). */
   setSelfHeld(itemId: string | null): void {
     this.selfHeld = itemId;
-    if (this.selfToolIcon) this.selfToolIcon.setText(this.emojiFor(itemId));
+    if (this.selfToolIcon) this.selfToolIcon = this.applyHandIcon(this.selfToolIcon, itemId);
     if (this.selfDoll) this.selfDoll.setWeapon(weapon_sheet_for(itemId));
   }
 
@@ -764,7 +810,7 @@ export class WorldScene extends Phaser.Scene {
     const held = p.held ?? null;
     if (held !== rp.held) {
       rp.held = held;
-      rp.toolIcon.setText(this.emojiFor(held));
+      rp.toolIcon = this.applyHandIcon(rp.toolIcon, held);
       const doll = this.remoteDolls.get(p.id);
       if (doll) doll.setWeapon(weapon_sheet_for(held));
     }
@@ -1234,9 +1280,23 @@ export class WorldScene extends Phaser.Scene {
     this.selfToolIcon?.setVisible(false);
   }
 
+  /** Hide the plan-A hand dot + tool icon once the paperdoll body is live
+   * (the Kaetram sprite carries its own weapon layer — the orbiting dot
+   * would poke out from under the taller 2-tile body). */
+
   /** Swing the SELF hand at once (optimistic — no server wait). */
   swingSelfHand(): void {
     this.selfDoll?.swing(performance.now());
+  }
+
+  /** A Kaetram hand-icon texture just arrived: flip every Text-glyph hand
+   * icon (self + remote) to the real pixel art, once per texture. */
+  onIconTexture(itemId: string): void {
+    if (!this.textures.exists(`icon-${itemId}`)) return;
+    if (this.selfToolIcon) this.selfToolIcon = this.applyHandIcon(this.selfToolIcon, this.selfHeld);
+    for (const rp of this.players.values()) {
+      if (rp.held === itemId) rp.toolIcon = this.applyHandIcon(rp.toolIcon, rp.held);
+    }
   }
 
   /** Swing one REMOTE hand when its harvest progress grows (20 Hz echo). */

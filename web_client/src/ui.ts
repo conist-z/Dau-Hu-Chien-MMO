@@ -87,6 +87,19 @@ function iconFor(id: string | null, serverMap: Record<string, string>): string {
   return serverMap[id] ?? itemEmoji(id);
 }
 
+/** Hotbar HTML: Kaetram PNG icon when available (font-proof), emoji glyph
+ * only as fallback. */
+function iconHtml(id: string | null, serverMap: Record<string, string>): string {
+  const url = itemIconUrl(id);
+  if (url) return `<img class="icon-img" src="${url}" draggable="false">`;
+  return escapeHtml(iconFor(id, serverMap));
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
 function fmtClock(secondsOfDay: number): string {
   const h = Math.floor(secondsOfDay / 3600) % 24;
   const m = Math.floor((secondsOfDay % 3600) / 60);
@@ -1301,7 +1314,7 @@ export class Hud {
       const qty = itemId
         ? (this.inventory.bag.find((b) => b?.id === itemId)?.qty ?? 0)
         : 0;
-      div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconFor(itemId, this.itemEmojis)}</span>` +
+      div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconHtml(itemId, this.itemEmojis)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
       div.addEventListener("click", () => {
         this.selectSlot(idx);
