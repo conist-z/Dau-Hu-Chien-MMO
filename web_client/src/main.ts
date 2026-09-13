@@ -568,25 +568,17 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  // Authenticated sessions skip the login panel entirely and land on the
-  // main lobby (server list auto-refreshes there). Only fresh visitors see
-  // the two-button login panel.
+  // F5 must NEVER auto-login: always show the login panel and let the user
+  // pick (auto-quick-login on refresh was enraging). The lobby appears only
+  // after an explicit login in THIS tab session.
   if (saved) {
+    hud.setLoginButton(true, "Tiếp: " + (localStorage.getItem("web_name") ?? "phiên cũ"));
+    hud.setQuickButton(true);
+  } else {
     hud.setLoginButton(true);
     hud.setQuickButton(true);
-    // Silent identity restore: replay the last login against the fresh
-    // socket (guest re-runs guest_login; Discord tokens are server-side
-    // sessions — a stale one just errors and lands back here).
-    if (saved.startsWith("guest:")) {
-      guestLogin(net);
-    } else {
-      hud.showGate("Phiên cũ — bấm nút để vào lại.");
-    }
-    return;
   }
   hud.showGate("Chọn cách vào game:");
-  hud.setLoginButton(true);
-  hud.setQuickButton(true);
 }
 
 // (input declared below onSnapshot's usage — hoisted const reference is
@@ -598,12 +590,14 @@ async function boot(): Promise<void> {
 hud.onLoginClick(() => {
   hud.setLoginButton(false, "Đang mở Discord…");
   hud.setQuickButton(false);
+  hud.collapseGatePanel(); // login panel must yield — lobby replaces it
   void net.loginWithDiscord();
 });
 
 hud.onQuickClick(() => {
   hud.setQuickButton(false, "Đang vào game…");
   hud.setLoginButton(false);
+  hud.collapseGatePanel(); // login panel must yield — lobby replaces it
   guestLogin(net);
   // Guard: server không trả lời trong 10s -> báo lỗi thay vì treo.
   window.setTimeout(() => {

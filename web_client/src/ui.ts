@@ -1001,7 +1001,15 @@ export class Hud {
 
   showGate(status: string): void {
     this.gateEl.classList.remove("hidden");
+    this.gatePanel.classList.remove("hidden");
     this.statusEl.textContent = status;
+  }
+
+  /** Collapse just the login panel (both buttons clicked) — the gate keeps
+   * showing whatever replaces it (lobby, error state) without the old panel
+   * lingering beside it. */
+  collapseGatePanel(): void {
+    this.gatePanel.classList.add("hidden");
   }
 
   hideGate(): void {
