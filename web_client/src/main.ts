@@ -200,8 +200,10 @@ const net = new Net({
     if (frame.inventory) applyInventory(frame.inventory, frame.inv_version);
     // Craft-panel parked RESULT rides along with the bag (server truth);
     // the material grid is a local buffer and is never echoed here.
-    if (frame.craft_result) {
-      hud.setCraftResult(frame.craft_result);
+    // Also handles CLEARED results (craft_result === null) — collecting
+    // must empty the slot visually right away.
+    if (frame.craft_result !== undefined) {
+      hud.setCraftResult(frame.craft_result ?? null);
     }
   },
   onScenarioList: (items) => {
@@ -220,7 +222,9 @@ const net = new Net({
   },
   onCraftResult: (ok, reason, itemId, qty) => {
     hud.craftResult(ok, reason, itemId, qty);
-    if (ok && itemId) hud.setCraftResult(null);
+    // NOTE: the parked result is SERVER truth — it arrives via the
+    // inventory_delta's craft_result fragment (setCraftResult). Never clear
+    // it here: the output must STAY in the result slot until collected.
   },
   onPush: (message) => hud.toast(message),
   onError: (code) => {
@@ -231,24 +235,18 @@ const net = new Net({
       (code === "not_joined" && !net.isJoined);
     if (stale) {
       localStorage.removeItem("web_token");
-      // Silent auto-recovery: the socket auto-reconnects after the server
-      // dropped the old session (tab hidden / brief disconnect), so the
-      // stored token is stale by design — re-login and rejoin the last map
-      // WITHOUT user interaction. (Gate was: "Phiên cũ đã hết — bấm…".)
+      // Only the GUEST path recovers silently (guest login is repeatable).
+      // A Discord session must NOT silently downgrade to guest — show the
+      // panel and let the user re-pick their path.
+      const wasGuest = !!localStorage.getItem("guest_id");
       const lastMap = localStorage.getItem("last_channel");
-      if (lastMap) {
+      if (wasGuest && lastMap) {
         hud.showGate("Đang kết nối lại…");
-        if (localStorage.getItem("guest_id")) {
-          net.requestGuestJoin(localStorage.getItem("guest_id")!);
-        } else {
-          // No guest id (Discord-only browser): create one so the silent
-          // path still recovers; guestLogin derives/persists it itself.
-          guestLogin(net);
-        }
+        net.requestGuestJoin(localStorage.getItem("guest_id")!);
         pendingRejoinChannel = lastMap;
         return;
       }
-      // No remembered map: land back on the clean two-button panel.
+      // No remembered map OR Discord session: clean two-button panel.
       hud.showGate("Phiên cũ đã hết — chọn cách vào game:");
       hud.setLoginButton(true);
       hud.setQuickButton(true);
@@ -281,8 +279,10 @@ const net = new Net({
       return;
     }
     // Guest flow: auto-join the remembered map immediately (no pick step).
-    const lastMap = localStorage.getItem("last_channel");
-    if (token.startsWith("guest:") || localStorage.getItem("guest_id")) {
+    // Discord flow: ALWAYS show the map list — never auto-join on behalf of
+    // a logged-in user.
+    if (token.startsWith("guest:")) {
+      const lastMap = localStorage.getItem("last_channel");
       if (lastMap) {
         hud.showGate("Đang vào map…");
         // Keep the channel id as a STRING: snowflakes exceed JS Number precision.
@@ -563,20 +563,12 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  if (saved && saved.startsWith("guest:")) {
-    // Guest tokens do not survive a bot restart (server-side registry is
-    // in-memory): ALWAYS re-run guest login, never send frames with the
-    // stale token — the server would reject them with not_joined.
-    hud.showGate("Chế độ nhanh: tự động vào game…");
-    guestLogin(net);
-  } else {
-    // Discord path (OAuth) or first visit: both land on the same clean
-    // panel with BOTH buttons live — the user picks their path.
-    hud.showGate(saved ? "Đã có phiên — chọn map…" : "Chọn cách vào game:");
-    hud.setLoginButton(true);
-    hud.setQuickButton(true);
-    if (saved) net.requestScenarioList();
-  }
+  // ALWAYS land on the clean two-button panel — never auto-login. Auto-guest
+  // on every page load made it impossible to pick Discord (bug report 13/09).
+  hud.showGate(saved ? "Chọn cách vào game:" : "Chọn cách vào game:");
+  hud.setLoginButton(true);
+  hud.setQuickButton(true);
+  if (saved && !saved.startsWith("guest:")) net.requestScenarioList();
 }
 
 // (input declared below onSnapshot's usage — hoisted const reference is
