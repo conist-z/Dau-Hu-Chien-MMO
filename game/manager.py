@@ -59,6 +59,9 @@ from game.zombies import (
 )
 from rendering.daynight import ingame_seconds
 from config import (
+    EAT_COOLDOWN_S,
+    EAT_DURATION_S,
+    EAT_SPEED_MULT,
     STAMINA_CHOP_DRAIN,
     STAMINA_REGEN,
     STAMINA_REGEN_DELAY_S,
@@ -111,7 +114,7 @@ class WebSession:
     # at night with many zombies. Debt is repaid gradually (0.4x rate) so the
     # client never outruns the server by more than ~1 tile, without ever
     # applying a counter-force.
-    time_debt: float = 0.0
+    time_debt: float = 0.0  # legacy, unused since the catch-up integration (kept for pickled sessions)
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -637,24 +640,21 @@ class GameManager:
                     continue
                 self._regen_player_beat(rt, player, now)
                 self._stamina_regen_beat(rt, player, now)
-                # Clamp dt so a stalled loop can never teleport the player
-                # through the world (swept collision assumes <= 1 tile steps).
+                self._eat_complete_beat(rt, player, now)
+                # NO LOST TIME: a stalled loop (heavy Discord renders at
+                # night, GC) used to clamp dt to 0.2s and the overrun was
+                # silently discarded — the server integrated LESS time than
+                # the client's real wall clock. The gap never came back, so
+                # the server's "true" position drifted behind the avatar the
+                # player saw: zombies bit the ghost trail ("linh hồn nhận
+                # sát thương"), reload "snapped" the player far back. Fix:
+                # split the elapsed time into at most 4 sweep-safe chunks
+                # (0.2s each, <= 1 tile per step) and integrate them ALL —
+                # nothing is thrown away, yet no single step can tunnel
+                # through a wall (swept collision assumes <= 1 tile steps).
                 raw_dt = max(0.0, now - sess.last_tick)
-                dt = min(0.2, raw_dt)
                 sess.last_tick = now
-                # Stall overrun becomes debt, repaid at 0.4x speed on later
-                # ticks (still clamped to the 0.2s sweep limit) instead of
-                # vanishing — the client's prediction must never integrate
-                # more time than the server eventually does, or the glide
-                # correction fights the player's movement direction.
-                if raw_dt > 0.2:
-                    sess.time_debt += raw_dt - 0.2
-                if sess.time_debt > 0.0:
-                    repay = min(sess.time_debt, dt * 0.4, 0.2)
-                    dt = min(0.2, dt + repay)
-                    sess.time_debt -= repay
-                    if sess.time_debt > 0.2:
-                        sess.time_debt = 0.2  # cap: never owes more than one sweep step
+                remaining = raw_dt
                 # SPRINT stamina gate: running drains stamina; at zero the
                 # player falls back to WALK speed (no teleport, no block —
                 # just slower). Walking never costs stamina.
@@ -662,20 +662,28 @@ class GameManager:
                 if eff_running and (sess.dx or sess.dy):
                     if player.stamina <= 0.0:
                         eff_running = False
-                    else:
+                while remaining > 1e-6:
+                    dt = min(0.2, remaining)
+                    remaining -= dt
+                    if eff_running:
                         self._drain_stamina(player, STAMINA_RUN_DRAIN * dt)
-                speed = WEB_RUN_SPEED if eff_running else WEB_WALK_SPEED
-                step_x = sess.dx * speed * dt
-                step_y = sess.dy * speed * dt
-                nx_f, ny_f = rt.collision.can_move_float(
-                    player.x_f, player.y_f, step_x, step_y
-                )
-                if (nx_f, ny_f) != (player.x_f, player.y_f):
-                    player.x_f, player.y_f = nx_f, ny_f
+                    speed = WEB_RUN_SPEED if eff_running else WEB_WALK_SPEED
+                    # EATING: chew while walking = half speed (user feature).
+                    if player.eating_until > now:
+                        speed *= EAT_SPEED_MULT
+                    step_x = sess.dx * speed * dt
+                    step_y = sess.dy * speed * dt
+                    nx_f, ny_f = rt.collision.can_move_float(
+                        player.x_f, player.y_f, step_x, step_y
+                    )
+                    if (nx_f, ny_f) != (player.x_f, player.y_f):
+                        player.x_f, player.y_f = nx_f, ny_f
+                        moved_any = True
+                # One int sync + save per tick (not per chunk).
+                if moved_any:
                     player.sync_int_from_float()
                     player.float_moved = True
                     player.direction = _web_direction(sess.dx, sess.dy)
-                    moved_any = True
                     self._schedule_save(rt, player)
             # SEPARATE realtime web pack (state.web_zombies, float positions):
             # driven by this same 20 Hz tick with the tick dt — movement
@@ -983,12 +991,23 @@ class GameManager:
             await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
 
     async def load_inventories(self, rt: ScenarioRuntime) -> None:
-        """Populate rt.inventories from the DB (call from async context)."""
+        """Populate rt.inventories from the DB (call from async context).
+        Uses the positional loader so the player's drag layout (including
+        empty slots) survives a restart — the dense-dict path auto-compacted
+        and reset every layout on re-login."""
         if self.db is None:
             return
-        inv = await load_all_inventory(self.db, rt.channel_id)
-        for uid, items in inv.items():
-            rt.inventories[uid] = Inventory(items)
+        from persistence.repositories import load_inventory_slots
+        slots_by_user = await load_inventory_slots(self.db, rt.channel_id)
+        if not slots_by_user:
+            return
+        for uid, slots in slots_by_user.items():
+            inv = Inventory()
+            # Overlay the persisted layout (slot indices preserved).
+            for i, cell in enumerate(slots[: inv.BAG_SLOTS]):
+                if cell:
+                    inv.slots[i] = cell
+            rt.inventories[uid] = inv
 
     def get_inventory(self, channel_id: int, user_id: int) -> Inventory:
         rt = self.get_runtime_for(channel_id, user_id)
@@ -1126,9 +1145,18 @@ class GameManager:
         return {"ok": True, "reason": "ok", "item_id": res["id"], "qty": res["qty"]}
 
     async def add_item(self, channel_id: int, user_id: int, item_id: str, qty: int = 1) -> None:
+        from game.purse import is_currency, purse_add
         inv = self.get_inventory(channel_id, user_id)
         inv.add(item_id, qty)
-        await self._persist_inventory(channel_id, user_id, item_id, inv.count(item_id))
+        # CURRENCY PURSE: coin/crystal never stays in the bag.
+        if is_currency(item_id) and purse_add(self, channel_id, user_id,
+                                              item_id, qty):
+            rt = self.get_runtime_for(channel_id, user_id)
+            if rt is not None:
+                self._schedule_save(rt, rt.state.get_player(user_id))
+        # FULL persist (not single-item): the new stack's slot position must
+        # survive a restart or the positional load re-compacts the layout.
+        await self._persist_full_inventory(channel_id, user_id, inv)
         self._notify_inventory_change(channel_id, user_id)
 
     async def use_item(self, channel_id: int, user_id: int, item_id: str):
@@ -1136,6 +1164,31 @@ class GameManager:
         p = rt.state.get_player(user_id)
         if p is None:
             return False, "no_player"
+        # ---- EATING flow (user feature) ----
+        # A consumable starts an EAT: the player moves at half speed for
+        # EAT_DURATION_S (chewing), then the heal lands. Anti-spam cooldown
+        # 1.5s (Kaetram EDIBLE_COOLDOWN). Full HP/mana rejects like Kaetram.
+        import time as _time
+        from game.items import ITEM_REGISTRY
+
+        item = ITEM_REGISTRY.get(item_id)
+        if item is not None and item.type == "consumable":
+            now = _time.monotonic()
+            if now - p.last_eat_at < EAT_COOLDOWN_S:
+                return False, "eat_cooldown"
+            heals_hp = "heal_hp" in item.effect and p.hp < p.max_hp
+            heals_mp = "heal_mp" in item.effect and p.mana < p.max_mana
+            if not heals_hp and not heals_mp:
+                return False, "already_full"
+            if self.get_inventory(channel_id, user_id).count(item_id) <= 0:
+                return False, "empty"
+            # Start the eat: slow movement + client particles begin NOW; the
+            # heal + stack decrement land when the chew completes.
+            p.last_eat_at = now
+            p.eating_item = item_id
+            p.eating_until = now + EAT_DURATION_S
+            return True, "eating"
+
         inv = self.get_inventory(channel_id, user_id)
         ok, reason = inv.use(item_id, p)
         if ok:
@@ -1151,6 +1204,66 @@ class GameManager:
                 await save_player(self.db, channel_id, p)
             self._notify_inventory_change(channel_id, user_id)
         return ok, reason
+
+    def _eat_complete_beat(self, rt: ScenarioRuntime, player, now: float) -> None:
+        """20 Hz beat: when an eat's chew window elapses, land the heal and
+        consume the item (the stack drains through the normal remove path)."""
+        if player.eating_until <= 0.0 or now < player.eating_until:
+            return
+        item_id = player.eating_item
+        player.eating_until = 0.0
+        player.eating_item = None
+        if not item_id:
+            return
+        from game.items import ITEM_REGISTRY
+
+        item = ITEM_REGISTRY.get(item_id)
+        inv = rt.inventories.get(player.user_id)
+        if item is None or inv is None or inv.count(item_id) <= 0:
+            return
+        # Apply the heal (same rules as apply_effect but through inv.use so
+        # the stack decrements atomically).
+        ok, _reason = inv.use(item_id, player)
+        if not ok:
+            return
+        if self.db is not None:
+            from persistence.repositories import save_player, save_inventory_order
+
+            self._schedule_save(rt, player)
+            self._schedule_inv_save(rt, player.user_id, inv)
+        self._notify_inventory_change(rt.channel_id, player.user_id)
+        # Remember the finished eat for the client's heal burst (snapshot
+        # payload reads this; short-lived, runtime-only).
+        import time as _t
+        player.last_heal_eat = (item_id, _t.monotonic())
+
+    def _schedule_inv_save(self, rt: ScenarioRuntime, user_id: int, inv) -> None:
+        """Persist one player's bag order (debounced through the same flush
+        task as the player save — reuse _schedule_save's task slot)."""
+        if self.db is None:
+            return
+        from persistence.repositories import save_inventory_order
+
+        async def _run() -> None:
+            await save_inventory_order(self.db, rt.channel_id, user_id, list(inv.items))
+
+        self._pending_inv = getattr(self, "_pending_inv", {})
+        self._pending_inv[(rt.channel_id, user_id)] = _run
+        if getattr(rt, "_inv_save_task", None) is None or rt._inv_save_task.done():
+            rt._inv_save_task = asyncio.create_task(self._flush_inv_saves(rt))
+
+    async def _flush_inv_saves(self, rt: ScenarioRuntime) -> None:
+        pending = getattr(self, "_pending_inv", {})
+        mine = [
+            coro for (cid, _uid), coro in pending.items() if cid == rt.channel_id
+        ]
+        for key in [k for k in pending if k[0] == rt.channel_id]:
+            pending.pop(key)
+        for coro in mine:
+            try:
+                await coro()
+            except Exception as e:  # noqa: BLE001 — save failure must not break the tick
+                log.warning("[SAVE] inventory order flush failed: %s", e)
 
     async def craft_item(self, channel_id: int, user_id: int, recipe_id: str):
         """Attempt one craft (UI adapter -> pure game/crafting.py logic).
@@ -1912,10 +2025,16 @@ class GameManager:
 
     async def _grant_drop_collections(self, rt, collections) -> None:
         """Persist bag changes from collected drop entities + notify hubs."""
+        from game.purse import is_currency, purse_add
         by_user: dict = {}
         for user_id, item_id, qty in collections:
             inv = self.get_inventory(rt.channel_id, user_id)
             inv.add(item_id, qty)
+            # CURRENCY PURSE: coin/crystal never sit in the bag — auto-
+            # converted into the player's counters (v5 panel bottom row).
+            if is_currency(item_id) and purse_add(
+                    self, rt.channel_id, user_id, item_id, qty):
+                self._schedule_save(rt, rt.state.get_player(user_id))
             by_user.setdefault(user_id, True)
             if self.db is not None:
                 from persistence.repositories import save_inventory_item
@@ -1928,10 +2047,14 @@ class GameManager:
             self._notify_inventory_change(rt.channel_id, user_id)
 
     async def _grant_zombie_drops(self, rt, user_id: int, drops) -> None:
+        from game.purse import is_currency, purse_add
         inv = self.get_inventory(rt.channel_id, user_id)
         changed = False
         for item_id, qty in drops:
             inv.add(item_id, qty)
+            if is_currency(item_id) and purse_add(
+                    self, rt.channel_id, user_id, item_id, qty):
+                self._schedule_save(rt, rt.state.get_player(user_id))
             changed = True
             if self.db is not None:
                 from persistence.repositories import save_inventory_item
