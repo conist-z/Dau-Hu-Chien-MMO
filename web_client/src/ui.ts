@@ -1009,12 +1009,12 @@ export class Hud {
       // bottom-anchored on its kit row and centered in the 18px column.
       // Positioned against the WRAP (kit coords) so no ancestor clipping can
       // hide it; `el` stays a transparent click hitbox.
-      const SCALE_UP = 0.85;
+      const SCALE_UP = 0.91;
       const iw = tab.w * SCALE_UP;
       const ih = tab.h * SCALE_UP;
       const colW = 18 * PIXEL_SCALE;
       const left = tab.boxX * PIXEL_SCALE + (colW - iw * PIXEL_SCALE) / 2;
-      const top = iconY * PIXEL_SCALE + tab.h * PIXEL_SCALE - ih * PIXEL_SCALE;
+      const top = iconY * PIXEL_SCALE + tab.h * PIXEL_SCALE - ih * PIXEL_SCALE - 3 * PIXEL_SCALE;
       icon.style.cssText =
         `left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;` +
         `width:${(iw * PIXEL_SCALE).toFixed(1)}px;height:${(ih * PIXEL_SCALE).toFixed(1)}px;`;
