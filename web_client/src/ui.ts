@@ -238,11 +238,8 @@ export class Hud {
       this.pendingCraftSnapshot = null;
       const r = this.recipes.find((x) => x.output.id === itemId);
       this.toast(`Đã chế tạo ${r?.name ?? itemId} ×${qty}`);
-      // AUTO-COLLECT: the output lands in the bag immediately (optimistic;
-      // the server's collect op + inventory delta confirm it). No extra
-      // click on the result slot needed anymore.
-      this.parkedResult = { id: itemId!, qty };
-      this.resultToBag(null);
+      // NO auto-collect: the output STAYS in the result slot — the player
+      // sees it there and drags/clicks it back into the bag themselves.
     } else {
       if (this.pendingCraftSnapshot) {
         this.matGrid = this.pendingCraftSnapshot;
@@ -701,11 +698,6 @@ export class Hud {
           this.fillMatGridFromBag(rec);
           this.renderInventory(); // bag cells that lost stacks repaint now
           this.renderCraftPanel();
-          // ONE-CLICK CRAFT: when the recipe is fully satisfied, CREATE
-          // fires immediately — no second press on the pixel button.
-          // (A failed craft restores the grid via craftResult, so this is
-          // safe to do optimistically.)
-          if (this.canCraftNow(rec)) this.pressCreate();
         });
       }
       this.invCraftWrap.appendChild(slot);
