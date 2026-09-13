@@ -299,7 +299,7 @@ const net = new Net({
       token.startsWith("guest:") ? "Khách (thử nghiệm)" : "Tài khoản Discord",
       avatarUrl,
     );
-    hud.showLobby("menu");
+    hud.showLobby(true);
     void token;
   },
   onLoginFail: (error) => {
@@ -604,21 +604,31 @@ hud.onQuickClick(() => {
   }, 10000);
 });
 
-// ----- lobby (main menu) wiring -----
+// ----- lobby (NEXT GAME layout) wiring -----
 
+// PLAY GAME: join the remembered server instantly, or fetch the list.
 hud.onLobbyPlay(() => {
-  hud.showLobbyView("servers");
+  const token = localStorage.getItem("web_token") ?? "";
+  const lastMap = localStorage.getItem("last_channel");
+  if (lastMap) {
+    hud.setLobbyStatus("Đang vào server…");
+    // Keep the channel id as a STRING: snowflakes exceed JS Number precision.
+    net.joinScenario(lastMap, token);
+  } else {
+    hud.setLobbyStatus("Đang lấy danh sách server…");
+    net.requestScenarioList();
+  }
+});
+
+hud.onLobbyServers(() => {
   hud.setLobbyStatus("Đang lấy danh sách server…");
   net.requestScenarioList();
 });
 
-hud.onLobbyEvents(() => hud.showLobbyView("events"));
-hud.onLobbySettings(() => hud.showLobbyView("settings"));
-
-hud.onLobbyBack(() => {
-  hud.showLobbyView("menu");
-  hud.setLobbyStatus(null);
-});
+hud.onLobbyEvents(() => hud.toast("Chưa có sự kiện nào đang diễn ra."));
+hud.onLobbySettings(() => hud.toast("Cài đặt sẽ ra mắt sau — hiện chỉnh trong game (Esc → Setting)."));
+hud.onLobbyHelp(() => hud.toast("Di chuyển bằng WASD/mũi tên, đập block bằng chuột. /help trong game để xem lệnh."));
+hud.onLobbyPlayers(() => hud.toast("Số người chơi hiển thị trên từng server ở cột phải."));
 
 hud.onLobbyLogout(() => {
   localStorage.removeItem("web_token");
@@ -626,13 +636,10 @@ hud.onLobbyLogout(() => {
   location.reload();
 });
 
-// scenario_list arrived: paint the server list inside the lobby view.
+// scenario_list arrived: clear the loading status once painted.
 const _paintScenarioList = hud.showScenarioList.bind(hud);
 hud.showScenarioList = (items, onPick) => {
-  if (hud.gateVisible) {
-    hud.showLobbyView("servers");
-    hud.setLobbyStatus(null);
-  }
+  hud.setLobbyStatus(null);
   _paintScenarioList(items, onPick);
 };
 

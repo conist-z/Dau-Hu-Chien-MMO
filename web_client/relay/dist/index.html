@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-DkiacYQK.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BV5OTTYZ.css">
+    <script type="module" crossorigin src="./assets/index-Bh__zwQT.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cf5f2jmN.css">
   </head>
   <body>
     <div id="game-root">
@@ -97,42 +97,47 @@
               <button id="btn-quick" type="button" class="gate-btn">⚡ Vào nhanh (thử nghiệm)</button>
             </div>
           </div>
-          <!-- Main lobby (game-menu style): title, profile card, vertical
-               button rail, server list view. Shown after login. -->
-          <div class="lobby hidden" id="lobby">
-            <div class="lobby-profile">
-              <span class="lobby-avatar" id="lobby-avatar"></span>
-              <span class="lobby-who">
-                <span id="lobby-name">—</span>
-                <span id="lobby-sub">—</span>
-              </span>
+          <!-- Main lobby (NEXT GAME style): logo + 3 columns — account |
+               play menu | server selection. Shown after login. -->
+          <div class="nx hidden" id="lobby">
+            <h1 class="nx-logo">ĐẬU HÙ<span>CHIẾN MMO</span></h1>
+            <div class="nx-cols">
+              <!-- LEFT: account -->
+              <section class="nx-panel">
+                <header class="nx-panel-h">Tài khoản</header>
+                <div class="nx-panel-b nx-account">
+                  <span class="nx-avatar" id="lobby-avatar"></span>
+                  <span class="nx-who">
+                    <span id="lobby-name">—</span>
+                    <span id="lobby-sub">—</span>
+                  </span>
+                  <button id="lobby-logout" type="button" class="nx-btn nx-btn-orange nx-logout">Đăng xuất</button>
+                </div>
+              </section>
+              <!-- CENTER: play menu -->
+              <section class="nx-panel">
+                <header class="nx-panel-h">Trò chơi</header>
+                <div class="nx-panel-b nx-menu">
+                  <button id="lobby-play" type="button" class="nx-btn nx-play">▶ CHƠI NGAY</button>
+                  <button id="lobby-servers-btn" type="button" class="nx-btn nx-btn-wide">SERVERS</button>
+                  <div class="nx-grid">
+                    <button id="lobby-events" type="button" class="nx-btn">SỰ KIỆN</button>
+                    <button id="lobby-settings" type="button" class="nx-btn">CÀI ĐẶT</button>
+                    <button id="lobby-help" type="button" class="nx-btn">TRỢ GIÚP</button>
+                    <button id="lobby-players" type="button" class="nx-btn">PLAYER</button>
+                  </div>
+                </div>
+              </section>
+              <!-- RIGHT: server selection -->
+              <section class="nx-panel" id="nx-server-panel">
+                <header class="nx-panel-h">Server Selection</header>
+                <div class="nx-panel-b">
+                  <div id="nx-banner" class="nx-banner ok">Đã đăng nhập</div>
+                  <div id="scenario-list" class="nx-servers"></div>
+                </div>
+              </section>
             </div>
-            <h1 class="lobby-title">ĐẬU HÙ
-              <span>CHIẾN MMO</span>
-            </h1>
-            <p class="lobby-tag">Chơi ngay trên web — nhân vật dùng chung với Discord</p>
-            <nav class="lobby-menu" id="lobby-menu">
-              <button id="lobby-play" type="button" class="lobby-btn primary">▶&nbsp; Chơi ngay</button>
-              <button id="lobby-events" type="button" class="lobby-btn">🎉&nbsp; Sự kiện</button>
-              <button id="lobby-settings" type="button" class="lobby-btn">⚙️&nbsp; Cài đặt</button>
-              <button id="lobby-logout" type="button" class="lobby-btn subtle">⏻&nbsp; Đăng xuất</button>
-            </nav>
-            <section class="lobby-servers hidden" id="lobby-servers">
-              <button id="lobby-back" type="button" class="lobby-back">← Quay lại</button>
-              <h2 class="lobby-h2">Chọn server</h2>
-              <div id="scenario-list"></div>
-            </section>
-            <section class="lobby-pane hidden" id="lobby-pane-events">
-              <button class="lobby-back" data-pane-back type="button">← Quay lại</button>
-              <h2 class="lobby-h2">Sự kiện</h2>
-              <p class="lobby-empty">Chưa có sự kiện nào đang diễn ra. Theo dõi kênh thông báo trên Discord!</p>
-            </section>
-            <section class="lobby-pane hidden" id="lobby-pane-settings">
-              <button class="lobby-back" data-pane-back type="button">← Quay lại</button>
-              <h2 class="lobby-h2">Cài đặt</h2>
-              <p class="lobby-empty">Cài đặt sẽ ra mắt sau — hiện chỉnh trong game (Esc → Setting).</p>
-            </section>
-            <p id="lobby-status" class="lobby-status" hidden></p>
+            <p id="lobby-status" class="nx-status" hidden></p>
           </div>
         </div>
       </div>

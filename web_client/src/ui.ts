@@ -140,15 +140,12 @@ export class Hud {
   private listEl = document.getElementById("scenario-list")!;
   private btnLogin = document.getElementById("btn-login") as HTMLButtonElement;
   private btnQuick = document.getElementById("btn-quick") as HTMLButtonElement;
-  // Lobby (main menu, post-login pre-join).
+  // Lobby (NEXT GAME 3-column layout, post-login pre-join).
   private lobbyEl = document.getElementById("lobby") as HTMLDivElement;
   private lobbyAvatar = document.getElementById("lobby-avatar") as HTMLSpanElement;
   private lobbyName = document.getElementById("lobby-name")!;
   private lobbySub = document.getElementById("lobby-sub")!;
-  private lobbyMenu = document.getElementById("lobby-menu") as HTMLElement;
-  private lobbyServers = document.getElementById("lobby-servers") as HTMLElement;
-  private lobbyPaneEvents = document.getElementById("lobby-pane-events") as HTMLElement;
-  private lobbyPaneSettings = document.getElementById("lobby-pane-settings") as HTMLElement;
+  private nxBanner = document.getElementById("nx-banner") as HTMLDivElement;
   private lobbyStatus = document.getElementById("lobby-status")!;
   private gatePanel = document.querySelector(".gate-panel") as HTMLDivElement;
   private invPanel = document.getElementById("inv-panel")!;
@@ -1050,24 +1047,17 @@ export class Hud {
     }
   }
 
-  /** Show the lobby, hiding the login panel. `view` picks the initial pane. */
-  showLobby(view: "menu" | "servers" = "menu"): void {
+  /** Show the lobby. `bannerOk` colours the server-selection banner. */
+  showLobby(bannerOk = true): void {
     this.gatePanel.classList.add("hidden");
     this.lobbyEl.classList.remove("hidden");
-    this.showLobbyView(view);
+    this.nxBanner.textContent = bannerOk ? "Đã đăng nhập" : "Chưa đăng nhập";
+    this.nxBanner.classList.toggle("off", !bannerOk);
   }
 
   hideLobby(): void {
     this.lobbyEl.classList.add("hidden");
     this.gatePanel.classList.remove("hidden");
-  }
-
-  /** Swap lobby content: rail menu | server list | events | settings. */
-  showLobbyView(view: "menu" | "servers" | "events" | "settings"): void {
-    this.lobbyMenu.classList.toggle("hidden", view !== "menu");
-    this.lobbyServers.classList.toggle("hidden", view !== "servers");
-    this.lobbyPaneEvents.classList.toggle("hidden", view !== "events");
-    this.lobbyPaneSettings.classList.toggle("hidden", view !== "settings");
   }
 
   setLobbyStatus(text: string | null): void {
@@ -1079,6 +1069,10 @@ export class Hud {
     document.getElementById("lobby-play")!.addEventListener("click", cb);
   }
 
+  onLobbyServers(cb: () => void): void {
+    document.getElementById("lobby-servers-btn")!.addEventListener("click", cb);
+  }
+
   onLobbyEvents(cb: () => void): void {
     document.getElementById("lobby-events")!.addEventListener("click", cb);
   }
@@ -1087,15 +1081,16 @@ export class Hud {
     document.getElementById("lobby-settings")!.addEventListener("click", cb);
   }
 
-  onLobbyLogout(cb: () => void): void {
-    document.getElementById("lobby-logout")!.addEventListener("click", cb);
+  onLobbyHelp(cb: () => void): void {
+    document.getElementById("lobby-help")!.addEventListener("click", cb);
   }
 
-  onLobbyBack(cb: () => void): void {
-    document.getElementById("lobby-back")!.addEventListener("click", cb);
-    for (const b of this.lobbyEl.querySelectorAll<HTMLButtonElement>("[data-pane-back]")) {
-      b.addEventListener("click", cb);
-    }
+  onLobbyPlayers(cb: () => void): void {
+    document.getElementById("lobby-players")!.addEventListener("click", cb);
+  }
+
+  onLobbyLogout(cb: () => void): void {
+    document.getElementById("lobby-logout")!.addEventListener("click", cb);
   }
 
   showScenarioList(items: { channel_id: number; map_name: string; players: number }[],
@@ -1111,7 +1106,12 @@ export class Hud {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "scenario-btn";
-      b.textContent = `${it.map_name} — ${it.players} người chơi`;
+      const name = document.createElement("span");
+      name.textContent = it.map_name;
+      const pop = document.createElement("span");
+      pop.className = "nx-pop";
+      pop.textContent = `${it.players} ▸`;
+      b.append(name, pop);
       b.addEventListener("click", () => onPick(it.channel_id));
       this.listEl.appendChild(b);
     }
