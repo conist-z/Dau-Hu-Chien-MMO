@@ -503,8 +503,12 @@ html, body {
   width: 100%; height: 100%;
   image-rendering: pixelated;
 }
-.craft-tab img.craft-tab-icon {
+/* Tab icons are appended directly to the panel wrap (kit coords, scaled up),
+   NOT inside .craft-tab — so match them standalone. */
+.craft-tab img.craft-tab-icon,
+#inv-craft-wrap > img.craft-tab-icon {
   position: absolute;
+  z-index: 3;
   image-rendering: pixelated;
   pointer-events: none;
   filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.45));
