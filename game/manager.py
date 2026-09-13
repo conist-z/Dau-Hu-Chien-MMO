@@ -1099,7 +1099,25 @@ class GameManager:
         player = rt.state.get_player(user_id)
         if player is None:
             return {"ok": False, "reason": "no_player", "item_id": None, "qty": 0}
-        cleaned = [(str(iid), int(qty)) for iid, qty in inputs if int(qty) > 0]
+        # Client shapes vary: web sends [{"id","qty"}, ...] dicts while the
+        # legacy path sends [(id, qty), ...] pairs. Normalise BOTH — iterating
+        # a dict entry as (iid, qty) unpacked its KEYS ("id","qty") and
+        # int("qty") raised ValueError, which used to KILL the whole relay
+        # socket (every web client disconnected + backoff-reconnected).
+        cleaned = []
+        for entry in inputs or []:
+            if isinstance(entry, dict):
+                iid, qty = entry.get("id"), entry.get("qty", 0)
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                iid, qty = entry[0], entry[1]
+            else:
+                continue
+            try:
+                q = int(qty)
+            except (TypeError, ValueError):
+                continue
+            if iid and q > 0:
+                cleaned.append((str(iid), q))
         if not cleaned:
             return {"ok": False, "reason": "empty_grid", "item_id": None, "qty": 0}
         recipe = crafting.find_recipe_by_inputs(cleaned)

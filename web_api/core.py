@@ -36,6 +36,7 @@ from web_api.protocol import (
     MSG_CRAFT_RESULT,
     MSG_ERROR,
     MSG_INPUT,
+    MSG_INV_DELTA,
     MSG_INV_OP,
     MSG_JOIN,
     MSG_PING,
@@ -108,7 +109,21 @@ class WebHub:
         frame = envelope.get("frame")
         if not isinstance(frame, dict):
             return
-        await self.handle_frame(cid, frame)
+        # ISOLATION (rule 20 — never swallow, but never let one bad frame kill
+        # the shared socket): a malformed gameplay frame (e.g. craft inputs in
+        # an unexpected shape raising ValueError deep in the manager) used to
+        # propagate into relay_client._pump, tearing down the MULTIPLEXED
+        # socket — every connected web client dropped and backoff-reconnected
+        # (2s, 4s, 8s...) — the "ms tăng vọt" spike on craft. The frame's
+        # error is reported to its own client; the socket lives on.
+        try:
+            await self.handle_frame(cid, frame)
+        except Exception:
+            log.exception("[WEB] frame %s from cid %s crashed; replying error", frame.get("type"), cid)
+            try:
+                await self.send_to_client(cid, {"type": MSG_ERROR, "code": "server_error"})
+            except Exception:  # noqa: BLE001 — the reply lane may be dead too
+                pass
 
     async def handle_frame(self, cid: int, frame: dict) -> None:
         conn = self.connections.get(cid)
@@ -120,7 +135,10 @@ class WebHub:
             return
         if ftype == "login":
             await self._handle_login(
-                cid, frame.get("code", ""), frame.get("redirect_uri", "")
+                cid,
+                frame.get("code", ""),
+                frame.get("redirect_uri", ""),
+                frame.get("code_verifier", ""),
             )
             return
         if ftype == "guest_login":
@@ -244,9 +262,11 @@ class WebHub:
             "display_name": sess.display_name,
         })
 
-    async def _handle_login(self, cid: int, code: str, redirect_uri: str) -> None:
+    async def _handle_login(
+        self, cid: int, code: str, redirect_uri: str, code_verifier: str = ""
+    ) -> None:
         try:
-            profile = await auth.verify_code(code, redirect_uri)
+            profile = await auth.verify_code(code, redirect_uri, code_verifier)
         except OAuthError as e:
             await self.send_to_client(cid, {
                 "type": "login_result", "ok": False, "error": str(e),
@@ -491,9 +511,9 @@ class WebHub:
                 await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_order"})
                 return
         elif op == "split":
+            slot = int(frame.get("slot", -1))
             inv = self.manager.get_inventory(cid, uid)
-            ok = inv.split_at(frame.get("item_id", ""))
-            if not ok:
+            if not inv.split_slot(slot):
                 await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_split"})
                 return
             if self.manager.db is not None:
@@ -508,7 +528,8 @@ class WebHub:
             return
         rt = self.manager.get_runtime_for(cid, uid)
         if rt is not None:
-            from web_api.snapshots import _inventory_payload, _inventory_version
+            from web_api.snapshots import (_craft_part, _inventory_payload,
+                                           _inventory_version)
 
             version = _inventory_version(rt, uid)
             sess.acked_inv_version = version
@@ -516,52 +537,100 @@ class WebHub:
                 "type": MSG_INV_DELTA,
                 "inv_version": version,
                 "inventory": _inventory_payload(rt, uid),
+                **_craft_part(rt, uid),
             })
 
     async def _handle_craft_op(self, sess: WebSession, frame: dict) -> None:
+        """Craft ops (server-side material grid — the real recipe table):
+
+        - ``mat_sync``: client placed/moved materials → the server moves the
+          delta between the bag and the grid (server-authoritative).
+        - ``craft``: consume the grid, park the output in the result slot.
+        - ``collect``: click the result slot → output goes into the bag.
+        """
         cid, uid = sess.channel_id, sess.user_id
-        placed = frame.get("inputs")
-        if placed is not None:
-            # Grid model: the client sends exactly what sits in the craft
-            # input grid; the server matches it to a recipe and consumes
-            # from the bag.
-            res = await self.manager.craft_from_inputs(cid, uid, placed)
+        op = frame.get("op", "craft")
+        rt = self.manager.get_runtime_for(cid, uid)
+        # DIAG (temporary): every craft op is visible in the panel console —
+        # confirms the frame arrived, which branch ran, and the verdict.
+        print(f"[CRAFT] uid={uid} op={op} frame_keys={sorted(frame.keys())}",
+              flush=True)
+
+        if op == "mat_sync":
+            await self.manager.mat_sync(cid, uid, frame.get("grid", []))
+            if rt is not None:
+                from web_api.snapshots import (_craft_part,
+                                               _inventory_payload,
+                                               _inventory_version)
+
+                version = _inventory_version(rt, uid)
+                sess.acked_inv_version = version
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_INV_DELTA,
+                    "inv_version": version,
+                    "inventory": _inventory_payload(rt, uid),
+                    **_craft_part(rt, uid),
+                })
+            return
+
+        if op == "craft":
+            # Local-grid model: the client sends the exact material multiset
+            # it held in its (client-local) grid; the server validates against
+            # the REAL bag and consumes there. A legacy empty "craft" op falls
+            # back to the server-side grid buffer (older clients).
+            inputs = frame.get("inputs")
+            if inputs:
+                res = await self.manager.craft_from_inputs(cid, uid, inputs)
+            else:
+                res = await self.manager.craft_from_grid(cid, uid)
+            print(f"[CRAFT] verdict={res}", flush=True)
             await self.send_to_client_conn(sess, {
                 "type": MSG_CRAFT_RESULT,
                 "ok": res["ok"],
                 "reason": res["reason"],
-                "item_id": res["item_id"],
-                "qty": res["qty"],
+                "item_id": res.get("item_id"),
+                "qty": res.get("qty", 0),
             })
-            if res["ok"]:
-                rt = self.manager.get_runtime_for(cid, uid)
-                if rt is not None:
-                    from web_api.snapshots import _inventory_payload
-
-                    await self.send_to_client_conn(sess, {
-                        "type": MSG_INV_DELTA,
-                        "inventory": _inventory_payload(rt, uid),
-                    })
-            return
-        ok, reason, out_id, out_qty = await self.manager.craft_item(
-            cid, uid, frame.get("recipe_id", "")
-        )
-        await self.send_to_client_conn(sess, {
-            "type": MSG_CRAFT_RESULT,
-            "ok": ok,
-            "reason": reason,
-            "item_id": out_id,
-            "qty": out_qty,
-        })
-        if ok:
-            rt = self.manager.get_runtime_for(cid, uid)
             if rt is not None:
-                from web_api.snapshots import _inventory_payload
+                from web_api.snapshots import (_craft_part,
+                                               _inventory_payload,
+                                               _inventory_version)
 
+                version = _inventory_version(rt, uid)
+                if res["ok"]:
+                    sess.acked_inv_version = version
                 await self.send_to_client_conn(sess, {
                     "type": MSG_INV_DELTA,
+                    "inv_version": version,
                     "inventory": _inventory_payload(rt, uid),
+                    **_craft_part(rt, uid),
                 })
+            return
+
+        if op == "collect":
+            res = await self.manager.craft_collect(cid, uid)
+            if res["ok"]:
+                from web_api.snapshots import (_craft_part,
+                                               _inventory_payload,
+                                               _inventory_version)
+
+                if rt is None:
+                    return
+                version = _inventory_version(rt, uid)
+                sess.acked_inv_version = version
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_INV_DELTA,
+                    "inv_version": version,
+                    "inventory": _inventory_payload(rt, uid),
+                    **_craft_part(rt, uid),
+                })
+            else:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_ERROR, "code": res["reason"],
+                })
+            return
+
+        await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
 
     # ----- chat commands -----
 
