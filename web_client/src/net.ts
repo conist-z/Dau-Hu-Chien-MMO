@@ -154,6 +154,9 @@ export class Net {
     const redirect = cfg.redirect_uri ?? location.origin + location.pathname;
     const { verifier, challenge } = await this.makePkce();
     sessionStorage.setItem("pkce_verifier", verifier);
+    // Remember the exact redirect used for authorize — the token exchange
+    // MUST echo it byte-for-byte or Discord returns 400 invalid_grant.
+    sessionStorage.setItem("oauth_redirect", redirect);
     const params = new URLSearchParams({
       client_id: cfg.client_id,
       redirect_uri: redirect,
@@ -179,7 +182,7 @@ export class Net {
     this.send({
       type: "login",
       code,
-      redirect_uri: location.origin + location.pathname,
+      redirect_uri: sessionStorage.getItem("oauth_redirect") ?? location.origin + location.pathname,
       code_verifier: verifier,
     });
     return true;
@@ -279,9 +282,10 @@ export class Net {
     });
   }
 
-  /** Craft: consume the server-side material grid. */
-  craftFromGrid(): void {
-    this.send({ type: "craft_op", op: "craft" });
+  /** Craft: send the LOCAL material grid's exact multiset once — the server
+   *  validates against the real bag and consumes there. */
+  craftFromGrid(inputs?: { id: string; qty: number }[]): void {
+    this.send({ type: "craft_op", op: "craft", inputs: inputs ?? [] });
   }
 
   /** Collect the parked craft result into the bag. */
