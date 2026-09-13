@@ -181,6 +181,7 @@ const net = new Net({
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
+    hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
     hud.setClock(0);
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
@@ -214,6 +215,7 @@ const net = new Net({
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
+    hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
     hud.setNearStation(!!frame.near_station);
     // Death veil: server ignores our inputs while dead; the scene freezes
     // prediction and this overlay explains why (5s respawn).
@@ -286,6 +288,11 @@ const net = new Net({
     // inventory delta repaints the truth. Toasting them was the "bad other"
     // spam during fast drags.
     if (code === "bad_order" || code === "bad_split" || code === "bad_slot") {
+      return;
+    }
+    // Purse withdraw refused (empty counter or full bag): silent — the
+    // ghost already sprang back; a toast per drag-out would be noisy.
+    if (code === "purse_empty" || code === "bad_op") {
       return;
     }
     hud.toast(`Lỗi: ${code}`);
@@ -400,7 +407,20 @@ const net = new Net({
   },
 });
 
+// Consumable ids the right-click EAT applies to (server re-validates type
+// + stock; this set only routes the click so tools still place nothing).
+const EDIBLE_IDS = new Set([
+  "apple", "cooked_meat", "raw_meat", "potion_hp", "potion_mp",
+  "banana", "orange", "watermelon", "blueberry", "bread", "cheese", "carrot",
+]);
+
 // Drag item outside panel + left click = toss it into the world.
+// Purse drag-out: pull exactly ONE coin/crystal from the counter into the
+// bag (server op purse_withdraw — one unit per drag).
+hud.onPurseWithdraw = (itemId) => {
+  net.inventoryOp("purse_withdraw", { item_id: itemId });
+};
+
 hud.onThrow = (itemId, qty) => {
   // The stack visibly flies where the player faces (server spawns the drop
   // with a directional launch; the scene's 8-way selfDir is the label).
@@ -507,7 +527,13 @@ const input = new KeyboardInput({
     // no message). The client never sends place with a non-block held.
     const placeable = new Set((welcome?.blocks_catalog ?? []).map((b) => b.id));
     const held = hud.heldItem;
-    if (!tile || !held || !placeable.has(held)) return;
+    if (!tile || !held) return;
+    // CONSUMABLE in hand + right-click = EAT it (the chew + heal flow).
+    if (EDIBLE_IDS.has(held)) {
+      net.inventoryOp("use", { item_id: held });
+      return;
+    }
+    if (!placeable.has(held)) return;
     const target = scene.clampClickTile(tile);
     if (!target) {
       // Too far: still send so the server answers "Quá xa." honestly — but
