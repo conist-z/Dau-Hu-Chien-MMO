@@ -200,6 +200,16 @@ export class PaperdollBody {
   }
 }
 
+/** Keys whose Blob->Image decode is currently IN FLIGHT.
+ *
+ * The `textures.exists(key)` guard is synchronous but registration happens
+ * later in `img.onload` — two calls for the same key within that window
+ * (reconnect re-run, base arrival while weapon streams are pending) would
+ * BOTH pass the check and double-register, spamming Phaser's
+ * "Texture key already in use" warnings. This set closes that race.
+ */
+const pendingSheets = new Set<string>();
+
 /** Register the paperdoll textures from raw PNG bytes (asset pipeline). */
 export function registerPaperdollTextures(
   scene: Phaser.Scene,
@@ -214,18 +224,22 @@ export function registerPaperdollTextures(
     // key warns "already in use" and, worse, removing a texture that a live
     // doll sprite is rendering nulled its glTexture and killed the render
     // loop. Already present => skip (the bytes are identical anyway).
-    if (scene.textures.exists(key)) return;
+    if (scene.textures.exists(key) || pendingSheets.has(key)) return;
+    pendingSheets.add(key);
     // Phaser addSpriteSheet needs a Blob URL -> Image; build via DOM decode.
     const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
-      // Key cannot exist here (the exists-check above is the only gate and
-      // this key is registered exactly once), so addSpriteSheet always wins.
       scene.textures.addSpriteSheet(key, img, {
         frameWidth: entry.frame_w,
         frameHeight: entry.frame_h,
       });
+      pendingSheets.delete(key);
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      pendingSheets.delete(key); // allow a later retry
       URL.revokeObjectURL(url);
     };
     img.src = url;
@@ -238,7 +252,6 @@ export function registerPaperdollTextures(
 }
 
 /** Register ONE late-arriving weapon sheet (asset pipeline).
- *
  * The full registerPaperdollTextures runs once when base.png arrives, but
  * weapon sheets stream in AFTER it — and since the once-only guard
  * ("Texture key already in use" crash fix), a later re-run would skip them
@@ -252,9 +265,9 @@ export function registerWeaponSheet(
   bytes: Uint8Array,
 ): void {
   const entry = manifest.weapons[stem];
-  if (!entry) return;
-  const key = `pd-weapon-${stem}`;
-  if (scene.textures.exists(key)) return; // static asset: register once
+  if (!entry) return;    const key = `pd-weapon-${stem}`;
+    if (scene.textures.exists(key) || pendingSheets.has(key)) return; // static asset: register once
+    pendingSheets.add(key);
   const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
   const url = URL.createObjectURL(blob);
   const img = new Image();
@@ -263,6 +276,11 @@ export function registerWeaponSheet(
       frameWidth: entry.frame_w,
       frameHeight: entry.frame_h,
     });
+    pendingSheets.delete(key);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => {
+    pendingSheets.delete(key);
     URL.revokeObjectURL(url);
   };
   img.src = url;
