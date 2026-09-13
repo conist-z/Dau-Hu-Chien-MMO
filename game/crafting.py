@@ -40,6 +40,10 @@ class RecipeDef:
     output: Tuple[str, int]        # (item_id, qty)
     requires_table: bool = False
     description: str = ""
+    # UI catalog tab (web quick-craft filter): "tool" (công cụ/vũ khí),
+    # "decor" (trang trí + block: bàn chế tạo, lò nung, đuốc...), "usable"
+    # (dùng được: thuốc, đồ ăn...). Anything else defaults to "usable".
+    group: str = "usable"
 
 
 RECIPE_REGISTRY: Dict[str, RecipeDef] = {
@@ -60,6 +64,7 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         "crafting_table", "Bàn chế tạo", "🛠️",
         inputs=[("plank", 4)],
         output=("crafting_table", 1),
+        group="decor",
         description="Đặt ra đất, đứng gần để mở khóa công thức phức tạp.",
     ),
     # --- near a placed crafting table ---
@@ -82,6 +87,7 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         inputs=[("stone", 8)],
         output=("furnace", 1),
         requires_table=True,
+        group="decor",
         description="Nung nguyên liệu ở nhiệt độ cao.",
     ),
     # Torch by hand: stick + coal (the light-source block already exists).
@@ -89,6 +95,7 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         "torch", "Đuốc", "🕯️",
         inputs=[("stick", 1), ("coal", 1)],
         output=("torch", 4),
+        group="decor",
         description="Ánh sáng giữa đêm tối.",
     ),
 }
@@ -139,6 +146,7 @@ def _register_tool_recipes() -> None:
                 inputs=[],  # TODO: fill when the material chain lands
                 output=(rid, 1),
                 requires_table=True,
+                group="tool",
                 description=f"Công cụ {mats[mat]} bậc {"wood iron gold steel".split().index(mat) + 1} — công thức chưa mở.",
             )
 

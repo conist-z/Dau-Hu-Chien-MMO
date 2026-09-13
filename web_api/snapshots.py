@@ -257,6 +257,7 @@ def _recipes_payload() -> List[dict]:
             "inputs": [{"id": iid, "qty": qty} for iid, qty in r.inputs],
             "output": {"id": r.output[0], "qty": r.output[1]},
             "needs_table": r.requires_table,
+            "group": getattr(r, "group", "usable"),
             "description": r.description,
         }
         for r in RECIPE_REGISTRY.values()

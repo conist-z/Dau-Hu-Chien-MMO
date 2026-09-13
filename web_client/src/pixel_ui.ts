@@ -89,6 +89,36 @@ export const CRAFT_BUTTON = { x: 76, y: 69, w: 43, h: 13 };
 export const CRAFT_BTN = { normal: "ui/v5/atoms/create_btn.png" };
 // Description region: [133,21,54,87] — selected quick-craft recipe info.
 export const CRAFT_DESC = { x: 133, y: 21, w: 54, h: 87 };
+// ---- Top category tabs (Craft.json, z20, local bboxes PER VARIANT) ----
+// The kit ships three frame variants; each variant shows the trio with a
+// DIFFERENT tab lit — the lit tab swaps to green art AND lifts 6 kit px
+// (y 18 -> 12) while the resting tabs sit in the y=18 row (brown art).
+// Per-tab lit bboxes: tool [11,12] (frame3), decor [28,12] (frame2),
+// usable [43,12] (frame1); rest row y=18 for all three.
+export const CRAFT_TABS: {
+  group: "tool" | "decor" | "usable";
+  x: number; w: number; h: number;
+  yRest: number;    // resting row (dim, brown art)
+  yActive: number;  // lifted row (bright green art) — the lit tab
+  rest: string;     // brown art
+  lit: string;      // green art (cut from this tab's own variant)
+}[] = [
+  {
+    group: "tool", x: 11, w: 12, h: 13, yRest: 18, yActive: 12,
+    rest: "ui/v5/layers/craft_tab_tool_off.png",
+    lit: "ui/v5/layers/craft_tab_tool_active.png",
+  },
+  {
+    group: "decor", x: 28, w: 10, h: 13, yRest: 18, yActive: 12,
+    rest: "ui/v5/layers/craft_tab_decor_off.png",
+    lit: "ui/v5/layers/craft_tab_decor_active.png",
+  },
+  {
+    group: "usable", x: 43, w: 11, h: 13, yRest: 18, yActive: 12,
+    rest: "ui/v5/layers/craft_tab_usable_off.png",
+    lit: "ui/v5/layers/craft_tab_usable_active.png",
+  },
+];
 // Slot surfaces: LIGHT cell for quick-craft, DARK cell for materials.
 export const CRAFT_QUICK_CELL = "ui/v5/atoms/craft_input_cell.png";
 export const CRAFT_MAT_CELL = "ui/v5/atoms/craft_output_cell.png";

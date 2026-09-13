@@ -18,7 +18,7 @@ import type { InventoryPayload, RecipePayload } from "./protocol";
 import {
   CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_LAYERS, CRAFT_MAT_CELL,
   CRAFT_MAT_GRID, CRAFT_PANEL, CRAFT_QUICK_CELL, CRAFT_QUICK_GRID,
-  CRAFT_RESULT, CRAFT_RESULT_ATOM,
+  CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
   itemIconUrl, makeLayer, makeSlot, sizePanel, slotXY,
@@ -162,9 +162,17 @@ export class Hud {
 
   // ---- Quick-craft catalog SCROLL (mouse wheel over the LIGHT grid) ----
   // The 3×5 grid shows a WINDOW into the recipe list; `craftScroll` is the
-  // index of the first visible recipe. Scroll bounds are derived from the
-  // grid geometry itself (rows) — never hard-coded.
+  // index of the first visible recipe OF THE ACTIVE FILTER. Scroll bounds
+  // are derived from the grid geometry itself (rows) — never hard-coded.
   private craftScroll = 0;
+
+  // ---- Quick-craft category tabs (top-right icon trio) ----
+  // "all" = every recipe (no icon lit — the kit has no lit-"all" art, this
+  // IS the deselected mode). Clicking a tab filters; clicking the LIT tab
+  // again returns to "all" (double-click any icon = same thing: first click
+  // selects, second click on the same icon deselects).
+  private craftCategory: "all" | "tool" | "decor" | "usable" = "all";
+  private lastTabClick: { group: string; at: number } | null = null;
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
   // Server-driven emoji map (welcome.item_emojis): every item the player has
@@ -886,17 +894,53 @@ export class Hud {
     this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager").forEach((n) => n.remove());
     const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
+    // --- Category tabs (top, right above the material grid): the trio of
+    // pixel icons. Exactly ZERO or ONE tab is lit; zero = "all" mode.
+    this.invCraftWrap.querySelectorAll(".craft-tab").forEach((n) => n.remove());
+    for (const tab of CRAFT_TABS) {
+      const lit = this.craftCategory === tab.group;
+      const el = document.createElement("div");
+      el.className = "craft-tab" + (lit ? " lit" : "");
+      // EXACT kit bbox (Craft.json z20, local px × PIXEL_SCALE). The lit
+      // tab swaps to its own green art AND lifts to the y=12 row (rest
+      // row y=18) exactly as the variant frames draw it.
+      const y = lit ? tab.yActive : tab.yRest;
+      el.style.cssText =
+        `left:${tab.x * PIXEL_SCALE}px;top:${y * PIXEL_SCALE}px;` +
+        `width:${tab.w * PIXEL_SCALE}px;height:${tab.h * PIXEL_SCALE}px;`;
+      const bg = document.createElement("img");
+      bg.className = "slot-bg";
+      bg.src = lit ? tab.lit : tab.rest;
+      bg.draggable = false;
+      el.appendChild(bg);
+      el.title =
+        tab.group === "tool" ? "Công cụ / Vũ khí" :
+        tab.group === "decor" ? "Trang trí / Block" : "Đồ dùng được";
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        this.pressCraftTab(tab.group);
+      });
+      this.invCraftWrap.appendChild(el);
+    }
+
     // --- QUICK-CRAFT catalog (light 3×5, left; NOT draggable).
-    // Scrolling window: slot i shows recipes[craftScroll + i]; bounds are
-    // clamped so the window never shows past the recipe list.
+    // Scrolling window over the FILTERED list: slot i shows
+    // filtered[craftScroll + i]; bounds are clamped so the window never
+    // shows past the end of the list.
+    const list = this.filteredRecipes;
     this.clampCraftScroll();
     const scroll = this.craftScroll;
-    const totalRecipes = this.recipes.length;
+    const totalRecipes = list.length;
     const gridCells = CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows;
+    // Map a filtered-list index back to the real recipes[] index so the
+    // selection highlight and quick-fill keep working across filters.
+    const indexOf = (r: RecipePayload): number => this.recipes.indexOf(r);
     for (let i = 0; i < gridCells; i++) {
       const [x, y] = slotXY(CRAFT_QUICK_GRID, i);
-      const rIdx = scroll + i;
-      const rec = rIdx < totalRecipes ? this.recipes[rIdx] : undefined;
+      const rec = scroll + i < totalRecipes ? list[scroll + i] : undefined;
+      const rIdx = rec ? indexOf(rec) : -1;
       const haveAll = !!rec && this.canCraftNow(rec);
       const slot = makeSlot(CRAFT_QUICK_GRID.slotW, x, y, CRAFT_QUICK_CELL, {
         iconUrl: rec ? itemIconUrl(rec.output.id) : undefined,
@@ -984,6 +1028,30 @@ export class Hud {
 
     // --- Description region [133,21,54,87]: selected quick-craft info.
     this.invCraftWrap.appendChild(this.makeCraftDescription(sel));
+  }
+
+  /** A category tab was pressed. Clicking a NEW tab selects it (filter);
+   *  clicking the ALREADY-LIT tab again — or any tab within 400ms of the
+   *  first click on it (the user's "double-click deselects") — returns to
+   *  the ALL view (no tab lit). Selection is cleared when it falls outside
+   *  the new filter so the CREATE button/description never go stale. */
+  private pressCraftTab(group: "tool" | "decor" | "usable"): void {
+    const now = performance.now();
+    const dbl = this.lastTabClick &&
+      this.lastTabClick.group === group && now - this.lastTabClick.at < 400;
+    this.lastTabClick = { group, at: now };
+    const next = (dbl || this.craftCategory === group) ? "all" : group;
+    if (next === this.craftCategory && !dbl) return;
+    this.craftCategory = next;
+    this.craftScroll = 0; // new list: show it from the top
+    // Deselect when the selected recipe no longer matches the filter.
+    if (this.selectedQuick != null) {
+      const sel = this.recipes[this.selectedQuick];
+      if (!sel || (next !== "all" && (sel.group ?? "usable") !== next)) {
+        this.selectedQuick = null;
+      }
+    }
+    this.renderInventory();
   }
 
   /** Pure client preview of can_craft — the SERVER re-checks at craft time.
@@ -1593,14 +1661,20 @@ export class Hud {
     }
   }
 
-  // ----- Quick-craft catalog scrolling -----
+  // ----- Quick-craft catalog scrolling + category filter -----
+
+  /** The recipe list AFTER the active category filter ("all" = everything). */
+  private get filteredRecipes(): RecipePayload[] {
+    if (this.craftCategory === "all") return this.recipes;
+    return this.recipes.filter((r) => (r.group ?? "usable") === this.craftCategory);
+  }
 
   /** Highest valid scroll offset = index of the LAST possible window start.
    *  With more recipes than grid cells the window slides 0..(N - cells);
    *  when everything fits, the only valid offset is 0. */
   private get craftScrollMax(): number {
     const cells = CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows;
-    return Math.max(0, this.recipes.length - cells);
+    return Math.max(0, this.filteredRecipes.length - cells);
   }
 
   /** Keep the scroll window inside [0, max] (list size can change any time). */
@@ -1632,7 +1706,7 @@ export class Hud {
         mx < left || mx > right
       ) return;
       const cells = g.cols * g.rows;
-      if (this.recipes.length <= cells) return; // nothing to scroll
+      if (this.filteredRecipes.length <= cells) return; // nothing to scroll
       e.preventDefault();
       e.stopPropagation();
       // 1 wheel notch = 1 row of recipes — a predictable, pixel-grid feel.

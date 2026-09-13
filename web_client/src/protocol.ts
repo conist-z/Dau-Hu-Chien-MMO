@@ -201,6 +201,7 @@ export interface CraftPartPayload {
 }
 
 export interface RecipePayload {
+  group?: "tool" | "decor" | "usable";
   id: string;
   name: string;
   emoji: string;
