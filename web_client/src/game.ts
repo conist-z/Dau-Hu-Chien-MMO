@@ -45,9 +45,6 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
     rows: { atk: { right: [1, 6], up: [4, 4], down: [7, 4] }, walk: { right: [2, 3], up: [5, 4], down: [8, 4] }, idle: { right: [3, 2], up: [6, 4], down: [9, 4] } },
   },
 };
-const MOB_LABEL: Record<string, string> = {
-  zombie: "🧟", skeleton: "💀", spider: "🕷️", slime: "🟢", bat: "🦇", rat: "🐀",
-};
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // How long a client-optimistic place/break tile stays applied while we wait
 // for the action_result echo. Longer than one RTT (~300ms worst case) but
@@ -2111,14 +2108,9 @@ export class WorldScene extends Phaser.Scene {
         if (body instanceof Phaser.GameObjects.Image) {
           this.applyMobCell(body, 0, sheet.rows.idle.down[0], sheet.size, sheet.cellW, sheet.cellH);
         }
-        const label = this.add.text(
-          0, 24,
-          (MOB_LABEL[kindKey] ?? "🧟") + (hunter === "hunter" ? "!" : ""),
-          {
-            fontSize: "10px", color: "#ffffff",
-            stroke: "#000000", strokeThickness: 3,
-          },
-        ).setOrigin(0.5);
+        // No emoji label under mobs (user request): the sprite + hp bar are
+        // enough; the container still needs a placeholder for typing.
+        const label = this.add.text(0, 24, "", {});
         const hpBg = this.add.rectangle(0, -22, 28, 4, 0x000000, 0.6);
         const hpFill = this.add.rectangle(0, -22, 28, 4, 0x6fe26f).setOrigin(0.5);
         container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);
