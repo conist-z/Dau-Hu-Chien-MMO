@@ -610,7 +610,24 @@ class WebHub:
                 await save_inventory_order(
                     self.manager.db, cid, uid, list(inv.items))
         elif op == "use":
-            await self.manager.use_item(cid, uid, frame.get("item_id", ""))
+            # EAT (or use): the server validates and answers honestly — a
+            # refusal (full HP, cooldown, empty bag) must reach the client
+            # or the right-click looks dead ("bấm chuột phải không có gì xảy
+            # ra"). Message is Vietnamese, shown as a toast.
+            ok, reason = await self.manager.use_item(
+                cid, uid, frame.get("item_id", ""))
+            if not ok:
+                msgs = {
+                    "already_full": "Đã đầy máu/mana — không thể ăn thêm.",
+                    "eat_cooldown": "Đang ăn… đợi một chút đã!",
+                    "empty": "Không còn món đó trong túi.",
+                    "no_player": "Chưa vào game.",
+                    "not_consumable": "Vật phẩm này không ăn được.",
+                }
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR,
+                           "code": f"eat_{reason}",
+                           "message": msgs.get(reason, f"Không dùng được: {reason}")})
         elif op == "purse_deposit":
             # Drag a currency stack INTO the bag grid = bank it into the
             # purse (explicit deposit; the client's local preview already

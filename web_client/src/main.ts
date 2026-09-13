@@ -253,7 +253,7 @@ const net = new Net({
     // it here: the output must STAY in the result slot until collected.
   },
   onPush: (message) => hud.toast(message),
-  onError: (code) => {
+  onError: (code, message) => {
     // SESSION DESYNC RECOVERY: the client thinks it is joined but the
     // server disagrees (bot restarted, registry dropped, relay re-hub).
     // Symptom was "everything says Quá xa until F5". Soft path first:
@@ -293,6 +293,12 @@ const net = new Net({
     // Purse withdraw refused (empty counter or full bag): silent — the
     // ghost already sprang back; a toast per drag-out would be noisy.
     if (code === "purse_empty" || code === "bad_op") {
+      return;
+    }
+    // EAT refusals: the server has a real reason — show it (the eat
+    // right-click used to fail silently, looking like a dead button).
+    if (code.startsWith("eat_") && message) {
+      hud.toast(message);
       return;
     }
     hud.toast(`Lỗi: ${code}`);

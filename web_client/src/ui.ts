@@ -307,9 +307,9 @@ export class Hud {
       if (this.purseDrag) {
         const t = this.nearestDropTarget(e.clientX, e.clientY);
         if (t && t.from === "bag") {
-          const itemId = this.purseDrag;
+          const idx = t.index;
           this.endPurseDrag(false);
-          if (this.onPurseWithdraw) this.onPurseWithdraw(itemId, t.index);
+          this.endPurseDrag(true, idx); // optimistic: unit lands in idx NOW
           return;
         }
         this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
@@ -682,11 +682,14 @@ export class Hud {
       const onto = this.inventory.bag[index];
       const isPurseCell = !!onto && onto.id === d.stack.id;
       if (isPurseCell) {
+        // OPTIMISTIC deposit: clear the source stack, bump the counter —
+        // and do NOT syncBagOrder (the order we'd send contradicts the
+        // server's bag until purse_deposit lands → rebuild chaos).
         this.inventory.bag[d.index] = null;
         if (d.stack.id === "coin") this.purseCoins += d.stack.qty;
         else this.purseCrystals += d.stack.qty;
+        this.invVersion = -1; // next server delta reconciles totals
         this.renderHotbar();
-        this.syncBagOrder();
         this.renderInventory();
         this.toast(`Đã nạp ${d.stack.qty} ${d.stack.id === "coin" ? "xu" : "tinh thể"} vào ví`);
         if (this.onPurseDeposit) this.onPurseDeposit(d.stack.id, d.stack.qty);
@@ -1677,12 +1680,30 @@ export class Hud {
     this.updateDragGhost(e.clientX, e.clientY);
   }
 
-  private endPurseDrag(commit: boolean): void {
+  private endPurseDrag(commit: boolean, slot?: number): void {
     const itemId = this.purseDrag;
     this.purseDrag = null;
     this.purseGhost?.remove();
     this.purseGhost = null;
-    if (commit && itemId && this.onPurseWithdraw) this.onPurseWithdraw(itemId);
+    if (commit && itemId && this.onPurseWithdraw) {
+      // OPTIMISTIC withdraw: land the unit where the player chose NOW —
+      // without this the server delta's "gained" path tops up the first
+      // same-kind stack instead of the picked slot (the "xếp sai ô" bug).
+      if (slot !== undefined) {
+        const cell = this.inventory.bag[slot];
+        if (!cell) this.inventory.bag[slot] = { id: itemId, qty: 1 };
+        else if (cell.id === itemId) cell.qty += 1;
+      } else {
+        const free = this.inventory.bag.findIndex((b) => !b);
+        if (free >= 0) this.inventory.bag[free] = { id: itemId, qty: 1 };
+      }
+      if (itemId === "coin") this.purseCoins = Math.max(0, this.purseCoins - 1);
+      else this.purseCrystals = Math.max(0, this.purseCrystals - 1);
+      this.invVersion = -1; // next server delta reconciles totals
+      this.renderHotbar();
+      this.renderInventory();
+      this.onPurseWithdraw(itemId, slot);
+    }
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,

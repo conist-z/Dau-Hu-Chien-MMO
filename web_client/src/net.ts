@@ -17,7 +17,7 @@ export interface NetHandlers {
   onCraftState?: (matGrid: [string, number][], result: { id: string; qty: number } | null) => void;
   onCraftResult: (ok: boolean, reason: string, itemId: string | null, qty: number) => void;
   onPush: (message: string) => void;
-  onError: (code: string) => void;
+  onError: (code: string, message?: string) => void;
   onAssetData: (name: string, b64: string | null) => void;
   onLoginOk: (token: string, displayName: string, avatarUrl: string) => void;
   onLoginFail: (error: string) => void;
@@ -388,7 +388,7 @@ export class Net {
         this.handlers.onPush(frame.message);
         break;
       case "error":
-        this.handlers.onError(frame.code);
+        this.handlers.onError(frame.code, frame.message);
         break;
       case "asset_data":
         this.handlers.onAssetData(frame.name, frame.b64);
