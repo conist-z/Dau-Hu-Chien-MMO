@@ -15,6 +15,10 @@
 //   panel's own pixel style.
 
 import type { InventoryPayload, RecipePayload } from "./protocol";
+
+/** Purse currencies — must mirror game/purse.py CURRENCY_ITEM_IDS. */
+const CURRENCY_IDS = new Set(["coin", "crystal"]);
+const isCurrency = (id: string) => CURRENCY_IDS.has(id);
 import {
   CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_LAYERS, CRAFT_MAT_CELL,
   CRAFT_MAT_GRID, CRAFT_PANEL, CRAFT_QUICK_CELL, CRAFT_QUICK_GRID,
@@ -192,6 +196,8 @@ export class Hud {
   /** Set by main.ts: purse drag-out — pull ONE coin/crystal into the bag
    * (slot = target bag slot when dropped onto one, else undefined). */
   onPurseWithdraw: ((itemId: string, slot?: number) => void) | null = null;
+  /** Set by main.ts: deposit a currency stack into the purse. */
+  onPurseDeposit: ((itemId: string, qty: number) => void) | null = null;
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
@@ -667,6 +673,20 @@ export class Hud {
     const d = this.drag;
     this.endDrag();
     if (!d || (d.from === target && d.index === index)) return;
+    // PURSE DEPOSIT: dragging a currency stack anywhere into the bag grid
+    // banks it instantly (the counters tick up; the stack never "sits" in
+    // a slot). Server confirms via the next inv_delta + purse numbers.
+    if (d.from === "bag" && target === "bag" && isCurrency(d.stack.id)) {
+      this.inventory.bag[d.index] = null;
+      this.purseCoins += d.stack.id === "coin" ? d.stack.qty : 0;
+      this.purseCrystals += d.stack.id === "crystal" ? d.stack.qty : 0;
+      this.renderHotbar();
+      this.syncBagOrder();
+      this.renderInventory();
+      this.toast(`Đã nạp ${d.stack.qty} ${d.stack.id === "coin" ? "xu" : "tinh thể"} vào ví`);
+      if (this.onPurseDeposit) this.onPurseDeposit(d.stack.id, d.stack.qty);
+      return;
+    }
     if (d.from === "bag" && target === "bag") {
       this.moveBag(d.index, index);
     } else if (d.from === "mat" && target === "mat") {
@@ -978,7 +998,19 @@ export class Hud {
       icon.className = "craft-tab-icon";
       icon.src = lit ? tab.lit : tab.rest;
       icon.draggable = false;
-      el.appendChild(icon);
+      // Bigger display (user request): render the kit icon ~1.7x native,
+      // bottom-anchored so it grows upward within the box (stays crisp via
+      // image-rendering: pixelated).
+      const SCALE_UP = 1.7;
+      const iw = tab.w * SCALE_UP;
+      const ih = tab.h * SCALE_UP;
+      const elW = 18 * PIXEL_SCALE;
+      const elH = (lit ? 15 : 14) * PIXEL_SCALE;
+      const left = (elW - iw * PIXEL_SCALE) / 2;
+      const top = elH - ih * PIXEL_SCALE;
+      icon.style.cssText =
+        `left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;` +
+        `width:${(iw * PIXEL_SCALE).toFixed(1)}px;height:${(ih * PIXEL_SCALE).toFixed(1)}px;`;
       el.title =
         tab.group === "tool" ? "Công cụ / Vũ khí" :
         tab.group === "decor" ? "Trang trí / Block" : "Đồ dùng được";
