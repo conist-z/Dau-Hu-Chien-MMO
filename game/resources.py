@@ -257,6 +257,11 @@ def is_ore_kind(kind: str) -> bool:
     return kind in ORE_NODE_KINDS
 
 
+# Pickaxe swings to mine ONE rock, per pickaxe material (user tune 14/09:
+# wood = 12, NOT the generic pickaxe ladder's 5). Big rock scales 1.4x.
+ROCK_PICKAXE_HITS = {"wood": 12, "iron": 8, "gold": 5, "steel": 3}
+
+
 def _target_tile(player) -> Tuple[int, int]:
     """The square the player aims at: the Build-Mode aim cursor tile while one
     is active (the renderer highlights exactly this square), otherwise the
@@ -358,17 +363,19 @@ def apply_chop(state: GameState,
         return ActionResult(False, "too_hard")
 
     tool = parse_tool_id(tool_id) if tool_id else None
-    hits_fn = tool_mod.pickaxe_hits if ore else tool_mod.axe_hits
-    if tool is not None:
-        hits = hits_fn(tool.material)
+    if node.kind in ("rock_small", "rock_big"):
+        # Rocks use their OWN per-kind hit table (user tune 14/09: 12 swings
+        # with a WOOD pickaxe, 65 bare-hand) — NOT the generic pickaxe ladder
+        # (whose wood tier is 5). Each tier up still mines faster.
+        scale = 1.4 if node.kind == "rock_big" else 1.0
+        if tool is not None:
+            hits = round(ROCK_PICKAXE_HITS.get(tool.material, 12) * scale)
+        else:
+            hits = round((65 if node.kind == "rock_small" else 65 * 1.4))
     else:
-        # Bare hands / no tool of the family: the grind tier. For mineable
-        # rocks the user tune 14/09 applies: 65 bare-hand swings on a small
-        # rock (scaled 1.4x for big ones); ore keeps its base hits.
-        if node.kind == "rock_small":
-            hits = 65
-        elif node.kind == "rock_big":
-            hits = 91  # round(65 * 1.4)
+        hits_fn = tool_mod.pickaxe_hits if ore else tool_mod.axe_hits
+        if tool is not None:
+            hits = hits_fn(tool.material)
         else:
             hits = NODE_DEFS[node.kind].hits
 
