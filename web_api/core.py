@@ -841,7 +841,7 @@ class WebHub:
         if cmd == "help":
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin)",
+                "message": "Lệnh: /help, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
             })
         elif cmd == "weather":
             rt = self.manager.get_runtime(sess.channel_id)
@@ -855,6 +855,8 @@ class WebHub:
             await self._cmd_time(sess, args)
         elif cmd == "give":
             await self._cmd_give(sess, args)
+        elif cmd == "spawnmob":
+            await self._cmd_spawnmob(sess, args)
         else:
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Lệnh không rõ: /{cmd}",
@@ -1020,6 +1022,54 @@ class WebHub:
             rt.weather_manual = True
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"Đã đổi thời tiết: {args[0]}",
+        })
+
+    async def _cmd_spawnmob(self, sess: WebSession, args: List[str]) -> None:
+        """Admin /spawnmob: force-spawn night mobs near the player for testing.
+
+        Usage: /spawnmob [kind] [qty]. kind ∈ zombie|skeleton|spider|slime|
+        bat|rat (default zombie); qty 1-10 (default 1). Spawns land in the
+        normal ring around the player (8-18 tiles, walkable), regardless of
+        the night gate or the population cap.
+        """
+        if not await self._is_web_admin(sess):
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Chỉ admin mới được gọi quái.",
+            })
+            return
+        from game.zombies import MOB_KINDS
+
+        kind = args[0].lower() if args else "zombie"
+        if kind not in MOB_KINDS:
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH,
+                "message": "Dùng: /spawnmob <" + "|".join(MOB_KINDS) + "> [1-10]",
+            })
+            return
+        try:
+            qty = max(1, min(10, int(args[1]))) if len(args) > 1 else 1
+        except ValueError:
+            qty = 1
+        rt = self.manager.get_runtime(sess.channel_id)
+        if rt is None:
+            return
+        async with rt.lock:
+            import random as _random
+
+            from game.zombies import web_spawn_one as _spawn
+
+            rng = _random.Random()
+            spawned = 0
+            players = [
+                p for p in rt.state.get_visible_players()
+                if getattr(p, "alive", True) and getattr(p, "is_web", False)
+            ]
+            for _ in range(qty):
+                if _spawn(rt.state, rt.collision, players, rng) is not None:
+                    spawned += 1
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH,
+            "message": f"Đã gọi {spawned}/{qty} quái ({kind}). Đi đêm hoặc /time 22:00 để chúng hoạt động.",
         })
 
     async def _is_web_admin(self, sess: WebSession) -> bool:

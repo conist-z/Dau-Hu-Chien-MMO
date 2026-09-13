@@ -96,14 +96,16 @@ export interface PlayersManifest {
   scale?: number;
 }
 
-// Web-pack zombie (realtime float mover, separate from the Discord turn
-// pack): [id, x, y, hp, max_hp, kind, facing, anim]. Float x/y = tile units
-// for 60 fps interpolation; facing = N/S/E/W/NE/NW/SE/SW; anim =
-// "walk"|"idle"|"atk" cuts the matching row/frame from the local sheet copy
-// (Kaetram 5 cols x 9 rows of 32px: row 0 atk 5f, row 1 walk 4f, row 2
-// idle 2f) — never the whole stretched sheet.
+// Web-pack night mob (realtime float mover, separate from the Discord turn
+// pack): [id, x, y, hp, max_hp, kind, hunter, facing, anim, anim_t?].
+// Float x/y = tile units for 60 fps interpolation; kind = mob kind
+// (zombie|skeleton|spider|slime|bat|rat) picking the sprite sheet; hunter =
+// "hunter" when the mob relentlessly chases; facing = N/S/E/W/NE/NW/SE/SW;
+// anim = "walk"|"idle"|"atk" cuts the matching row/frame from the local
+// sheet copy (Kaetram 5-col x 9-row 32px layout) — never the whole sheet.
 export type WebZombiePayload = [
   string, number, number, number, number, string, string, string,
+  string?, // hunter: "hunter" when this mob is a relentless chaser
   number?, // anim_t: server anim start (seconds, monotonic) — re-arms atk
 ];
 

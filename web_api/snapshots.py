@@ -63,7 +63,8 @@ def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
 
 
 def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
-    """WEB-pack zombies: [id, x, y, hp, max_hp, kind, facing, anim, anim_t].
+    """WEB-pack mobs: [id, x, y, hp, max_hp, kind, hunter, facing, anim,
+    anim_t].
 
     Float x/y (tile units) so the client interpolates smoothly at 60 fps.
     facing (N/S/E/W/NE/NW/SE/SW) + anim ("walk"|"idle"|"atk") are
@@ -82,7 +83,8 @@ def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
                 round(z.y_f, 3),
                 int(z.hp),
                 int(z.max_hp),
-                "hunter" if getattr(z, "hunter", False) else "walker",
+                str(getattr(z, "kind", "zombie") or "zombie"),
+                "hunter" if getattr(z, "hunter", False) else "",
                 str(getattr(z, "facing", "S")),
                 str(getattr(z, "anim", "idle")),
                 round(float(getattr(z, "anim_t", 0.0)), 3),

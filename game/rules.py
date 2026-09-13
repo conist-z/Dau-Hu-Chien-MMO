@@ -17,6 +17,7 @@ from game.weather import WeatherState, compute_modifiers
 from game.zombies import (
     BARE_HAND_ATTACK_DAMAGE,
     ZOMBIE_DROP_TABLE,
+    mob_drop_table,
     remove_zombie,
 )
 
@@ -179,13 +180,15 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
         drops = []
         if defeated:
             remove_web_zombie(state, target_id)
-            # Slain zombie: loot pops out as drop entities at the corpse —
-            # the killer (or anyone) walks over to vacuum it up.
+            # Slain mob: loot pops out as drop entities at the corpse —
+            # the killer (or anyone) walks over to vacuum it up. Drops are
+            # themed per mob kind (web_hit path — mob attribute kind).
             from game.drops import spawn_drops
 
             import random
             rolled = [
-                (item_id, qty) for item_id, chance, qty in ZOMBIE_DROP_TABLE
+                (item_id, qty)
+                for item_id, chance, qty in mob_drop_table(getattr(best, "kind", "zombie"))
                 if random.random() < chance
             ]
             if rolled:
@@ -229,7 +232,8 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
 
         import random
         rolled = [
-            (item_id, qty) for item_id, chance, qty in ZOMBIE_DROP_TABLE
+            (item_id, qty)
+            for item_id, chance, qty in mob_drop_table(getattr(zombie, "kind", "zombie"))
             if random.random() < chance
         ]
         if rolled:
