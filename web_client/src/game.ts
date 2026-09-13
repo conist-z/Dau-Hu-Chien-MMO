@@ -25,7 +25,7 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
     rows: { atk: { right: [0, 4], up: [3, 5], down: [6, 4] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
   },
   skeleton: {
-    texKey: "mob-skeleton", size: 48, cellW: 48, cellH: 48,
+    texKey: "mob-skeleton", size: 58, cellW: 48, cellH: 48,
     rows: { atk: { right: [0, 3], up: [3, 3], down: [6, 3] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 3], down: [8, 3] } },
   },
   spider: {
@@ -33,7 +33,7 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
     rows: { atk: { right: [7, 2], up: [6, 2], down: [4, 2] }, walk: { right: [3, 5], up: [2, 5], down: [0, 5] }, idle: { right: [3, 1], up: [2, 1], down: [0, 1] } },
   },
   slime: {
-    texKey: "mob-slime", size: 40, cellW: 32, cellH: 32,
+    texKey: "mob-slime", size: 48, cellW: 32, cellH: 32,
     rows: { atk: { right: [0, 5], up: [3, 5], down: [6, 5] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
   },
   bat: {
