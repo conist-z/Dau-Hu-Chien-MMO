@@ -251,13 +251,15 @@ html, body {
 }
 .inv-close:hover { color: #fff; }
 
-/* Pixel close buttons (V5 kit 0090 9×9 component): cover the X painted
-   into each frame exactly, brighten on hover, sink on press. */
+/* Pixel close buttons (V5 kit 0091 5×5 component): cover the X painted
+   into each frame exactly, brighten on hover, sink on press. The button
+   hit area is larger than the glyph (15×15 visual box centered on the
+   5×5 glyph at scale 3) so it is easy to click without covering art. */
 .panel-close {
   position: absolute;
-  width: 27px; height: 27px; /* 9×9 kit px × PIXEL_SCALE(3) */
-  background: url("/ui/v5/atoms/close_big.png") no-repeat;
-  background-size: 27px 27px;
+  width: 21px; height: 21px; /* 7×7 kit px hit area × PIXEL_SCALE(3) */
+  background: url("/ui/v5/atoms/close_small.png") no-repeat center;
+  background-size: 15px 15px; /* 5×5 glyph × 3 */
   image-rendering: pixelated;
   border: none; padding: 0;
   cursor: pointer;
@@ -265,12 +267,22 @@ html, body {
   transition: filter 0.08s ease-out, transform 0.08s ease-out;
 }
 .panel-close:hover {
-  filter: brightness(1.6) drop-shadow(0 0 4px rgba(255, 236, 150, 0.9));
+  filter: brightness(1.9) drop-shadow(0 0 4px rgba(255, 236, 150, 0.95));
 }
-.panel-close:active { transform: scale(0.88); }
-/* The inv X sits at kit (87,2); the craft X at (185,2). */
-#inv-items-wrap .panel-close { left: 261px; top: 6px; }
-#inv-craft-wrap .panel-close { left: 555px; top: 6px; }
+.panel-close:active { transform: scale(0.85); }
+/* Glyph (88,4) / (121,4): button box centers on the glyph center (90.5,6.5)
+   / (123.5,6.5) → left = cx*3 - 10.5, top = cy*3 - 10.5. */
+#inv-items-wrap .panel-close { left: 261px; top: 9px; }
+#inv-craft-wrap .panel-close { left: 360px; top: 9px; }
+#inv-items-craft .panel-close { left: 261px; top: 9px; }
+
+/* Tab-content swap animation: the wrap entering the layout slides in
+   (fade + slight rise); the leaving one just disappears (display:none). */
+.panel-wrap.tab-in { animation: tab-swap-in 0.18s ease-out; }
+@keyframes tab-swap-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* Pixel panel wrap: img fills wrap; slots are absolutely positioned INSIDE
    the wrap in SCALED px (slotXY × PIXEL_SCALE from pixel_ui.ts). */

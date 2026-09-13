@@ -199,21 +199,10 @@ export class Hud {
         }
         document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
-        const isCraft = tab.dataset.tab === "craft";
-        // Re-apply the per-panel layout with the freshly active tab.
-        this.invItemsWrap.classList.add("hidden");
-        this.invCraftWrap.classList.add("hidden");
-        this.invItemsCraftWrap.classList.add("hidden");
-        if (isCraft) {
-          this.invCraftWrap.classList.toggle("hidden", this.craftClosed);
-          this.invItemsCraftWrap.classList.toggle("hidden", this.invClosed);
-        } else {
-          this.invItemsWrap.classList.toggle("hidden", this.invClosed);
-        }
+        // Re-apply the per-panel layout; applyTabLayout also plays the
+        // tab-swap entrance animation on whichever wrap just appeared.
+        this.applyTabLayout();
         this.craftDetail.classList.toggle("hidden", true);
-        // Tab strip stays while either panel is open.
-        const tabsEl = this.craftTab.parentElement;
-        if (tabsEl) tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
         this.renderInventory();
       });
     });
@@ -443,19 +432,37 @@ export class Hud {
       tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
     }
     if (craftActive) {
-      this.invCraftWrap.classList.toggle("hidden", this.craftClosed);
-      this.invItemsCraftWrap.classList.toggle("hidden", this.invClosed);
+      const showCraft = this.visiblyShow(this.invCraftWrap, this.craftClosed);
+      const showBag = this.visiblyShow(this.invItemsCraftWrap, this.invClosed);
       this.invItemsWrap.classList.add("hidden");
+      // Tab-swap entrance animation on whichever wrap(s) just appeared.
+      if (showCraft) this.playTabIn(this.invCraftWrap);
+      if (showBag) this.playTabIn(this.invItemsCraftWrap);
     } else {
-      this.invItemsWrap.classList.toggle("hidden", this.invClosed);
+      const showBag = this.visiblyShow(this.invItemsWrap, this.invClosed);
       this.invCraftWrap.classList.add("hidden");
       this.invItemsCraftWrap.classList.add("hidden");
+      if (showBag) this.playTabIn(this.invItemsWrap);
     }
     if (slideInv && !this.invClosed) {
       // Craft closed while the inventory panel is visible: glide the bag
       // up into the freed space (the tab strip "chế đồ" -> stays).
       this.animateShow(this.invItemsCraftWrap, true);
     }
+  }
+
+  /** Show/hide a wrap; returns true when its visibility CHANGED to shown. */
+  private visiblyShow(el: HTMLElement, closed: boolean): boolean {
+    const wasHidden = el.classList.contains("hidden");
+    el.classList.toggle("hidden", closed);
+    return wasHidden && !closed;
+  }
+
+  /** Replay the tab-swap entrance animation (retrigger-safe). */
+  private playTabIn(el: HTMLElement): void {
+    el.classList.remove("tab-in");
+    void el.offsetWidth; // restart the keyframes
+    el.classList.add("tab-in");
   }
 
   /** A panel X was pressed: close THAT panel only (user rule), keep the

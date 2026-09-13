@@ -49,11 +49,11 @@ export const INV_TITLE = { x: 22, y: 3, w: 55, h: 8, file: "ui/v5/layers/inv_tit
 export const INV_COIN = { x: 12, y: 83, w: 10, h: 10, file: "ui/v5/layers/inv_coin.png" };
 export const INV_CRYSTAL = { x: 61, y: 83, w: 9, h: 11, file: "ui/v5/layers/inv_crystal.png" };
 export const INV_SLOT = "ui/v5/atoms/inv_cell.png";
-// The kit's 9×9 close component (0090_356_291), positioned EXACTLY over the
-// X painted into each frame (measured from the PNGs): inv top-right (87,2),
-// craft top-right (185,2). The interactive button covers the baked glyph.
-export const INV_CLOSE = { x: 87, y: 2, w: 9, h: 9, file: "ui/v5/atoms/close_big.png" };
-export const CRAFT_CLOSE = { x: 185, y: 2, w: 9, h: 9, file: "ui/v5/atoms/close_big.png" };
+// The kit's 5×5 close component (0091) — the X ACTUALLY painted into each
+// frame (measured from the PNGs by its dark-glyph bbox): inv X at (88,4),
+// craft X at (121,4). The interactive buttons cover those exact pixels.
+export const INV_CLOSE = { x: 88, y: 4, w: 5, h: 5, file: "ui/v5/atoms/close_small.png" };
+export const CRAFT_CLOSE = { x: 121, y: 4, w: 5, h: 5, file: "ui/v5/atoms/close_small.png" };
 
 // ---- Craft panel — EXACT craft-demo.html composition (V5 Frame3) ----
 export const CRAFT_PANEL = {
