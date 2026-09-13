@@ -18,18 +18,6 @@ let pendingRejoinChannel: string | null = null;
 
 // Quick-play guest login: derive a stable pseudo user_id from localStorage
 // so the same browser keeps the same identity/bag across sessions.
-function guestLogin(net: Net): void {
-  let guestId = localStorage.getItem("guest_id");
-  if (!guestId) {
-    guestId = String(900000000000000000 + Math.floor(Math.random() * 99999999999999999));
-    localStorage.setItem("guest_id", guestId);
-  }
-  localStorage.setItem("web_token", `guest:${guestId}`);
-  localStorage.setItem("web_name", `Khach-${guestId.slice(-4)}`);
-  // Server-side: the login frame accepts a guest token path (see core.py).
-  net.requestGuestJoin(guestId);
-}
-
 const hud = new Hud();
 const scene = new WorldScene();
 // Animated weather overlay (rain/snow/storm...) — plain canvas above the
@@ -246,21 +234,11 @@ const net = new Net({
       (code === "not_joined" && !net.isJoined);
     if (stale) {
       localStorage.removeItem("web_token");
-      // Only the GUEST path recovers silently (guest login is repeatable).
-      // A Discord session must NOT silently downgrade to guest — show the
-      // panel and let the user re-pick their path.
-      const wasGuest = !!localStorage.getItem("guest_id");
-      const lastMap = localStorage.getItem("last_channel");
-      if (wasGuest && lastMap) {
-        hud.showGate("Đang kết nối lại…");
-        net.requestGuestJoin(localStorage.getItem("guest_id")!);
-        pendingRejoinChannel = lastMap;
-        return;
-      }
-      // No remembered map OR Discord session: clean two-button panel.
-      hud.showGate("Phiên cũ đã hết — chọn cách vào game:");
+      // Quick login is disabled: a dead session always lands back on the
+      // login panel — no silent guest recovery anymore.
+      hud.showGate("Phiên cũ đã hết — đăng nhập lại:");
       hud.setLoginButton(true);
-      hud.setQuickButton(true);
+      hud.setQuickButton(true, "⚡ Vào nhanh (tắt)", false);
       return;
     }
     if (code === "scenario_missing_or_full") {
@@ -305,7 +283,7 @@ const net = new Net({
   },
   onLoginFail: (error) => {
     hud.setLoginButton(true);
-    hud.setQuickButton(true);
+    hud.setQuickButton(true, "⚡ Vào nhanh (tắt)", false);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
   onHeld: (_slot, itemId) => {
@@ -568,16 +546,10 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  // F5 must NEVER auto-login: always show the login panel and let the user
-  // pick (auto-quick-login on refresh was enraging). The lobby appears only
-  // after an explicit login in THIS tab session.
-  if (saved) {
-    hud.setLoginButton(true, "Tiếp: " + (localStorage.getItem("web_name") ?? "phiên cũ"));
-    hud.setQuickButton(true);
-  } else {
-    hud.setLoginButton(true);
-    hud.setQuickButton(true);
-  }
+  // Quick login is DISABLED (check-the-flow request 14/09): only the Discord
+  // path remains. F5 never auto-logins — the panel is always the first stop.
+  hud.setQuickButton(true, "⚡ Vào nhanh (tắt)", false);
+  hud.setLoginButton(true, saved ? "🔑 Tiếp: " + (localStorage.getItem("web_name") ?? "phiên cũ") : "🔑 Đăng nhập Discord");
   hud.showGate("Chọn cách vào game:");
 }
 
@@ -595,21 +567,7 @@ hud.onLoginClick(() => {
 });
 
 hud.onQuickClick(() => {
-  hud.setQuickButton(false, "Đang vào game…");
-  hud.setLoginButton(false);
-  hud.collapseGatePanel(); // login panel must yield — lobby replaces it
-  guestLogin(net);
-  // Guard: server không trả lời trong 10s -> báo lỗi thay vì treo.
-  window.setTimeout(() => {
-    if (!net.isJoined) {
-      hud.setQuickButton(true);
-      hud.setLoginButton(true);
-      hud.showGate(
-        "Server game chưa kết nối được relay (bot offline hoặc RELAY_URL sai). " +
-        "Thử lại sau — hoặc báo admin xem log panel có dòng [WEB] relay connected.",
-      );
-    }
-  }, 10000);
+  // Disabled — kept as a no-op guard (button is hidden).
 });
 
 // ----- lobby (NEXT GAME layout) wiring -----
