@@ -315,11 +315,19 @@ export class WorldScene extends Phaser.Scene {
     // so stale reconciliation state from the previous session must go — or
     // lastAckedSeq would shadow the new stream and the replay buffer would
     // never trim (inputs replayed forever = rubber-band freeze after
-    // reconnecting without a page reload).
+    // reconnecting without a page reload). Also reset the drift-recovery
+    // timer AND snap the prediction to the authoritative spawn: a rejoin
+    // after exit/re-enter previously carried the old predicted position in
+    // selfX/selfY, and while waiting for the first snapshot the drift-glide
+    // saw it as "desync" and dragged the avatar across the map — the
+    // accumulated-latency bug that re-fired every ~10 min of relogging.
     this.inputLog.length = 0;
     this.lastAckedSeq = -1;
     this.seqReplayActive = false;
     this.pendingDt = 0;
+    this.driftIdleMs = 0;
+    this.selfX = welcome.self.x;
+    this.selfY = welcome.self.y;
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
     // Paperdoll: stash manifest, fetch base + every mapped weapon sheet

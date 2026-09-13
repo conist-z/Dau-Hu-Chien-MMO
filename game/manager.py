@@ -612,8 +612,20 @@ class GameManager:
             for user_id, sess in list(sessions.items()):
                 player = rt.state.get_player(user_id)
                 if player is None:
+                    # CRITICAL dt hygiene: stamp the clock even for a session
+                    # whose player vanished. Leaving last_tick frozen meant
+                    # the NEXT movement tick computed raw_dt over the whole
+                    # vanished gap and teleported the server body along the
+                    # stale input vector — the accumulated-desync bug that
+                    # survived every previous fix (ghost hitbox tiles away).
+                    sess.last_tick = now
                     continue
                 if not player.alive:
+                    # Same stamp here: dead time is NOT movement time. The
+                    # old `continue` without a stamp let raw_dt swallow the
+                    # entire death window (5s+ respawn, or minutes when the
+                    # socket dropped silently) into one integration burst.
+                    sess.last_tick = now
                     # Self-heal a LOST respawn (bot restart, side world, or a
                     # dropped task): ``dead_until`` is ephemeral, so without
                     # this the player stayed "dead" forever — frozen in place
@@ -633,6 +645,20 @@ class GameManager:
                         moved_any = True
                         self._schedule_save(rt, player)
                     continue
+                # CAP the integration window: real time never freezes, but a
+                # session whose input socket silently died (tab closed without
+                # onclose, OS network switch) kept the OLD held vector in
+                # sess.dx/dy while `now` marched on. The old unbounded catch-up
+                # then integrated EVERY second since the socket died in one
+                # burst — the server body strolled up to speed*dt seconds away
+                # from the (freshly rejoined) client. 0.5s = 10 ticks: generous
+                # headroom for genuine event-loop hiccups, but a hard ceiling
+                # on how far any single desync can run. Rejoin always stamps a
+                # fresh last_tick (register_web_session), so a reconnect NEVER
+                # inherits stale time.
+                raw_dt = min(0.5, max(0.0, now - sess.last_tick))
+                sess.last_tick = now
+                remaining = raw_dt
                 if sess.dx == 0.0 and sess.dy == 0.0:
                     sess.last_tick = now
                     self._regen_player_beat(rt, player, now)
@@ -649,11 +675,11 @@ class GameManager:
                 # player saw: zombies bit the ghost trail ("linh hồn nhận
                 # sát thương"), reload "snapped" the player far back. Fix:
                 # split the elapsed time into at most 4 sweep-safe chunks
-                # (0.2s each, <= 1 tile per step) and integrate them ALL —
-                # nothing is thrown away, yet no single step can tunnel
-                # through a wall (swept collision assumes <= 1 tile steps).
-                raw_dt = max(0.0, now - sess.last_tick)
-                sess.last_tick = now
+                # (stalled loop) and integrate them ALL — nothing is thrown
+                # away, yet no single step can tunnel through a wall (swept
+                # collision assumes <= 1 tile steps). The window itself is
+                # hard-capped at 0.5s above: silently-dead sockets can never
+                # inject phantom movement time again.
                 remaining = raw_dt
                 # SPRINT stamina gate: running drains stamina; at zero the
                 # player falls back to WALK speed (no teleport, no block —
