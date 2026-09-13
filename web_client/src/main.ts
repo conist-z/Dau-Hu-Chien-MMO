@@ -292,23 +292,13 @@ const net = new Net({
       net.joinScenario(ch, token);
       return;
     }
-    // Everyone lands on the LOBBY (main menu). Guest "vào nhanh" keeps its
-    // auto-join shortcut (that is the point of quick-play); Discord users
-    // always see the menu and pick explicitly.
+    // Everyone lands on the LOBBY (main menu) — guests included. Quick-login
+    // is quick because it skips the OAuth dance, not because it skips the menu.
     hud.setLobbyProfile(
       displayName,
       token.startsWith("guest:") ? "Khách (thử nghiệm)" : "Tài khoản Discord",
       avatarUrl,
     );
-    if (token.startsWith("guest:")) {
-      const lastMap = localStorage.getItem("last_channel");
-      if (lastMap) {
-        hud.showGate("Đang vào map…");
-        // Keep the channel id as a STRING: snowflakes exceed JS Number precision.
-        net.joinScenario(lastMap, token);
-        return;
-      }
-    }
     hud.showLobby("menu");
     void token;
   },
