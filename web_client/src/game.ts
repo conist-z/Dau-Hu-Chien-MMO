@@ -1626,9 +1626,10 @@ export class WorldScene extends Phaser.Scene {
   private updateChew(): void {
     const self = this.selfMarker;
     if (!self) return;
-    // Mouth offset per facing (user-tuned): all directions drop 10px from
-    // the head anchor; front shifts +4 right, back shifts -3 left, sides 0.
-    const FRONT = { x: 4, y: 10 };
+    // Mouth offset per facing (user-tuned): back views keep their tuned
+    // spot; the other three axes sit 6px lower — front drops to +1 right,
+    // left-facing shifts 2px left, right-facing keeps its x.
+    const FRONT = { x: 1, y: 16 };
     const BACK = { x: -3, y: 10 };
     const dirOffsets: Record<string, { x: number; y: number }> = {
       SOUTH: FRONT,
@@ -1637,8 +1638,8 @@ export class WorldScene extends Phaser.Scene {
       NORTH: BACK,
       NE: BACK,
       NW: BACK,
-      EAST: { x: 0, y: 10 },
-      WEST: { x: 0, y: 10 },
+      EAST: { x: 0, y: 16 },
+      WEST: { x: -2, y: 16 },
     };
     const off = dirOffsets[this.selfDir] ?? FRONT;
     // Layer per facing: BACK views put the emitter BEHIND the player
