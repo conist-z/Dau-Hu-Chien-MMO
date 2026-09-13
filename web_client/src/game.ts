@@ -15,31 +15,33 @@ const PLAYER_SIZE = 22; // px in world space (tile = 32)
 interface MobSheetInfo {
   texKey: string;
   size: number;             // display size (px) on screen
+  cellW: number;            // sheet frame width (px, from Kaetram sprites.json)
+  cellH: number;            // sheet frame height (px)
   rows: Record<"atk" | "walk" | "idle", Record<"right" | "up" | "down", [number, number]>>; // [row, frameCount]
 }
 const MOB_SHEETS: Record<string, MobSheetInfo> = {
   zombie: {
-    texKey: "mob-zombie", size: 48,
+    texKey: "mob-zombie", size: 48, cellW: 32, cellH: 32,
     rows: { atk: { right: [0, 4], up: [3, 5], down: [6, 4] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
   },
   skeleton: {
-    texKey: "mob-skeleton", size: 48,
+    texKey: "mob-skeleton", size: 48, cellW: 48, cellH: 48,
     rows: { atk: { right: [0, 3], up: [3, 3], down: [6, 3] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 3], down: [8, 3] } },
   },
   spider: {
-    texKey: "mob-spider", size: 44,
+    texKey: "mob-spider", size: 44, cellW: 35, cellH: 35,
     rows: { atk: { right: [7, 2], up: [6, 2], down: [4, 2] }, walk: { right: [3, 5], up: [2, 5], down: [0, 5] }, idle: { right: [3, 1], up: [2, 1], down: [0, 1] } },
   },
   slime: {
-    texKey: "mob-slime", size: 40,
+    texKey: "mob-slime", size: 40, cellW: 32, cellH: 32,
     rows: { atk: { right: [0, 5], up: [3, 5], down: [6, 5] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
   },
   bat: {
-    texKey: "mob-bat", size: 40,
+    texKey: "mob-bat", size: 40, cellW: 32, cellH: 48,
     rows: { atk: { right: [0, 5], up: [3, 5], down: [6, 5] }, walk: { right: [1, 5], up: [4, 5], down: [7, 5] }, idle: { right: [2, 5], up: [5, 5], down: [8, 5] } },
   },
   rat: {
-    texKey: "mob-rat", size: 32,
+    texKey: "mob-rat", size: 32, cellW: 32, cellH: 32,
     rows: { atk: { right: [1, 6], up: [4, 4], down: [7, 4] }, walk: { right: [2, 3], up: [5, 4], down: [8, 4] }, idle: { right: [3, 2], up: [6, 4], down: [9, 4] } },
   },
 };
@@ -1264,7 +1266,7 @@ export class WorldScene extends Phaser.Scene {
             ? Math.min(len - 1, z.frame + 1) // lunge holds its last frame
             : (z.frame + 1) % Math.max(1, len); // walk/idle loop
         }
-        this.applyMobCell(z.body, z.frame, row, sheet.size);
+        this.applyMobCell(z.body, z.frame, row, sheet.size, sheet.cellW, sheet.cellH);
         z.body.setFlipX(fx);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
@@ -2067,11 +2069,15 @@ export class WorldScene extends Phaser.Scene {
    * setFrame gives every cell its own cut + origin — unlike setCrop on the
    * full-sheet Image, which kept the quad at sheet size and drew cells
    * offset sideways, shifting position on every frame change. */
-  private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number, size: number = PLAYER_SIZE): void {
+  /** Cut one animation cell from a mob sheet. Cell size comes from the
+   * MOB_SHEETS registry (Kaetram sprites.json) — sheets are NOT all 32px
+   * (skeleton 48, spider 35, bat 32x48), so a hard-coded 32 mis-cropped
+   * every non-zombie mob. */
+  private applyMobCell(img: Phaser.GameObjects.Image, col: number, row: number, size: number, cellW = 32, cellH = 32): void {
     const tex = this.textures.get(img.texture.key);
-    const perRow = Math.max(1, Math.floor(tex.source[0].width / 32));
+    const perRow = Math.max(1, Math.floor(tex.source[0].width / cellW));
     img.setFrame(row * perRow + col);
-    img.setScale(size / 32);
+    img.setScale(size / cellH);
   }
 
   /** A mob sprite PNG arrived via the relay: mark ready for upgrade. */
@@ -2103,7 +2109,7 @@ export class WorldScene extends Phaser.Scene {
         // Cut the FIRST idle frame immediately so a fresh spawn never shows
         // the whole stretched sheet for even one frame.
         if (body instanceof Phaser.GameObjects.Image) {
-          this.applyMobCell(body, 0, sheet.rows.idle.down[0], sheet.size);
+          this.applyMobCell(body, 0, sheet.rows.idle.down[0], sheet.size, sheet.cellW, sheet.cellH);
         }
         const label = this.add.text(
           0, 24,
@@ -2140,7 +2146,7 @@ export class WorldScene extends Phaser.Scene {
         z.body instanceof Phaser.GameObjects.Rectangle
       ) {
         const img = this.add.image(0, 0, sheet.texKey);
-        this.applyMobCell(img, 0, sheet.rows.idle.down[0], sheet.size);
+        this.applyMobCell(img, 0, sheet.rows.idle.down[0], sheet.size, sheet.cellW, sheet.cellH);
         z.container.add(img);
         z.container.sendToBack(img);
         z.body.destroy();
