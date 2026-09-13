@@ -30,6 +30,21 @@
 //
 // If the sheets fail to load (missing files) we fall back to the old
 // procedural canvas particles so weather never silently disappears.
+//
+// WEATHER TRANSITIONS (user rule 14/09 — "đổi trời phải có hiệu ứng, không
+// được đùng một phát đổi luôn"): every key change runs a ~3.2 s staged
+// transition driven by TWO concurrent slots (outgoing + incoming):
+//
+//   entering (clear -> rain/storm/snow/...):
+//     1. A CLOUD VEIL (dark blue-gray gradient, heavier at the top) ramps up
+//        first — the sky visibly darkens while nothing falls yet.
+//     2. A GUST BURST of fast wind dashes sweeps across (the wind picking up).
+//     3. The incoming weather's particles + tint fade in UNDER the veil.
+//     4. The veil dissolves into the weather's own mood tint.
+//   leaving (rain/... -> clear): the particles fade out first, then the veil
+//     lifts gradually — the sky brightens back instead of snapping.
+//   switching (rain -> snow): both render simultaneously, crossfaded, with a
+//     smaller veil pulse + gust bridging them.
 
 interface WeatherStyle {
   sheet: string;        // folder under ui/fx/
@@ -77,6 +92,27 @@ export const ANIMATED_WEATHER_KEYS = new Set(Object.keys(STYLES));
 // (_get_masters scales near 0.72, far 0.34).
 const NEAR_ALPHA = 0.72;
 const FAR_ALPHA = 0.34;
+
+// ---- transition tuning (user rule 14/09) -----------------------------------
+const TRANSITION_MS = 3200;   // full staged transition duration
+const VEIL_ENTER_PEAK = 0.30; // max cloud-darkening while weather rolls in
+const VEIL_LEAVE_PEAK = 0.16; // max veil while the sky clears
+const GUST_COUNT = 26;        // gust-burst dashes per transition
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+function smoothstep(x: number): number {
+  const t = clamp01(x);
+  return t * t * (3 - 2 * t);
+}
+/** Parse "rgba(r,g,b,a)" into components (weather tints are all rgba()). */
+function tintParts(tint: string): [number, number, number, number] {
+  const m = /rgba?\(([^)]+)\)/.exec(tint);
+  if (!m) return [0, 0, 0, 0];
+  const parts = m[1].split(",").map((s) => parseFloat(s));
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0, parts[3] ?? 0];
+}
 
 const FX_ROOT = "ui/fx";
 
@@ -249,10 +285,47 @@ interface Bolt {
   distant: boolean;   // ~35% distant flicker with no bolt (Discord parity)
 }
 
+// ---------------------------------------------------------------- slots
+
+/** One concurrently-rendering weather layer. A transition keeps TWO alive
+ * (outgoing fading out + incoming fading in); steady state keeps one. */
+interface WeatherSlot {
+  key: string;
+  style: WeatherStyle;
+  near: Sheet | null;
+  far: Sheet | null;
+  bolts: (HTMLImageElement | HTMLCanvasElement)[];
+  proceduralKind: string | null;
+  nearP: Particle[];
+  farP: Particle[];
+  nextBoltAt: number;
+  bolt: Bolt | null;
+}
+
+function makeSlot(key: string): WeatherSlot {
+  return {
+    key,
+    style: STYLES[key],
+    near: null,
+    far: null,
+    bolts: [],
+    proceduralKind: null,
+    nearP: [],
+    farP: [],
+    nextBoltAt: 0,
+    bolt: null,
+  };
+}
+
 export class WeatherFx {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private key: string | null = null;
+  // Transition slots: `outgoing` (fading out) + `current` (fading in / live).
+  private outgoing: WeatherSlot | null = null;
+  private current: WeatherSlot | null = null;
+  private transitionT0 = 0;
+  // Gust-burst dashes (transition-only; cleared when the transition ends).
+  private gust: Particle[] = [];
   private raf = 0;
   private w = 0;
   private h = 0;
@@ -260,20 +333,6 @@ export class WeatherFx {
   private running = false;
   private last = 0;
   private dt = 1 / 60;
-
-  // Sheet state (loaded once per key switch).
-  private near: Sheet | null = null;
-  private far: Sheet | null = null;
-  private bolts: (HTMLImageElement | HTMLCanvasElement)[] = [];
-
-  // Storm lightning events.
-  private nextBoltAt = 0;
-  private bolt: Bolt | null = null;
-
-  // Procedural fallback particles (fog / missing textures).
-  private nearP: Particle[] = [];
-  private farP: Particle[] = [];
-  private proceduralKind: string | null = null;
 
   constructor() {
     const canvas = document.createElement("canvas");
@@ -299,35 +358,43 @@ export class WeatherFx {
     parent.appendChild(this.canvas);
   }
 
-  /** Switch the active weather; no-op when the key is unchanged. */
+  /**
+   * Switch the active weather — now with a STAGED TRANSITION (user rule
+   * 14/09). The outgoing slot keeps rendering (fading out) while the
+   * incoming one loads and fades in; a cloud veil + gust burst bridge them.
+   * Repeated same-key calls (every snapshot) are no-ops.
+   */
   setWeather(key: string | null | undefined): void {
     const next = key && ANIMATED_WEATHER_KEYS.has(key) ? key : null;
-    if (next === this.key) return;
-    this.key = next;
-    this.bolt = null;
-    this.nearP = [];
-    this.farP = [];
-    this.proceduralKind = null;
+    if (next === (this.current?.key ?? null)) return;
+    // Collapse any in-flight transition: the previous incoming layer becomes
+    // the new outgoing one (the oldest layer simply gives up its ghost —
+    // acceptable for rapid admin weather flips).
+    this.outgoing = this.current;
+    this.transitionT0 = performance.now();
     if (next) {
-      void this.loadFor(next);
+      this.current = makeSlot(next);
+      void this.loadFor(this.current);
     } else {
-      this.stop();
+      this.current = null;
     }
+    this.spawnGust();
+    this.start();
   }
 
-  /** True when the current key draws an overlay (HUD could dim the icon). */
+  /** True while any weather overlay renders (HUD could dim the icon). */
   get active(): boolean {
-    return this.key !== null;
+    return this.current !== null || this.outgoing !== null;
   }
 
-  /** Load the sheets for a key (async; draws the fallback until ready). */
-  private async loadFor(key: string): Promise<void> {
-    const style = STYLES[key];
+  /** Load the sheets for a slot (async; draws the fallback until ready). */
+  private async loadFor(slot: WeatherSlot): Promise<void> {
+    const key = slot.key;
+    const style = slot.style;
     if (!style) return;
     if (style.fog) {
-      this.proceduralKind = FALLBACK_CFG.fog.kind;
-      this.seedProcedural(key);
-      this.start();
+      slot.proceduralKind = FALLBACK_CFG.fog.kind;
+      this.seedProcedural(slot, key);
       return;
     }
     // WIND parity fix: the raw CraftPix wind sheets tile as a dense chaotic
@@ -335,44 +402,42 @@ export class WeatherFx {
     // instead (_get_masters), so build the same masters here — synchronously,
     // no network, and with no procedural-fallback warm-up phase needed.
     if (key === "wind") {
-      this.proceduralKind = null;
-      this.near = buildWindMaster(0);
-      this.far = buildWindMaster(1);
-      this.start();
+      slot.proceduralKind = null;
+      slot.near = buildWindMaster(0);
+      slot.far = buildWindMaster(1);
       return;
     }
     // Warm the fallback immediately so the first raindrops are visible while
     // the sheets stream in (procedural is swapped out once they arrive).
-    this.proceduralKind = FALLBACK_CFG[key]?.kind ?? null;
-    this.seedProcedural(key);
-    this.start();
+    slot.proceduralKind = FALLBACK_CFG[key]?.kind ?? null;
+    this.seedProcedural(slot, key);
 
     const files = SHEET_FILES[style.sheet] ?? [];
     const loaded = (await Promise.all(files.map((n) => loadSheet(style.sheet, n))))
       .filter((s): s is Sheet => s !== null);
-    if (this.key !== key) return; // weather changed while loading
+    if (this.current !== slot) return; // weather changed while loading
     if (loaded.length === 0) {
       return; // keep the procedural fallback running
     }
-    this.proceduralKind = null;
-    this.nearP = [];
-    this.farP = [];
+    slot.proceduralKind = null;
+    slot.nearP = [];
+    slot.farP = [];
     // Near layer = the first frame; far layer = the next frame at a shifted
     // phase (the Discord renderer builds an independent far field; with the
     // real pack art a phase-shifted frame reads as the same organic parallax
     // without double-drawing one particle field).
-    this.near = loaded[0];
-    this.far = loaded[1] ?? loaded[0];
+    slot.near = loaded[0];
+    slot.far = loaded[1] ?? loaded[0];
     if (style.bolt) {
       const boltFiles = SHEET_FILES.thunder ?? [];
       const boltSheets = (await Promise.all(boltFiles.map((n) => loadSheet("thunder", n))))
         .filter((s): s is Sheet => s !== null);
-      if (this.key !== key) return;
-      this.bolts = boltSheets.map((s) => s.img);
+      if (this.current !== slot) return;
+      slot.bolts = boltSheets.map((s) => s.img);
     } else {
-      this.bolts = [];
+      slot.bolts = [];
     }
-    this.nextBoltAt = performance.now() + rand(1200, 4000);
+    slot.nextBoltAt = performance.now() + rand(1200, 4000);
   }
 
   // ---------------------------------------------------------------- engine
@@ -388,17 +453,33 @@ export class WeatherFx {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
-  private seedProcedural(key: string): void {
+  private seedProcedural(slot: WeatherSlot, key: string): void {
     const c = FALLBACK_CFG[key];
     if (!c) return;
     // Density scales with viewport area so ultrawide screens don't look
     // sparse and phones don't drown (reference area = 1280x800).
     const areaScale = Math.sqrt((this.w * this.h) / (1280 * 800));
     const clampScale = Math.max(0.55, Math.min(1.6, areaScale));
-    this.nearP = Array.from({ length: Math.round(c.n * clampScale) },
+    slot.nearP = Array.from({ length: Math.round(c.n * clampScale) },
       () => makeParticle(c, this.w, this.h, false));
-    this.farP = Array.from({ length: Math.round(c.f * clampScale) },
+    slot.farP = Array.from({ length: Math.round(c.f * clampScale) },
       () => makeParticle(c, this.w, this.h, true));
+  }
+
+  /** Spawn the transition gust burst: fast wind dashes sweeping across the
+   * whole viewport (the "wind picking up" cue of a changing sky). */
+  private spawnGust(): void {
+    this.gust = Array.from({ length: GUST_COUNT }, () => ({
+      x: rand(-this.w * 0.4, this.w),
+      y: rand(-20, this.h + 20),
+      vx: rand(700, 1250),
+      vy: rand(-50, 50),
+      len: rand(26, 64),
+      width: rand(1, 2.2),
+      alpha: rand(0.22, 0.55),
+      color: Math.random() < 0.5 ? "#f4f9ff" : "#dbe9fb",
+      phase: Math.random() * TAU,
+    }));
   }
 
   private start(): void {
@@ -413,49 +494,62 @@ export class WeatherFx {
       this.last = t;
       this.step(t);
       this.draw(t);
+      // Idle shutdown: transition finished and no live weather left.
+      if (!this.current && (t - this.transitionT0) >= TRANSITION_MS) {
+        this.running = false;
+        this.ctx.clearRect(0, 0, this.w, this.h);
+        cancelAnimationFrame(this.raf);
+        return;
+      }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
   }
 
-  private stop(): void {
-    this.running = false;
-    cancelAnimationFrame(this.raf);
-    this.ctx.clearRect(0, 0, this.w, this.h);
-  }
-
   private step(now: number): void {
-    if (!this.key) return;
+    const p = clamp01((now - this.transitionT0) / TRANSITION_MS);
     // Storm lightning events (Discord parity: 4-11 s cadence, ~35% distant).
-    const style = STYLES[this.key];
-    if (style?.bolt && this.bolts.length > 0) {
-      if (this.bolt && now > this.bolt.flashUntil) this.bolt = null;
-      if (!this.bolt && now >= this.nextBoltAt) {
-        this.bolt = this.spawnBolt(now);
-        this.nextBoltAt = now + rand(4000, 11000);
+    // Only the INCOMING slot fires bolts, and only once it is mostly faded in.
+    const slot = this.current;
+    if (slot && slot.style.bolt && slot.bolts.length > 0 && p > 0.55) {
+      if (slot.bolt && now > slot.bolt.flashUntil) slot.bolt = null;
+      if (!slot.bolt && now >= slot.nextBoltAt) {
+        slot.bolt = this.spawnBolt(slot, now);
+        slot.nextBoltAt = now + rand(4000, 11000);
       }
     }
     // Procedural particle movement (fog + fallback while sheets load).
-    if (this.proceduralKind) {
-      const snowLike = this.proceduralKind === "flake" || this.proceduralKind === "mist";
-      for (const p of [...this.nearP, ...this.farP]) {
-        p.x += p.vx * this.dt;
-        p.y += p.vy * this.dt;
+    for (const s of [this.outgoing, this.current]) {
+      if (!s || !s.proceduralKind) continue;
+      const snowLike = s.proceduralKind === "flake" || s.proceduralKind === "mist";
+      for (const pt of [...s.nearP, ...s.farP]) {
+        pt.x += pt.vx * this.dt;
+        pt.y += pt.vy * this.dt;
         if (snowLike) {
-          p.phase += this.dt * 1.6;
-          p.x += Math.sin(p.phase) * 12 * this.dt;
+          pt.phase += this.dt * 1.6;
+          pt.x += Math.sin(pt.phase) * 12 * this.dt;
         }
         const m = 60;
-        if (p.x > this.w + m) p.x = -m;
-        else if (p.x < -m) p.x = this.w + m;
-        if (p.y > this.h + m) p.y = -m;
-        else if (p.y < -m) p.y = this.h + m;
+        if (pt.x > this.w + m) pt.x = -m;
+        else if (pt.x < -m) pt.x = this.w + m;
+        if (pt.y > this.h + m) pt.y = -m;
+        else if (pt.y < -m) pt.y = this.h + m;
       }
+    }
+    // Gust burst: fast lateral sweep, culled off the right edge.
+    for (const g of this.gust) {
+      g.x += g.vx * this.dt;
+      g.y += g.vy * this.dt;
+    }
+    if (p >= 1) {
+      // Transition done: drop the outgoing ghost + the burst.
+      this.outgoing = null;
+      this.gust = [];
     }
   }
 
-  private spawnBolt(now: number): Bolt {
-    const img = this.bolts[Math.floor(Math.random() * this.bolts.length)];
+  private spawnBolt(slot: WeatherSlot, now: number): Bolt {
+    const img = slot.bolts[Math.floor(Math.random() * slot.bolts.length)];
     // Same 0.55-1.2 scale band as the Discord _add_bolt, grown a little for
     // full-screen viewports.
     const scale = rand(0.55, 1.2) * Math.max(1, this.h / 480);
@@ -475,32 +569,108 @@ export class WeatherFx {
 
   private draw(now: number): void {
     const ctx = this.ctx;
-    if (!this.key) return;
-    const style = STYLES[this.key];
-    if (!style) return;
     ctx.clearRect(0, 0, this.w, this.h);
+    const leaving = this.outgoing;
+    const entering = this.current;
+    const p = clamp01((now - this.transitionT0) / TRANSITION_MS);
+    // Slot intensities (STAGED, user rule 14/09):
+    //  - incoming starts at p≈0.18 — the veil darkens the sky FIRST, the
+    //    rain/snow only becomes visible while the screen is already gloomy.
+    //  - outgoing finishes fading at p≈0.72 — weather dies away before the
+    //    sky finishes brightening.
+    const inA = entering ? smoothstep((p - 0.18) / 0.82) : 0;
+    const outA = leaving ? 1 - smoothstep(p / 0.72) : 0;
 
-    // Mood tint first (under particles, above the game) — same tints as the
-    // Discord renderer's per-key _Style.tint.
-    if (style.tint) {
-      ctx.fillStyle = style.tint;
+    // ---- 1. Blended mood tint (under everything) ----
+    const lt = leaving ? tintParts(leaving.style.tint) : null;
+    const it = entering ? tintParts(entering.style.tint) : null;
+    if (lt || it) {
+      const lr = lt ? lt[0] * outA : 0;
+      const lg = lt ? lt[1] * outA : 0;
+      const lb = lt ? lt[2] * outA : 0;
+      const la = lt ? lt[3] * outA : 0;
+      const ir = it ? it[0] * inA : 0;
+      const ig = it ? it[1] * inA : 0;
+      const ib = it ? it[2] * inA : 0;
+      const ia = it ? it[3] * inA : 0;
+      // Premultiplied blend of the two tints (clear sky contributes nothing).
+      const a = Math.min(1, la + ia);
+      if (a > 0.002) {
+        const r = la + ia > 0 ? (lr + ir) / (la + ia) : 0;
+        const g = la + ia > 0 ? (lg + ig) / (la + ia) : 0;
+        const b = la + ia > 0 ? (lb + ib) / (la + ia) : 0;
+        ctx.fillStyle = `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a.toFixed(3)})`;
+        ctx.fillRect(0, 0, this.w, this.h);
+      }
+    }
+
+    // ---- 2. Cloud veil: the sky-darkening gradient ----
+    let veilA = 0;
+    if (entering && leaving) {
+      // Weather -> weather: a smaller bridging pulse.
+      veilA = VEIL_ENTER_PEAK * 0.6 * Math.sin(Math.PI * p);
+    } else if (entering) {
+      // Clear -> weather: triangle peaking mid-transition ("tối dần rồi mưa").
+      veilA = VEIL_ENTER_PEAK * (p < 0.5 ? p / 0.5 : 1 - (p - 0.5) / 0.5);
+    } else if (leaving) {
+      // Weather -> clear: veil starts low and lifts ("trời sáng dần lên").
+      veilA = VEIL_LEAVE_PEAK * Math.pow(1 - p, 1.4);
+    }
+    if (veilA > 0.004) {
+      const grad = ctx.createLinearGradient(0, 0, 0, this.h);
+      // Heavier at the top (clouds gather overhead first).
+      grad.addColorStop(0, `rgba(8,11,20,${veilA.toFixed(3)})`);
+      grad.addColorStop(0.55, `rgba(10,14,24,${(veilA * 0.72).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(13,17,28,${(veilA * 0.45).toFixed(3)})`);
+      ctx.fillStyle = grad;
       ctx.fillRect(0, 0, this.w, this.h);
     }
 
-    if (this.proceduralKind) {
-      this.drawProcedural();
-    } else if (this.near && this.far) {
-      this.drawSheets(style, now);
+    // ---- 3. Gust burst (bridges both directions) ----
+    if (this.gust.length > 0 && p < 0.85) {
+      const burstA = Math.sin((p / 0.85) * Math.PI);
+      for (const g of this.gust) {
+        ctx.globalAlpha = g.alpha * burstA;
+        ctx.strokeStyle = g.color;
+        ctx.lineWidth = g.width;
+        ctx.beginPath();
+        ctx.moveTo(g.x, g.y);
+        ctx.lineTo(g.x + g.len, g.y);
+        ctx.stroke();
+        ctx.globalAlpha = g.alpha * burstA / 3;
+        ctx.beginPath();
+        ctx.moveTo(g.x - g.len / 2, g.y);
+        ctx.lineTo(g.x, g.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     }
 
+    // ---- 4. Weather layers (outgoing fades, incoming builds) ----
+    if (leaving && outA > 0.01) {
+      this.drawSlot(leaving, outA, now);
+    }
+    if (entering && inA > 0.01) {
+      this.drawSlot(entering, inA, now);
+    }
+  }
+
+  /** Draw ONE weather slot at the given intensity multiplier (0..1). */
+  private drawSlot(slot: WeatherSlot, alpha: number, now: number): void {
+    const ctx = this.ctx;
+    if (slot.proceduralKind) {
+      this.drawProcedural(slot, alpha);
+    } else if (slot.near && slot.far) {
+      this.drawSheets(slot, alpha, now);
+    }
     // Storm bolt: real pack artwork + glow + brief ambient flash.
-    if (this.bolt && now < this.bolt.flashUntil) {
-      const b = this.bolt;
+    if (slot.bolt && now < slot.bolt.flashUntil) {
+      const b = slot.bolt;
       const age = now - (b.until - 300);
       const fade = Math.max(0, Math.min(1, 1 - age / 300));
       if (!b.distant && now < b.until) {
         ctx.save();
-        ctx.globalAlpha = 0.9 * fade;
+        ctx.globalAlpha = 0.9 * fade * alpha;
         // Soft glow behind the bolt sprite (Discord composites a Gaussian
         // blur of the bolt at ~0.9 alpha).
         ctx.shadowColor = "rgba(210,225,255,0.9)";
@@ -509,7 +679,7 @@ export class WeatherFx {
         ctx.restore();
       }
       // Ambient flash brightens the whole screen briefly (never a whiteout).
-      ctx.fillStyle = `rgba(226,236,255,${(0.10 * fade).toFixed(3)})`;
+      ctx.fillStyle = `rgba(226,236,255,${(0.10 * fade * alpha).toFixed(3)})`;
       ctx.fillRect(0, 0, this.w, this.h);
     }
   }
@@ -519,12 +689,13 @@ export class WeatherFx {
    * phase. Near layer scrolls at full speed; the far layer is phase-shifted
    * (+137px x like the Discord renderer) and fainter. Wind drifts RIGHT with
    * the far layer at 0.6x (Discord parity) at a different height. */
-  private drawSheets(style: WeatherStyle, now: number): void {
+  private drawSheets(slot: WeatherSlot, intensity: number, now: number): void {
     const ctx = this.ctx;
+    const style = slot.style;
     const dist = (now / 1000) * style.speedPx;
 
     const drawLayer = (sheet: Sheet, alpha: number, ox: number, oy: number): void => {
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = alpha * intensity;
       const w = sheet.w;
       const h = sheet.h;
       let y = (oy % h) - h;
@@ -544,24 +715,24 @@ export class WeatherFx {
       // Far layer drifts slower (0.6x parallax) phase-shifted 512px — same
       // numbers as the Discord _scroll_overlays wind branch. Both layers tile
       // the full viewport; the 96px far offset just de-correlates the rows.
-      drawLayer(this.far!, FAR_ALPHA, ox * 0.6 + 512, 96);
-      drawLayer(this.near!, NEAR_ALPHA, ox, 0);
+      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512, 96);
+      drawLayer(slot.near!, NEAR_ALPHA, ox, 0);
     } else {
       // Falling particles scroll DOWN (the paste origin grows with the
       // offset, exactly like the Discord _tile_paste).
       const oy = dist;
-      drawLayer(this.far!, FAR_ALPHA, 137, oy + this.far!.h / 3);
-      drawLayer(this.near!, NEAR_ALPHA, 0, oy);
+      drawLayer(slot.far!, FAR_ALPHA, 137, oy + slot.far!.h / 3);
+      drawLayer(slot.near!, NEAR_ALPHA, 0, oy);
     }
   }
 
-  /** Procedural layers (fog + texture-failure fallback). */
-  private drawProcedural(): void {
+  /** Procedural layers (fog + texture-failure fallback) at a given intensity. */
+  private drawProcedural(slot: WeatherSlot, intensity: number): void {
     const ctx = this.ctx;
-    const kind = this.proceduralKind!;
+    const kind = slot.proceduralKind!;
     const drawLayer = (layer: Particle[]): void => {
       for (const p of layer) {
-        ctx.globalAlpha = p.alpha;
+        ctx.globalAlpha = p.alpha * intensity;
         if (kind === "streak") {
           const vlen = Math.hypot(p.vx, p.vy) || 1;
           const ux = (p.vx / vlen) * p.len;
@@ -585,7 +756,7 @@ export class WeatherFx {
           const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.len);
           g.addColorStop(0, p.color);
           g.addColorStop(1, "rgba(0,0,0,0)");
-          ctx.globalAlpha = p.alpha * 0.5;
+          ctx.globalAlpha = p.alpha * 0.5 * intensity;
           ctx.fillStyle = g;
           ctx.beginPath();
           ctx.ellipse(p.x, p.y, p.len, p.width, 0, 0, TAU);
@@ -598,7 +769,7 @@ export class WeatherFx {
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(p.x + p.len, p.y);
           ctx.stroke();
-          ctx.globalAlpha = p.alpha / 3;
+          ctx.globalAlpha = (p.alpha * intensity) / 3;
           ctx.beginPath();
           ctx.moveTo(p.x - p.len / 2, p.y);
           ctx.lineTo(p.x, p.y);
@@ -607,8 +778,8 @@ export class WeatherFx {
       }
       ctx.globalAlpha = 1;
     };
-    drawLayer(this.farP);
-    drawLayer(this.nearP);
+    drawLayer(slot.farP);
+    drawLayer(slot.nearP);
   }
 }
 

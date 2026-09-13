@@ -121,6 +121,10 @@ export class WorldScene extends Phaser.Scene {
   /** dt accumulated since the last seq'd input was flushed (replay needs
    * per-input real dt; see setLocalInput / recordInputDt). */
   private pendingDt = 0;
+  /** Drift-recovery tracking: how long (ms) predicted pos has differed from
+   * the server pos by more than a tile with NO pending inputs. Persisting
+   * divergence = prediction desync → glide home (see applySnapshot). */
+  private driftIdleMs = 0;
   /** True once a snapshot with last_seq has arrived (server supports it). */
   private seqReplayActive = false;
   /** Wall-clock time of the last update() frame — feeds pendingDt. */
@@ -964,6 +968,15 @@ export class WorldScene extends Phaser.Scene {
       this.pendingDt = Math.min(0.25, this.pendingDt + (nowT - this.lastFrameT) / 1000);
     }
     this.lastFrameT = nowT;
+    // Drift-recovery tracker: measure how long the prediction has sat far
+    // from the server authority while idle. Movement (any pending input)
+    // resets it — divergence while ACTIVELY moving is normal echo lag.
+    if (this.seqReplayActive && this.inputLog.length === 0 && this.selfServerPos) {
+      const d = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
+      this.driftIdleMs = d > 1.2 ? this.driftIdleMs + this.frameDtSec * 1000 : 0;
+    } else {
+      this.driftIdleMs = 0;
+    }
     // Mouse tile + hover box derive FRESH each frame from the last cursor
     // position: the camera moves under a still cursor (follow lerp, tab
     // switch) and a tile cached at mousemove time would be stale.
@@ -2184,6 +2197,15 @@ export class WorldScene extends Phaser.Scene {
               this.selfX += this.freeX(this.selfX, this.selfY, sx);
               this.selfY += this.freeY(this.selfX, this.selfY, sy);
             }
+          } else if (this.driftIdleMs > 3000) {
+            // DRIFT RECOVERY: no pending inputs yet our predicted position
+            // has sat >1.2 tiles from the server's for 3+ seconds — the
+            // classic "everything is out_of_range until F5" desync (server
+            // pushed us / packet burst / collision mismatch). Trust the
+            // server: glide home at 25%/snapshot; ~0.2s of pull beats a
+            // reload. driftIdleMs keeps accumulating until convergence.
+            this.selfX += (this.selfServerPos.x - this.selfX) * 0.25;
+            this.selfY += (this.selfServerPos.y - this.selfY) * 0.25;
           }
         }
       }
