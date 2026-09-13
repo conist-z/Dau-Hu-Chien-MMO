@@ -784,12 +784,22 @@ class GameManager:
         return
 
     def _notify_inventory_change(self, channel_id: int, user_id: int) -> None:
-        """Refresh every projection of one player's inventory asynchronously."""
+        """Refresh every projection of one player's inventory asynchronously.
+
+        PERF: a WEB-ONLY player (no Discord screen, mode == "web") has no
+        Discord-side projection of their bag — scheduling the hub coalescer
+        for them triggered a full HUD PIL render + image upload on EVERY
+        drag/craft (the "spam di đồ → ms tăng vọt" bug). Their bag lives on
+        the web client, which syncs via inv_delta; skip Discord entirely.
+        """
         rt = self.runtimes.get(channel_id)
         if rt is None:
             return
-        coalescer = getattr(self, "coalescer", None)
         screen = rt.screens.get(user_id)
+        player = rt.state.get_player(user_id)
+        if screen is None and player is not None and player.mode == "web":
+            return
+        coalescer = getattr(self, "coalescer", None)
         if coalescer is not None and screen is not None and screen.message_id is not None:
             coalescer.schedule((channel_id, user_id), {"user_id": user_id})
         hub = getattr(self, "hub_coalescer", None)
@@ -1108,7 +1118,13 @@ class GameManager:
             return {"ok": False, "reason": "result_slot_occupied",
                     "item_id": None, "qty": 0}
         # Consume the inputs from the REAL bag (remove() is total-aware).
-        for iid, qty in recipe.inputs:
+        # AGGREGATE the client's cells first: the same item may sit on
+        # several grid cells (stone x3 + stone x5), while the recipe needs
+        # the total in one entry — a per-cell check would reject the craft.
+        totals: Dict[str, int] = {}
+        for iid, qty in cleaned:
+            totals[iid] = totals.get(iid, 0) + qty
+        for iid, qty in totals.items():
             inv.remove(iid, qty)
         if parked:
             parked["qty"] += out_qty
@@ -1128,13 +1144,29 @@ class GameManager:
 
     async def _persist_full_inventory(self, channel_id: int, user_id: int,
                                       inv: Inventory) -> None:
-        """Persist every stack position of a slot-grid bag (order included)."""
+        """Persist every stack position of a slot-grid bag (order included).
+
+        PERF: batched into ONE transaction — used to commit per-stack plus
+        per-row order updates (a 15-stack bag ≈ 30 fsyncs per craft/move)."""
         if self.db is None:
             return
         from persistence.repositories import save_inventory_item, save_inventory_order
 
+        stmts = []
         for iid, qty in inv.items.items():
-            await save_inventory_item(self.db, channel_id, user_id, iid, qty)
+            if qty <= 0:
+                stmts.append((
+                    "DELETE FROM inventory WHERE channel_id=? AND user_id=? AND item_id=?",
+                    (channel_id, user_id, iid),
+                ))
+            else:
+                stmts.append((
+                    """INSERT INTO inventory (channel_id, user_id, item_id, qty)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(channel_id, user_id, item_id) DO UPDATE SET qty=excluded.qty""",
+                    (channel_id, user_id, iid, qty),
+                ))
+        await self.db.execute_many(stmts)
         await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
 
     # ----- furnace (smelting) adapters: thin, all logic in game/smelting.py --

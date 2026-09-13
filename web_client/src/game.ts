@@ -1998,13 +1998,18 @@ export class WorldScene extends Phaser.Scene {
     // Resource nodes: chopped trees vanish / regrow, progress bars sync.
     // Pass the authoritative self tile so grown hit counts swing OUR hand
     // (not some remote's) when we are the harvester.
-    this.updateResourceLayer(snap.resources);
+    // WORLD-DELTA protocol: the server omits `resources`/`res_felled` when
+    // unchanged since the last one it sent us (they only change on chop/regrow
+    // actions) — so only refresh the layer when the arrays are PRESENT. The
+    // signature guard inside updateResourceLayer also keeps this idempotent.
+    if (snap.resources !== undefined) {
+      this.updateResourceLayer(snap.resources);
+      this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
+    }
     this.syncProgressBars(snap.res_progress, {
       x: Math.floor(snap.self.x),
       y: Math.floor(snap.self.y),
     });
-    // Felled tiles: walkable in prediction until the node regrows.
-    this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
     for (const p of snap.players) this.upsertPlayer(p);
     // Night zombies (web realtime pack): interpolate + animate.
     this.syncZombies(snap.zombies ?? []);

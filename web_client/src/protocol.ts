@@ -146,11 +146,15 @@ export interface SnapshotPayload {
   craft_result?: { id: string; qty: number } | null;
   // Station proximity for the craft button gate (server truth per snapshot).
   near_station?: boolean;
-  resources: [number, number, number][];
+  // WORLD-DELTA: present ONLY when the node layout changed since the last
+  // snapshot the server sent us (welcome always carries the full set). When
+  // absent, keep the current layer as-is.
+  resources?: [number, number, number][];
   // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
   res_progress: Record<string, [number, number, number[][]]>;
   // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
-  res_felled: [number, number, number, number][];
+  // (only sent together with `resources`, see above).
+  res_felled?: [number, number, number, number][];
 }
 
 export interface PlayerPayload {
