@@ -74,9 +74,10 @@ export const CRAFT_PANEL = {
   frame: "ui/v5/layers/craft_frame.png",
 };
 export const CRAFT_LAYERS = [
-  { x: 11, y: 12, w: 12, h: 13, file: "ui/v5/layers/craft_top1.png" },
-  { x: 28, y: 18, w: 10, h: 13, file: "ui/v5/layers/craft_top2.png" },
-  { x: 43, y: 18, w: 11, h: 13, file: "ui/v5/layers/craft_top3.png" },
+  // craft_top1/2/3 (the STATIC demo icons at [11,12]/[28,18]/[43,18])
+  // deliberately NOT drawn — the interactive category tabs render those
+  // positions themselves (lit/rest state driven); the static layers would
+  // ghost a permanent brown icon under the tabs.
   { x: 67, y: 87, w: 37, h: 22, file: "ui/v5/layers/craft_anvil.png" },
   // craft_round1/round2 (the two small green dots) deliberately NOT drawn —
   // user request: tắt 2 chấm xanh lá nhỏ trong vùng mô tả.
