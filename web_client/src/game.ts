@@ -9,7 +9,43 @@ import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appea
 import { ICON_ITEM_IDS } from "./pixel_ui";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
-const ZOMBIE_SIZE = 48; // vs the 64px (2-tile) player doll
+// Per-kind night-mob sheet geometry (Kaetram client sprites.json, mob rows:
+// atk/walk/idle x right/up/down; LEFT mirrors the right row). Sizes in px
+// (32 = cell size); scale keeps every mob about one tile tall on screen.
+interface MobSheetInfo {
+  texKey: string;
+  size: number;             // display size (px) on screen
+  rows: Record<"atk" | "walk" | "idle", Record<"right" | "up" | "down", [number, number]>>; // [row, frameCount]
+}
+const MOB_SHEETS: Record<string, MobSheetInfo> = {
+  zombie: {
+    texKey: "mob-zombie", size: 48,
+    rows: { atk: { right: [0, 4], up: [3, 5], down: [6, 4] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
+  },
+  skeleton: {
+    texKey: "mob-skeleton", size: 48,
+    rows: { atk: { right: [0, 3], up: [3, 3], down: [6, 3] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 3], down: [8, 3] } },
+  },
+  spider: {
+    texKey: "mob-spider", size: 44,
+    rows: { atk: { right: [7, 2], up: [6, 2], down: [4, 2] }, walk: { right: [3, 5], up: [2, 5], down: [0, 5] }, idle: { right: [3, 1], up: [2, 1], down: [0, 1] } },
+  },
+  slime: {
+    texKey: "mob-slime", size: 40,
+    rows: { atk: { right: [0, 5], up: [3, 5], down: [6, 5] }, walk: { right: [1, 4], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
+  },
+  bat: {
+    texKey: "mob-bat", size: 40,
+    rows: { atk: { right: [0, 5], up: [3, 5], down: [6, 5] }, walk: { right: [1, 5], up: [4, 5], down: [7, 5] }, idle: { right: [2, 5], up: [5, 5], down: [8, 5] } },
+  },
+  rat: {
+    texKey: "mob-rat", size: 32,
+    rows: { atk: { right: [1, 6], up: [4, 4], down: [7, 4] }, walk: { right: [2, 3], up: [5, 4], down: [8, 4] }, idle: { right: [3, 2], up: [6, 4], down: [9, 4] } },
+  },
+};
+const MOB_LABEL: Record<string, string> = {
+  zombie: "🧟", skeleton: "💀", spider: "🕷️", slime: "🟢", bat: "🦇", rat: "🐀",
+};
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // How long a client-optimistic place/break tile stays applied while we wait
 // for the action_result echo. Longer than one RTT (~300ms worst case) but
@@ -211,9 +247,10 @@ export class WorldScene extends Phaser.Scene {
     facing: string;
     dieT0: number; // performance.now() when the kill echo landed (0 = alive)
     hunter: boolean;
+    kind: string; // mob kind: zombie|skeleton|spider|slime|bat|rat
   }>();
-  private zombieTextureKey = "mob-zombie";
-  private zombieTextureReady = false;
+  // Per-kind sheet readiness: kind -> true once its asset arrived.
+  private mobTextureReady = new Set<string>();
   private zombieFetchAsked = false;
   private lastZombieFrameT = 0;
   /** Latest measured websocket RTT (EMA, ms) from the net ping/pong loop.
@@ -326,9 +363,13 @@ export class WorldScene extends Phaser.Scene {
     // Night zombie sprite sheet (Kaetram 160x288, 5 cols x 9 rows of 32px):
     // requested once per session through the same relay pipe (license-safe —
     // the PNG stays on the bot, only this client receives the bytes).
-    if (!this.zombieTextureReady && !this.zombieFetchAsked) {
+    if (!this.zombieFetchAsked) {
+      // Request every night-mob sheet once per session through the same
+      // relay pipe (license-safe: PNGs stay on the bot).
       this.zombieFetchAsked = true;
-      fetchAsset("mobs/zombie.png");
+      for (const kind of Object.keys(MOB_SHEETS)) {
+        fetchAsset(`mobs/${kind}.png`);
+      }
     }
     this.buildBlocks(welcome.blocks);
     this.bakeMapIfReady();
@@ -1204,26 +1245,26 @@ export class WorldScene extends Phaser.Scene {
         continue;
       }
       if (z.body instanceof Phaser.GameObjects.Image) {
-        // Server-authoritative anim + facing -> Kaetram zombie sheet row.
-        // The Kaetram manifest defines NINE rows: atk/walk/idle x right/up/
-        // down — LEFT mirrors the right row (flipX), so facing the sprite
-        // follows the server-facing instead of permanently staring right.
+        // Server-authoritative anim + facing -> Kaetram mob sheet row.
+        // Every mob uses the Kaetram atk/walk/idle x right/up/down layout —
+        // LEFT mirrors the right row (flipX); frame counts come from the
+        // per-kind MOB_SHEETS table (Kaetram sprites.json).
+        const sheet = MOB_SHEETS[z.kind] ?? MOB_SHEETS.zombie;
         const fx = this.zombieFlipX(z.facing);
         const facing = fx ? "right" : this.zombieRowFacing(z.facing);
-        const row = z.anim === "atk"
-          ? (facing === "up" ? 3 : facing === "down" ? 6 : 0)
-          : z.anim === "walk"
-            ? (facing === "up" ? 4 : facing === "down" ? 7 : 1)
-            : (facing === "up" ? 5 : facing === "down" ? 8 : 2);
-        const len = z.anim === "atk" ? 4 : z.anim === "walk" ? 4 : 2;
+        const dirRow = (anim: string, face: string): [number, number] => {
+          const group = (sheet.rows as any)[anim] ?? sheet.rows.idle;
+          return (group as any)[face] ?? group.right;
+        };
+        const [row, len] = dirRow(z.anim === "atk" ? "atk" : z.anim === "walk" ? "walk" : "idle", facing);
         const pace = z.anim === "atk" ? 90 : z.anim === "walk" ? 160 : 500;
         if (now - z.frameT0 >= pace) {
           z.frameT0 = now;
           z.frame = z.anim === "atk"
             ? Math.min(len - 1, z.frame + 1) // lunge holds its last frame
-            : (z.frame + 1) % len; // walk/idle loop
+            : (z.frame + 1) % Math.max(1, len); // walk/idle loop
         }
-        this.applyMobCell(z.body, z.frame, row, ZOMBIE_SIZE);
+        this.applyMobCell(z.body, z.frame, row, sheet.size);
         z.body.setFlipX(fx);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
@@ -1566,8 +1607,9 @@ export class WorldScene extends Phaser.Scene {
         tint: [color, color, 0xffffff, color],
         emitting: false,
       });
-      emitter.setDepth(400); // IN FRONT of the paperdoll — depth 150 hid
-      // the crumbs BEHIND the body sprite (reduced visibility)
+      // BELOW actors (doll container depth 6): the player body OVERLAPS the
+      // crumbs — particles are a background layer behind the player.
+      emitter.setDepth(5);
       this.chewEmitters.set(selfId, { emitter, item: itemId });
       emitter.start();
     } else if (!eating && existing) {
@@ -1584,11 +1626,10 @@ export class WorldScene extends Phaser.Scene {
   private updateChew(): void {
     const self = this.selfMarker;
     if (!self) return;
-    // Mouth offset per facing: front (SOUTH) is the tuned base (+4, +7 from
-    // head anchor); back (NORTH) hides the mouth so crumbs shift behind the
-    // head; side/diagonal interpolate between those extremes.
-    const FRONT = { x: 4, y: 7 };
-    const BACK = { x: -4, y: -10 };
+    // Mouth offset per facing (user-tuned): all directions drop 10px from
+    // the head anchor; front shifts +4 right, back shifts -3 left, sides 0.
+    const FRONT = { x: 4, y: 10 };
+    const BACK = { x: -3, y: 10 };
     const dirOffsets: Record<string, { x: number; y: number }> = {
       SOUTH: FRONT,
       SE: FRONT,
@@ -1596,8 +1637,8 @@ export class WorldScene extends Phaser.Scene {
       NORTH: BACK,
       NE: BACK,
       NW: BACK,
-      EAST: { x: 10, y: 0 },
-      WEST: { x: -10, y: 0 },
+      EAST: { x: 0, y: 10 },
+      WEST: { x: 0, y: 10 },
     };
     const off = dirOffsets[this.selfDir] ?? FRONT;
     for (const e of this.chewEmitters.values()) {
@@ -2029,33 +2070,43 @@ export class WorldScene extends Phaser.Scene {
 
   /** A mob sprite PNG arrived via the relay: mark ready for upgrade. */
   onMobTexture(name: string): void {
-    if (name !== "mobs/zombie.png" || this.zombieTextureReady) return;
-    if (!this.textures.exists(this.zombieTextureKey)) return;
-    this.zombieTextureReady = true;
+    if (!name.startsWith("mobs/")) return;
+    const kind = name.slice("mobs/".length).replace(/\.png$/i, "");
+    if (!MOB_SHEETS[kind] || this.mobTextureReady.has(kind)) return;
+    if (!this.textures.exists(MOB_SHEETS[kind].texKey)) return;
+    this.mobTextureReady.add(kind);
   }
 
   /** Sync the zombie layer from one snapshot payload (20 Hz). */
   private syncZombies(list: WebZombiePayload[]): void {
     const seen = new Set<string>();
-    for (const [id, x, y, hp, maxHp, kind, facing, anim, animT] of list) {
+    for (const [id, x, y, hp, maxHp, kind, hunter, facing, anim, animT] of list) {
       seen.add(id);
+      const kindKey = MOB_SHEETS[kind] ? kind : "zombie";
+      const sheet = MOB_SHEETS[kindKey];
+      const ready = this.mobTextureReady.has(kindKey) &&
+        this.textures.exists(sheet.texKey);
       let z = this.zombies.get(id);
       if (!z) {
         if (!this.zombieLayer) this.zombieLayer = this.add.layer();
         const container = this.add.container(x * 32, y * 32);
         const body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle =
-          this.zombieTextureReady && this.textures.exists(this.zombieTextureKey)
-            ? this.add.image(0, 0, this.zombieTextureKey)
+          ready
+            ? this.add.image(0, 0, sheet.texKey)
             : this.add.rectangle(0, 0, 22, 26, 0x3a7d2c);
         // Cut the FIRST idle frame immediately so a fresh spawn never shows
         // the whole stretched sheet for even one frame.
         if (body instanceof Phaser.GameObjects.Image) {
-          this.applyMobCell(body, 0, 2, ZOMBIE_SIZE);
+          this.applyMobCell(body, 0, sheet.rows.idle.down[0], sheet.size);
         }
-        const label = this.add.text(0, 24, kind === "hunter" ? "🧟‍♂️!" : "🧟", {
-          fontSize: "10px", color: "#ffffff",
-          stroke: "#000000", strokeThickness: 3,
-        }).setOrigin(0.5);
+        const label = this.add.text(
+          0, 24,
+          (MOB_LABEL[kindKey] ?? "🧟") + (hunter === "hunter" ? "!" : ""),
+          {
+            fontSize: "10px", color: "#ffffff",
+            stroke: "#000000", strokeThickness: 3,
+          },
+        ).setOrigin(0.5);
         const hpBg = this.add.rectangle(0, -22, 28, 4, 0x000000, 0.6);
         const hpFill = this.add.rectangle(0, -22, 28, 4, 0x6fe26f).setOrigin(0.5);
         container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);
@@ -2067,20 +2118,32 @@ export class WorldScene extends Phaser.Scene {
           anim: anim ?? "idle", animT0: performance.now(),
           serverAnimT: animT ?? 0,
           frame: 0, frameT0: performance.now(),
-          facing: facing ?? "S", dieT0: 0, hunter: kind === "hunter",
+          facing: facing ?? "S", dieT0: 0, hunter: hunter === "hunter",
+          kind: kindKey,
         };
         this.zombies.set(id, z);
       }
       const now = performance.now();
       z.buf.push([now, x * 32, y * 32]);
       if (z.buf.length > 12) z.buf.shift();
-      z.hunter = kind === "hunter";
+      z.hunter = hunter === "hunter";
       z.facing = facing ?? z.facing;
+      // Late-arriving sheet: upgrade the placeholder rect to the sprite.
+      if (
+        ready &&
+        z.body instanceof Phaser.GameObjects.Rectangle
+      ) {
+        const img = this.add.image(0, 0, sheet.texKey);
+        this.applyMobCell(img, 0, sheet.rows.idle.down[0], sheet.size);
+        z.container.add(img);
+        z.container.sendToBack(img);
+        z.body.destroy();
+        z.body = img;
+      }
       // Restart the anim when (a) the anim STRING changes, or (b) the server
       // re-armed the SAME anim (repeat bites keep anim="atk"; only anim_t
       // advances). Without (b) every bite after the first froze on the lunge
       // frame until the zombie moved again.
-      const atkReplayMs = 4 * 90; // one full atk swing on the client
       const reArmed = animT != null && z.anim === "atk" && anim === "atk" &&
         Math.abs(animT - z.serverAnimT) > 0.001;
       if (reArmed || (anim ?? z.anim) !== z.anim) {
@@ -2090,6 +2153,8 @@ export class WorldScene extends Phaser.Scene {
         z.frameT0 = now;
       }
       if (animT != null) z.serverAnimT = animT;
+      const atkRows = sheet.rows.atk;
+      const atkReplayMs = atkRows.right[1] * 90; // one full atk swing on the client
       // Auto-unfreeze: the server holds anim="atk" between bites; drop back
       // to idle locally once one swing has played so the pose never sticks.
       if (z.anim === "atk" && now - z.animT0 >= atkReplayMs) {
@@ -2100,18 +2165,6 @@ export class WorldScene extends Phaser.Scene {
       const ratio = Math.max(0, Math.min(1, maxHp > 0 ? hp / maxHp : 0));
       z.hpFill.setSize(28 * ratio, 4);
       z.hpFill.setFillStyle(ratio > 0.5 ? 0x6fe26f : ratio > 0.25 ? 0xf2c14e : 0xe5484d);
-      if (
-        this.zombieTextureReady &&
-        z.body instanceof Phaser.GameObjects.Rectangle &&
-        this.textures.exists(this.zombieTextureKey)
-      ) {
-        const img = this.add.image(0, 0, this.zombieTextureKey);
-        this.applyMobCell(img, 0, 2, ZOMBIE_SIZE);
-        z.container.add(img);
-        z.container.sendToBack(img);
-        z.body.destroy();
-        z.body = img;
-      }
     }
     for (const [id, z] of this.zombies) {
       if (!seen.has(id) && z.dieT0 === 0) {
