@@ -1001,6 +1001,7 @@ class GameManager:
         slots_by_user = await load_inventory_slots(self.db, rt.channel_id)
         if not slots_by_user:
             return
+        from game.purse import is_currency, purse_add
         for uid, slots in slots_by_user.items():
             inv = Inventory()
             # Overlay the persisted layout (slot indices preserved).
@@ -1008,6 +1009,16 @@ class GameManager:
                 if cell:
                     inv.slots[i] = cell
             rt.inventories[uid] = inv
+            # PURSE MIGRATION: coin/crystal stacks saved in the bag before
+            # the purse existed get auto-converted into the counters here —
+            # the bag is never the source of truth for currency.
+            for item_id in ("coin", "crystal"):
+                have = inv.count(item_id)
+                if is_currency(item_id) and have > 0 and purse_add(
+                        self, rt.channel_id, uid, item_id, have):
+                    player = rt.state.get_player(uid)
+                    if player is not None:
+                        self._schedule_save(rt, player)
 
     def get_inventory(self, channel_id: int, user_id: int) -> Inventory:
         rt = self.get_runtime_for(channel_id, user_id)
@@ -1015,6 +1026,17 @@ class GameManager:
         if inv is None:
             inv = Inventory()
             rt.inventories[user_id] = inv
+        # PURSE SWEEP: any coin/crystal that somehow reached the bag (saved
+        # pre-purse, legacy session resurrect, edge path) converts into the
+        # counters the moment the bag is touched. Cheap: two count() scans.
+        from game.purse import is_currency, purse_add
+        for item_id in ("coin", "crystal"):
+            have = inv.count(item_id)
+            if have > 0 and purse_add(self, channel_id, user_id,
+                                      item_id, have):
+                player = rt.state.get_player(user_id)
+                if player is not None:
+                    self._schedule_save(rt, player)
         return inv
 
     # ----- craft material grid (server-side buffer, one per player) --------

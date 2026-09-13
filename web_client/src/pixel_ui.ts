@@ -55,12 +55,12 @@ export const PURSE_DIGIT = {
   dir: "ui/v5/numbers",
   inkTop: 4, inkH: 7,          // ink band inside the 8x16 cell
   advance: 4,                   // per-digit advance (3-4px wide + 1px gap)
-  baselineY: 86,                // counter digits' top y (panel coords) —
-                                // vertically centred on the 10px coin icon
+  baselineY: 82,                // counter digits' top y (panel coords) —
+                                // 4px above the icon centreline (user-tuned)
 };
-// Digit-run anchor x (panel coords): 1px right of each icon's right edge.
-export const PURSE_COIN_X = INV_COIN.x + INV_COIN.w + 1;   // 23
-export const PURSE_CRYSTAL_X = INV_CRYSTAL.x + INV_CRYSTAL.w + 1;  // 71
+// Digit-run anchor x (panel coords): 2px right of each icon's right edge.
+export const PURSE_COIN_X = INV_COIN.x + INV_COIN.w + 2;   // 24
+export const PURSE_CRYSTAL_X = INV_CRYSTAL.x + INV_CRYSTAL.w + 2;  // 72
 export const INV_SLOT = "ui/v5/atoms/inv_cell.png";
 // The kit's 5×5 close component (0091) — the X ACTUALLY painted into each
 // frame (measured from the PNGs by its dark-glyph bbox): inv X at (88,4),
