@@ -1629,7 +1629,7 @@ export class WorldScene extends Phaser.Scene {
     // Mouth offset per facing (user-tuned): back views keep their tuned
     // spot; the other three axes sit 6px lower — front drops to +1 right,
     // left-facing shifts 2px left, right-facing keeps its x.
-    const FRONT = { x: 1, y: 16 };
+    const FRONT = { x: 1, y: 23 };
     const BACK = { x: -3, y: 10 };
     const dirOffsets: Record<string, { x: number; y: number }> = {
       SOUTH: FRONT,
@@ -1638,8 +1638,8 @@ export class WorldScene extends Phaser.Scene {
       NORTH: BACK,
       NE: BACK,
       NW: BACK,
-      EAST: { x: 0, y: 16 },
-      WEST: { x: -2, y: 16 },
+      EAST: { x: 0, y: 23 },
+      WEST: { x: -2, y: 23 },
     };
     const off = dirOffsets[this.selfDir] ?? FRONT;
     // Layer per facing: BACK views put the emitter BEHIND the player
