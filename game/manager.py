@@ -795,7 +795,7 @@ class GameManager:
         for uid, bindings in legacy.items():
             inv = self.get_inventory(rt.channel_id, uid)
             for slot in sorted(bindings):
-                inv.move_to(bindings[slot], slot)
+                inv.swap_to_slot(bindings[slot], slot)
             await save_inventory_order(
                 self.db, rt.channel_id, uid, list(inv.items)
             )
@@ -804,9 +804,9 @@ class GameManager:
         )
 
     def get_hotbar(self, channel_id: int, user_id: int) -> Dict[int, Optional[str]]:
-        """The player's hotbar: slots 0..HOTBAR_SLOTS-1 projected from the
-        ordered bag — slot N holds the Nth stack (None when the bag is
-        shorter). A projection: writing goes through set_hotbar_slot."""
+        """The player's hotbar: slot N mirrors BAG SLOT N (positional — see
+        Inventory.hotbar). Empty bag slot = empty hotbar slot. Writing goes
+        through set_hotbar_slot."""
         rt = self.get_runtime_for(channel_id, user_id)
         inv = rt.inventories.get(user_id)
         if inv is None:
@@ -849,10 +849,12 @@ class GameManager:
 
     async def set_hotbar_slot(self, channel_id: int, user_id: int, slot: int,
                               item_id: Optional[str]) -> None:
-        """Assign ``item_id`` to hotbar ``slot`` = move it to the slot's bag
-        position (the hotbar mirrors the first HOTBAR_SLOTS bag stacks).
+        """Assign ``item_id`` to hotbar ``slot`` = move its first stack into
+        BAG SLOT ``slot`` (positional hotbar mapping), swapping with whatever
+        sits there.
 
-        ``item_id=None`` is a no-op (an empty slot is simply a short bag).
+        ``item_id=None`` is a no-op (an empty slot is simply an empty bag
+        slot).
         """
         if not 0 <= slot < HOTBAR_SLOTS:
             raise ValueError(f"hotbar slot out of range: {slot}")
@@ -860,7 +862,7 @@ class GameManager:
             return
         rt = self.get_runtime_for(channel_id, user_id)
         inv = self.get_inventory(channel_id, user_id)
-        inv.move_to(item_id, slot)
+        inv.swap_to_slot(item_id, slot)
         if self.db is not None:
             await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
 

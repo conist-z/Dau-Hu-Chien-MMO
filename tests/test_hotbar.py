@@ -93,12 +93,12 @@ def test_manager_hotbar_runtime_and_db():
                 # Default: 6 empty slots (empty bag).
                 hb = mgr.get_hotbar(1, 10)
                 assert len(hb) == 6 and all(v is None for v in hb.values())
-                # Bag order projects onto the hotbar automatically.
+                # Bag slot order projects onto the hotbar POSITIONALLY.
                 await mgr.add_item(1, 10, "potion_hp")
                 await mgr.add_item(1, 10, "potion_mp")
                 hb = mgr.get_hotbar(1, 10)
                 assert hb[0] == "potion_hp" and hb[1] == "potion_mp" and hb[2] is None
-                # Assigning an item to a slot MOVES it to that bag position.
+                # Assigning an item to a slot SWAPS it into that bag position.
                 await mgr.set_hotbar_slot(1, 10, 0, "potion_mp")
                 inv = mgr.get_inventory(1, 10)
                 assert list(inv.items) == ["potion_mp", "potion_hp"]
@@ -107,9 +107,11 @@ def test_manager_hotbar_runtime_and_db():
                 rt3 = mgr.create_runtime(1, "test-map")
                 await mgr.load_inventories(rt3)
                 assert list(rt3.inventories[10].items) == ["potion_mp", "potion_hp"]
-                # Using up a stack closes the gap automatically.
+                # Moving a stack OUT of the hotbar window clears its cell —
+                # the positional mapping shows the EMPTY bag slot as-is.
                 rt3.inventories[10].remove("potion_mp", 1)
-                assert mgr.get_hotbar(1, 10)[0] == "potion_hp"
+                assert mgr.get_hotbar(1, 10)[0] is None
+                assert mgr.get_hotbar(1, 10)[1] == "potion_hp"
             finally:
                 await db.close()
 

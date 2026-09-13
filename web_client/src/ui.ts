@@ -1369,21 +1369,19 @@ export class Hud {
 
   private renderHotbar(): void {
     this.hotbarEl.innerHTML = "";
-    // LOCAL PROJECTION: the hotbar mirrors the first N occupied bag slots
-    // (same rule as the server) — computed from the bag the client already
-    // holds, so every local edit (drag/split/take-out) echoes INSTANTLY
-    // without waiting for the server's inventory delta.
-    const occupied = this.inventory.bag
-      .filter((s): s is { id: string; qty: number } => !!s)
-      .map((s) => s.id);
+    // LOCAL PROJECTION: hotbar slot N mirrors BAG SLOT N (positional, same
+    // rule as the server) — dragging the stack OUT of the first N bag slots
+    // really clears its hotbar cell, and an empty bag slot shows an empty
+    // hotbar slot. Computed from the bag the client already holds, so every
+    // local edit (drag/split/take-out) echoes INSTANTLY without waiting for
+    // the server's inventory delta.
     const slotCount = Math.max(this.inventory.hotbar.length, 6);
     for (let idx = 0; idx < slotCount; idx++) {
-      const itemId = occupied[idx] ?? null;
+      const stack = this.inventory.bag[idx] ?? null;
+      const itemId = stack?.id ?? null;
+      const qty = stack?.qty ?? 0;
       const div = document.createElement("div");
       div.className = "slot" + (idx === this.activeSlot ? " active" : "");
-      const qty = itemId
-        ? (this.inventory.bag.find((b) => b?.id === itemId)?.qty ?? 0)
-        : 0;
       div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconHtml(itemId, this.itemEmojis)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
       div.addEventListener("click", () => {

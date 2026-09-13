@@ -391,10 +391,11 @@ class InventoryView(View):
                     delete_after=EPHEMERAL_WARN,
                 )
                 return
-            # "Unbind" = move the stack past the hotbar window (to the end
-            # of the bag): the next 6 stacks slide up into the hotbar.
+            # "Unbind" = swap the stack into the LAST bag slot (outside the
+            # positional hotbar window): whatever sat there swaps in — the
+            # item is truly off the hotbar now.
             inv = self.manager.get_inventory(self.channel_id, self.user_id)
-            inv.move_to(self._selected_item, max(0, len(inv.items) - 1))
+            inv.swap_to_slot(self._selected_item, inv.BAG_SLOTS - 1)
             from persistence.repositories import save_inventory_order
 
             if self.manager.db is not None:

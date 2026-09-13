@@ -198,14 +198,34 @@ class Inventory:
             self._bump()
 
     def hotbar(self, slots: int = None) -> Dict[int, Optional[str]]:
-        """The hotbar PROJECTION: slot N = the Nth OCCUPIED bag slot (None
-        past the end). No separate binding table — assigning an item to a
-        hotbar slot means moving its stack there (``move_to``)."""
+        """The hotbar PROJECTION: slot N = BAG SLOT N (positional mapping).
+
+        Hotbar slot N shows exactly what sits in bag slot N — empty bag slot
+        = empty hotbar slot. Moving a stack OUT of the first HOTBAR_SLOTS
+        bag slots therefore really removes it from the hotbar (the old
+        "Nth occupied stack" ordinal projection kept showing it wherever
+        the player dragged it inside the bag).
+        """
         if slots is None:
             slots = HOTBAR_SLOTS
-        occupied = [s[0] for s in self.slots if s]
-        return {n: (occupied[n] if n < len(occupied) else None)
-                for n in range(slots)}
+        return {
+            n: (self.slots[n][0] if n < len(self.slots) and self.slots[n] else None)
+            for n in range(slots)
+        }
+
+    def swap_to_slot(self, item_id: str, target: int) -> None:
+        """Move ``item_id``'s FIRST stack into bag slot ``target`` (hotbar
+        assign, positional). Whatever occupies the target slot swaps into the
+        freed position — no stack is ever lost, no shifting of others."""
+        occ = [i for i, s in enumerate(self.slots) if s and s[0] == item_id]
+        if not occ:
+            return
+        src = occ[0]
+        target = max(0, min(target, len(self.slots) - 1))
+        if src == target:
+            return
+        self.slots[src], self.slots[target] = self.slots[target], self.slots[src]
+        self._bump()
 
     def use(self, item_id: str, player) -> tuple:
         """Consume one unit of a consumable from this bag (manager.use_item
