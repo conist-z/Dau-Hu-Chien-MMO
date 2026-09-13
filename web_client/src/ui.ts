@@ -941,41 +941,35 @@ export class Hud {
     this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager").forEach((n) => n.remove());
     const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
-    // --- Category tabs (top, right above the material grid): the trio of
-    // pixel icons INSIDE their kit container boxes. Exactly ZERO or ONE
-    // box is lifted/lit; zero = "all" mode (flat boxes, brown icons —
-    // composed art, since the kit has no all-resting frame).
+    // --- Category tabs: the FRAME ITSELF is the tab state. The kit ships
+    // one frame per lifted category (tool/decor/usable) — identical except
+    // the box strip (verified diff bbox (10,10,56,11)). ALL state uses a
+    // composed all-resting frame. The runtime draws ONLY the icons on top
+    // of the baked boxes: green icon on the lifted column (y=12), brown
+    // icons on the resting columns (y=18).
     this.invCraftWrap.querySelectorAll(".craft-tab").forEach((n) => n.remove());
+    const FRAME_BY_CAT: Record<string, string> = {
+      all: "ui/v5/layers/craft_frame_all.png",
+      tool: "ui/v5/layers/craft_frame_tool.png",
+      decor: "ui/v5/layers/craft_frame_decor.png",
+      usable: "ui/v5/layers/craft_frame_usable.png",
+    };
+    const panelImg = this.invCraftWrap.querySelector<HTMLImageElement>("img.panel");
+    if (panelImg) panelImg.src = FRAME_BY_CAT[this.craftCategory];
     for (const tab of CRAFT_TABS) {
       const lit = this.craftCategory === tab.group;
       const el = document.createElement("div");
       el.className = "craft-tab" + (lit ? " lit" : "");
-      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE) aligned
-      // to the baked boxes in the deployed craft_frame (kit frame3 strip):
-      // lit box y=10 (15px tall), resting/flat y=11 (14px tall). The frame
-      // carries the resting boxes for ALL THREE columns, so the runtime
-      // only draws the LIT box + the icon on top of the baked art.
-      const boxY = lit ? 10 : 11;
-      const boxH = (lit ? 15 : 14) * PIXEL_SCALE;
-      const iconY = lit ? tab.yActive : tab.yRest;
+      // Kit icon bboxes (Craft.json z20): lifted column icon sits at y=12,
+      // resting at y=18; x/w/h are per column.
+      const iconY = lit ? 12 : 18;
       el.style.cssText =
-        `left:${tab.boxX * PIXEL_SCALE}px;top:${boxY * PIXEL_SCALE}px;` +
-        `width:${18 * PIXEL_SCALE}px;height:${boxH}px;`;
-      const box = document.createElement("img");
-      box.className = "slot-bg";
-      // Resting boxes are BAKED into the frame for every column — only
-      // the lit state draws a box overlay (the flat/rest files stay as a
-      // fallback for a future frame without baked art).
-      if (lit) el.appendChild(box);
-      // Icon centered horizontally in the 18px box, on its kit y row.
+        `left:${tab.x * PIXEL_SCALE}px;top:${iconY * PIXEL_SCALE}px;` +
+        `width:${tab.w * PIXEL_SCALE}px;height:${tab.h * PIXEL_SCALE}px;`;
       const icon = document.createElement("img");
       icon.className = "craft-tab-icon";
       icon.src = lit ? tab.lit : tab.rest;
       icon.draggable = false;
-      icon.style.cssText =
-        `left:${(tab.x - tab.boxX) * PIXEL_SCALE}px;` +
-        `top:${(iconY - boxY) * PIXEL_SCALE}px;` +
-        `width:${tab.w * PIXEL_SCALE}px;height:${tab.h * PIXEL_SCALE}px;`;
       el.appendChild(icon);
       el.title =
         tab.group === "tool" ? "Công cụ / Vũ khí" :
