@@ -21,7 +21,7 @@ import {
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
-  itemIconUrl, makeLayer, makeSlot, sizePanel, slotXY,
+  itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
 
 // Animated pixel weather icons copied from the Discord hub renderer
@@ -188,6 +188,16 @@ export class Hud {
   private drag: DragSrc | null = null;
   /** Set by main.ts: throws a stack into the world (drop entity). */
   onThrow: ((itemId: string, qty: number) => void) | null = null;
+  /** Set by main.ts: purse drag-out — pull ONE coin/crystal into the bag. */
+  onPurseWithdraw: ((itemId: string) => void) | null = null;
+  /** Purse balances (server truth, 20 Hz): coins + crystals. */
+  private purseCoins = 0;
+  private purseCrystals = 0;
+  private purseDigitEls: HTMLImageElement[] = [];
+  private purseLastSig = "";
+  /** Active purse drag: currency item id, or null. */
+  private purseDrag: string | null = null;
+  private purseGhost: HTMLElement | null = null;
   /** True when (x, y) is inside ANY open inventory/craft panel. */
   private pointInPanels(x: number, y: number): boolean {
     const inRect = (el: HTMLElement | null) => {
@@ -256,10 +266,40 @@ export class Hud {
     this.invItemsWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invItemsCraftWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
+    // PURSE: the coin/crystal icons are drag sources — mousedown starts a
+    // purse drag (ghost of the icon), release OUTSIDE the panel withdraws
+    // exactly ONE unit into the bag (server op purse_withdraw).
+    for (const [wrap, itemId] of [
+      [this.invItemsWrap, "coin"], [this.invItemsWrap, "crystal"],
+      [this.invItemsCraftWrap, "coin"], [this.invItemsCraftWrap, "crystal"],
+    ] as [HTMLElement, string][]) {
+      const iconSpec = itemId === "coin" ? INV_COIN : INV_CRYSTAL;
+      const hit = document.createElement("div");
+      hit.className = "purse-hit";
+      hit.style.cssText =
+        `left:${iconSpec.x * PIXEL_SCALE}px;top:${iconSpec.y * PIXEL_SCALE}px;` +
+        `width:${iconSpec.w * PIXEL_SCALE}px;height:${iconSpec.h * PIXEL_SCALE}px;`;
+      hit.dataset.itemId = itemId;
+      hit.title = "Kéo ra ngoài panel để rút 1";
+      hit.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.startPurseDrag((e.currentTarget as HTMLElement).dataset.itemId ?? "coin", e);
+      });
+      wrap.appendChild(hit);
+    }
     // Global drag ghost tracking (mouse-move + drop outside any slot).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
     window.addEventListener("mouseup", (e) => {
       // MAGNETIC DROP: resolve to the NEAREST droppable slot within a
+      // PURSE drag-out: release OUTSIDE every panel = withdraw exactly
+      // ONE coin/crystal into the bag (server op purse_withdraw). Release
+      // inside = cancel (nothing happens — the count stays put).
+      if (this.purseDrag) {
+        this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
+        return;
+      }
       // generous snap radius instead of only the exact hovered slot —
       // near-misses snap in instead of springing back.
       if (!this.drag) return;
@@ -549,17 +589,18 @@ export class Hud {
   private lastBagSig = "";
 
   private renderInventory(): void {
-    // Repaint guard: identical bag + same tab + same craft context = skip.
-    // nearTable + parkedResult are part of the sig: a stale quick-craft
-    // overlay (stuck red hatch while near the table) meant those state
-    // flips didn't repaint the slots.
+    // Repaint guard: identical bag + same tab + same craft context + same
+    // purse = skip. (Purse in the sig: counters repaint on balance change.)
     const bagSig = JSON.stringify(this.inventory.bag);
     const craftActive = this.craftTab.classList.contains("active");
+    const purseSig = `${this.purseCoins}:${this.purseCrystals}`;
     const sig = bagSig + "|" + (craftActive ? "craft" : "items") +
       "|" + (this.nearTable ? 1 : 0) +
-      "|" + (this.parkedResult ? this.parkedResult.id + this.parkedResult.qty : "-");
+      "|" + (this.parkedResult ? this.parkedResult.id + this.parkedResult.qty : "-") +
+      "|" + purseSig;
     if (sig === this.lastBagSig && this.drag === null) return;
     this.lastBagSig = sig;
+    this.renderPurse(craftActive);
     if (craftActive) {
       this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
       this.renderCraftPanel();
@@ -603,6 +644,11 @@ export class Hud {
   }
 
   private updateDragGhost(x: number, y: number): void {
+    if (this.purseGhost) {
+      this.purseGhost.style.left = `${x - 16}px`;
+      this.purseGhost.style.top = `${y - 16}px`;
+      return;
+    }
     if (!this.dragGhost) return;
     this.dragGhost.style.left = `${x - 16}px`;
     this.dragGhost.style.top = `${y - 16}px`;
@@ -895,24 +941,38 @@ export class Hud {
     const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
     // --- Category tabs (top, right above the material grid): the trio of
-    // pixel icons. Exactly ZERO or ONE tab is lit; zero = "all" mode.
+    // pixel icons INSIDE their kit container boxes. Exactly ZERO or ONE
+    // box is lifted/lit; zero = "all" mode (flat boxes, brown icons —
+    // composed art, since the kit has no all-resting frame).
     this.invCraftWrap.querySelectorAll(".craft-tab").forEach((n) => n.remove());
     for (const tab of CRAFT_TABS) {
       const lit = this.craftCategory === tab.group;
       const el = document.createElement("div");
       el.className = "craft-tab" + (lit ? " lit" : "");
-      // EXACT kit bbox (Craft.json z20, local px × PIXEL_SCALE). The lit
-      // tab swaps to its own green art AND lifts to the y=12 row (rest
-      // row y=18) exactly as the variant frames draw it.
-      const y = lit ? tab.yActive : tab.yRest;
+      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE): the
+      // container box is 18 kit px wide at the column origin; the lit box
+      // lifts to y=10 (15px tall), resting/flat sits at y=11 (14px tall).
+      const boxY = lit ? 10 : 11;
+      const boxH = lit ? 15 : 14;
+      const iconY = lit ? tab.yActive : tab.yRest;
       el.style.cssText =
-        `left:${tab.x * PIXEL_SCALE}px;top:${y * PIXEL_SCALE}px;` +
+        `left:${tab.boxX * PIXEL_SCALE}px;top:${boxY * PIXEL_SCALE}px;` +
+        `width:${18 * PIXEL_SCALE}px;height:${boxH * PIXEL_SCALE}px;`;
+      const box = document.createElement("img");
+      box.className = "slot-bg";
+      box.src = lit ? tab.boxLit : tab.boxFlat;
+      box.draggable = false;
+      el.appendChild(box);
+      // Icon centered horizontally in the 18px box, on its kit y row.
+      const icon = document.createElement("img");
+      icon.className = "craft-tab-icon";
+      icon.src = lit ? tab.lit : tab.rest;
+      icon.draggable = false;
+      icon.style.cssText =
+        `left:${(tab.x - tab.boxX) * PIXEL_SCALE}px;` +
+        `top:${(iconY - boxY) * PIXEL_SCALE}px;` +
         `width:${tab.w * PIXEL_SCALE}px;height:${tab.h * PIXEL_SCALE}px;`;
-      const bg = document.createElement("img");
-      bg.className = "slot-bg";
-      bg.src = lit ? tab.lit : tab.rest;
-      bg.draggable = false;
-      el.appendChild(bg);
+      el.appendChild(icon);
       el.title =
         tab.group === "tool" ? "Công cụ / Vũ khí" :
         tab.group === "decor" ? "Trang trí / Block" : "Đồ dùng được";
@@ -1520,6 +1580,63 @@ export class Hud {
       this.weatherTimer = null;
     }
     this.weatherImg = null;
+  }
+
+  /** Purse balances from a 20 Hz snapshot (welcome.self / snapshot.self). */
+  setPurse(coins: number, crystals: number): void {
+    this.purseCoins = coins;
+    this.purseCrystals = crystals;
+    if (this.inventoryOpen) this.renderInventory();
+  }
+
+  /**
+   * Paint the two purse counters in the v5 pixel font, right-aligned
+   * against each icon's right edge. Digits live OUTSIDE the repaint of
+   * the bag grid — they are cleared and re-added only on balance change.
+   */
+  private renderPurse(_craftActive: boolean): void {
+    const sig = `${this.purseCoins}:${this.purseCrystals}`;
+    if (sig === this.purseLastSig) return;
+    this.purseLastSig = sig;
+    for (const el of this.purseDigitEls) el.remove();
+    this.purseDigitEls = [
+      ...makeDigitRun(this.purseCoins, INV_COIN.x + INV_COIN.w),
+      ...makeDigitRun(this.purseCrystals, INV_CRYSTAL.x + INV_CRYSTAL.w + 2),
+    ];
+    this.invItemsWrap.append(...this.purseDigitEls);
+    this.invItemsCraftWrap.append(...this.purseDigitEls.map((im) => {
+      const c = im.cloneNode() as HTMLImageElement;
+      return c;
+    }));
+    // clones need appending too (append of an already-parented node moves it)
+    const clones = this.invItemsCraftWrap.querySelectorAll("img.purse-digit");
+    this.purseDigitEls.push(...(clones as NodeListOf<HTMLImageElement>));
+  }
+
+  /** Purse drag: ghost icon follows the mouse; release outside = withdraw 1. */
+  private startPurseDrag(itemId: string, e: MouseEvent): void {
+    if (this.purseDrag) return;
+    this.purseDrag = itemId;
+    const ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    const url = itemIconUrl(itemId);
+    if (url) {
+      const im = document.createElement("img");
+      im.src = url;
+      im.draggable = false;
+      ghost.appendChild(im);
+    }
+    document.body.appendChild(ghost);
+    this.purseGhost = ghost;
+    this.updateDragGhost(e.clientX, e.clientY);
+  }
+
+  private endPurseDrag(commit: boolean): void {
+    const itemId = this.purseDrag;
+    this.purseDrag = null;
+    this.purseGhost?.remove();
+    this.purseGhost = null;
+    if (commit && itemId && this.onPurseWithdraw) this.onPurseWithdraw(itemId);
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,

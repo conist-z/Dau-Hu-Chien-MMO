@@ -48,6 +48,16 @@ export const INVENTORY_GRID: GridLayout = {
 export const INV_TITLE = { x: 22, y: 3, w: 55, h: 8, file: "ui/v5/layers/inv_title.png" };
 export const INV_COIN = { x: 12, y: 83, w: 10, h: 10, file: "ui/v5/layers/inv_coin.png" };
 export const INV_CRYSTAL = { x: 61, y: 83, w: 9, h: 11, file: "ui/v5/layers/inv_crystal.png" };
+// ---- Purse counters (v5 Numbers font, sliced from misc/Numbers/grid16) ----
+// Each digit sprite is an 8x16 cell whose ink sits at y4..y11 (3..7px tall
+// glyphs, 3-4px wide) — measured from the kit PNGs, NOT guessed.
+export const PURSE_DIGIT = {
+  dir: "ui/v5/numbers",
+  inkTop: 4, inkH: 7,          // ink band inside the 8x16 cell
+  advance: 4,                   // per-digit advance (3-4px wide + 1px gap)
+  baselineY: 86,                // counter digits' top y (panel coords) —
+                                // vertically centred on the 10px coin icon
+};
 export const INV_SLOT = "ui/v5/atoms/inv_cell.png";
 // The kit's 5×5 close component (0091) — the X ACTUALLY painted into each
 // frame (measured from the PNGs by its dark-glyph bbox): inv X at (88,4),
@@ -90,34 +100,47 @@ export const CRAFT_BTN = { normal: "ui/v5/atoms/create_btn.png" };
 // Description region: [133,21,54,87] — selected quick-craft recipe info.
 export const CRAFT_DESC = { x: 133, y: 21, w: 54, h: 87 };
 // ---- Top category tabs (Craft.json, z20, local bboxes PER VARIANT) ----
-// The kit ships three frame variants; each variant shows the trio with a
-// DIFFERENT tab lit — the lit tab swaps to GREEN art AND lifts 6 kit px
-// (y 18 -> 12) while the resting tabs sit in the y=18 row (brown art).
-// Per-icon-column art: one brown (rest) + one green (lit) file each, cut
-// from the kit's own variants. Verified: rest = dominant brown (96,57,40),
-// lit = dominant green family (44,70,69)/(80,169,120).
+// The kit bakes a "container box" (ô chứa) behind each icon: 18 kit px
+// wide columns at x 8/24/40. EXACTLY ONE box per variant is LIFTED (tall,
+// y 10..24) with the green icon inside; the two resting boxes sit at
+// y 11..24 (14 px tall) with brown icons. The ALL state has no kit art,
+// so a dedicated "flat" box (no lift, both rows merged) is composed
+// below and shipped as craft_tabbox_*_flat.png.
 export const CRAFT_TABS: {
   group: "tool" | "decor" | "usable";
-  x: number; w: number; h: number;
-  yRest: number;    // resting row (brown art)
-  yActive: number;  // lifted row (green art) — the lit tab
-  rest: string;     // brown art
-  lit: string;      // green art (cut from this tab's own variant)
+  x: number; w: number; h: number;   // icon pixel art bbox (kit px)
+  boxX: number;                       // 18px container column origin
+  yRest: number;                      // resting row (brown art, 14px box)
+  yActive: number;                    // lifted row (green art, 15px box)
+  rest: string;                       // brown icon art
+  lit: string;                        // green icon art
+  boxRest: string;                    // resting container (14px tall)
+  boxLit: string;                     // lifted container (15px tall)
+  boxFlat: string;                    // composed flat container (ALL mode)
 }[] = [
   {
-    group: "tool", x: 11, w: 12, h: 13, yRest: 18, yActive: 12,
+    group: "tool", x: 11, w: 12, h: 13, boxX: 8, yRest: 18, yActive: 12,
     rest: "ui/v5/layers/craft_tab_tool_rest.png",
     lit: "ui/v5/layers/craft_tab_tool_lit.png",
+    boxRest: "ui/v5/layers/craft_tabbox_tool_rest.png",
+    boxLit: "ui/v5/layers/craft_tabbox_tool_lit.png",
+    boxFlat: "ui/v5/layers/craft_tabbox_tool_flat.png",
   },
   {
-    group: "decor", x: 28, w: 10, h: 13, yRest: 18, yActive: 12,
+    group: "decor", x: 28, w: 10, h: 13, boxX: 24, yRest: 18, yActive: 12,
     rest: "ui/v5/layers/craft_tab_decor_rest.png",
     lit: "ui/v5/layers/craft_tab_decor_lit.png",
+    boxRest: "ui/v5/layers/craft_tabbox_decor_rest.png",
+    boxLit: "ui/v5/layers/craft_tabbox_decor_lit.png",
+    boxFlat: "ui/v5/layers/craft_tabbox_decor_flat.png",
   },
   {
-    group: "usable", x: 43, w: 11, h: 13, yRest: 18, yActive: 12,
+    group: "usable", x: 43, w: 11, h: 13, boxX: 40, yRest: 18, yActive: 12,
     rest: "ui/v5/layers/craft_tab_usable_rest.png",
     lit: "ui/v5/layers/craft_tab_usable_lit.png",
+    boxRest: "ui/v5/layers/craft_tabbox_usable_rest.png",
+    boxLit: "ui/v5/layers/craft_tabbox_usable_lit.png",
+    boxFlat: "ui/v5/layers/craft_tabbox_usable_flat.png",
   },
 ];
 // Slot surfaces: LIGHT cell for quick-craft, DARK cell for materials.
@@ -251,4 +274,31 @@ export function sizePanel(
   img.src = panel.frame;
   img.style.width = `${panel.w * PIXEL_SCALE}px`;
   img.style.height = `${panel.h * PIXEL_SCALE}px`;
+}
+
+/**
+ * Render a number in the kit's own v5 pixel font (right-aligned so the
+ * count grows leftward from the icon's right edge — classic purse layout).
+ * Returns the digit <img>s; the caller positions/removes them.
+ */
+export function makeDigitRun(
+  value: number,
+  rightPx: number,
+): HTMLImageElement[] {
+  const text = String(Math.max(0, Math.floor(value)));
+  const out: HTMLImageElement[] = [];
+  let x = rightPx - text.length * PURSE_DIGIT.advance; // right-aligned
+  for (const ch of text) {
+    const im = document.createElement("img");
+    im.className = "pix-layer purse-digit";
+    im.src = `${PURSE_DIGIT.dir}/n${ch}.png`;
+    im.draggable = false;
+    im.style.cssText =
+      `left:${x * PIXEL_SCALE}px;` +
+      `top:${PURSE_DIGIT.baselineY * PIXEL_SCALE}px;` +
+      `width:${8 * PIXEL_SCALE}px;height:${16 * PIXEL_SCALE}px;`;
+    out.push(im);
+    x += PURSE_DIGIT.advance;
+  }
+  return out;
 }
