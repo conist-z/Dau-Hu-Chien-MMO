@@ -178,8 +178,6 @@ export class Hud {
   private matGrid: (Stack | null)[] = Array(9).fill(null);
   private parkedResult: { id: string; qty: number } | null = null;
   private drag: DragSrc | null = null;
-  /** The mousedown that ENDS the current drag (throw-to-world check). */
-  private dragEndPress: { x: number; y: number; button: number } | null = null;
   /** Set by main.ts: throws a stack into the world (drop entity). */
   onThrow: ((itemId: string, qty: number) => void) | null = null;
   /** True when (x, y) is inside ANY open inventory/craft panel. */
@@ -252,18 +250,11 @@ export class Hud {
     this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
     // Global drag ghost tracking (mouse-move + drop outside any slot).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
-    window.addEventListener("mousedown", (e) => {
-      // Track the press that ENDS a drag (mouseup alone can't distinguish
-      // the press that STARTED the drag from the one that throws it).
-      if (this.drag) this.dragEndPress = { x: e.clientX, y: e.clientY, button: e.button };
-    });
     window.addEventListener("mouseup", (e) => {
       // MAGNETIC DROP: resolve to the NEAREST droppable slot within a
       // generous snap radius instead of only the exact hovered slot —
       // near-misses snap in instead of springing back.
       if (!this.drag) return;
-      const press = this.dragEndPress;
-      this.dragEndPress = null;
       const t = this.nearestDropTarget(e.clientX, e.clientY);
       if (t) {
         if (t.from === "result") {
@@ -275,13 +266,10 @@ export class Hud {
         this.dropOn(t.from as "bag" | "mat", t.index);
         return;
       }
-      // OUTSIDE the panel + left click on the press that ends the drag:
-      // THROW the stack into the world (server spawns a drop entity).
+      // DRAG OUT + RELEASE outside every panel = throw the stack into the
+      // world (server spawns a drop entity). No extra click needed.
       if (
-        press &&
-        press.button === 0 &&
-        Math.hypot(press.x - e.clientX, press.y - e.clientY) < 6 &&
-        this.drag &&
+        e.button === 0 &&
         !this.pointInPanels(e.clientX, e.clientY) &&
         this.onThrow
       ) {
@@ -899,15 +887,22 @@ export class Hud {
     const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
     // --- QUICK-CRAFT catalog (light 3×5, left; NOT draggable).
-    for (let i = 0; i < CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows; i++) {
+    // Scrolling window: slot i shows recipes[craftScroll + i]; bounds are
+    // clamped so the window never shows past the recipe list.
+    this.clampCraftScroll();
+    const scroll = this.craftScroll;
+    const totalRecipes = this.recipes.length;
+    const gridCells = CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows;
+    for (let i = 0; i < gridCells; i++) {
       const [x, y] = slotXY(CRAFT_QUICK_GRID, i);
-      const rec = this.recipes[i];
+      const rIdx = scroll + i;
+      const rec = rIdx < totalRecipes ? this.recipes[rIdx] : undefined;
       const haveAll = !!rec && this.canCraftNow(rec);
       const slot = makeSlot(CRAFT_QUICK_GRID.slotW, x, y, CRAFT_QUICK_CELL, {
         iconUrl: rec ? itemIconUrl(rec.output.id) : undefined,
         emoji: rec ? rec.emoji : "",
         qty: rec && rec.output.qty > 1 ? String(rec.output.qty) : "",
-        selected: this.selectedQuick === i,
+        selected: this.selectedQuick === rIdx,
         clickable: !!rec,
         title: rec ? rec.name : undefined,
       });
@@ -922,7 +917,7 @@ export class Hud {
           if (e.button !== 0) return;
           e.stopPropagation();
           e.preventDefault();
-          this.selectedQuick = i;
+          this.selectedQuick = rIdx;
           // QUICK CRAFT — REAL takeover: take the recipe's materials out of
           // the BAG VIEW (local, instant) onto the grid. First return any
           // previously placed stacks, then pull from the bag stacks.
@@ -933,6 +928,10 @@ export class Hud {
       }
       this.invCraftWrap.appendChild(slot);
     }
+    // Pixel scrollbar along the right edge of the quick grid (the frame's
+    // own decorative rail): draw a thumb ONLY when the list overflows, so
+    // an all-fits catalog never shows a useless bar.
+    this.invCraftWrap.appendChild(this.makeCraftScrollbar(scroll, totalRecipes, gridCells));
 
     // --- MATERIAL grid (dark 3×3, top right; draggable) — local buffer.
     for (let i = 0; i < CRAFT_MAT_GRID.cols * CRAFT_MAT_GRID.rows; i++) {
@@ -1063,6 +1062,43 @@ export class Hud {
 
   private pendingCraftSnapshot: (Stack | null)[] | null = null;
   private lastCreateAt = 0; // CREATE debounce (see makeCraftButton)
+
+  /** Pixel scrollbar for the quick-craft catalog. The rail's TOP and BOTTOM
+   *  are EXACTLY the top of the first slot row and the bottom of the last
+   *  slot row (user rule: "đỉnh và đáy của thanh cuộn = điểm cao nhất và
+   *  thấp nhất của mấy slot công thức"). The thumb size/position is the
+   *  visible-window fraction of the recipe list, snapped to whole pixels
+   *  so it stays crisp at PIXEL_SCALE. Returns a 0-size element when the
+   *  list fits the grid (nothing to scroll). */
+  private makeCraftScrollbar(
+    scroll: number, totalRecipes: number, gridCells: number,
+  ): HTMLElement {
+    const SC = PIXEL_SCALE;
+    const g = CRAFT_QUICK_GRID;
+    const rail = document.createElement("div");
+    if (totalRecipes <= gridCells) return rail; // fits: no bar at all
+    const railX = (g.firstX + (g.cols - 1) * g.stepX + g.slotW + 1) * SC;
+    const railTop = g.firstY * SC;
+    const railBottom = (g.firstY + (g.rows - 1) * g.stepY + g.slotH) * SC;
+    const railH = railBottom - railTop;
+    rail.className = "craft-scroll-rail";
+    rail.style.cssText =
+      `left:${railX}px;top:${railTop}px;width:${2 * SC}px;height:${railH}px;`;
+    // Thumb fraction: visible cells over total recipes (min 1 cell tall).
+    const frac = Math.max(gridCells / totalRecipes, gridCells / (gridCells * 4));
+    let thumbH = Math.max(2 * SC, Math.round(railH * Math.min(1, frac)));
+    if (thumbH > railH) thumbH = railH;
+    const trackable = railH - thumbH;
+    const max = this.craftScrollMax;
+    const t = max > 0 ? scroll / max : 0;
+    const thumbY = railTop + Math.round(trackable * t);
+    const thumb = document.createElement("div");
+    thumb.className = "craft-scroll-thumb";
+    thumb.style.cssText =
+      `left:0;top:${thumbY - railTop}px;width:100%;height:${thumbH}px;`;
+    rail.appendChild(thumb);
+    return rail;
+  }
 
   /** Pixel CREATE button (demo sprite; states via filters). */
   private makeCraftButton(gridHasMaterials: boolean, sel: RecipePayload | null): HTMLElement {
@@ -1581,14 +1617,19 @@ export class Hud {
       const g = CRAFT_QUICK_GRID;
       const SC = PIXEL_SCALE;
       // Wheel must be INSIDE the quick-grid bbox (scroll region top/bottom
-      // = top of the first slot row / bottom of the last slot row).
+      // = top of the first slot row / bottom of the last slot row). Coords
+      // are measured against the WRAP's rect — offsetX/Y would be relative
+      // to whichever child element the cursor happens to be over.
+      const r = this.invCraftWrap.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
       const top = g.firstY * SC;
       const bottom = (g.firstY + (g.rows - 1) * g.stepY + g.slotH) * SC;
       const left = g.firstX * SC;
       const right = (g.firstX + (g.cols - 1) * g.stepX + g.slotW) * SC;
       if (
-        e.offsetY < top || e.offsetY > bottom ||
-        e.offsetX < left || e.offsetX > right
+        my < top || my > bottom ||
+        mx < left || mx > right
       ) return;
       const cells = g.cols * g.rows;
       if (this.recipes.length <= cells) return; // nothing to scroll
