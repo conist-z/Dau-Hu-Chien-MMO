@@ -41,13 +41,22 @@ WEB_ZOMBIE_WALK_SPEED = 2.2
 WEB_ZOMBIE_HUNTER_SPEED = 4.2
 # Bite range in float tiles: touching distance + a small slack.
 WEB_ZOMBIE_BITE_RANGE = 0.85
-# Per-zombie bite cooldown (seconds): the "giật" fix — damage lands at most
-# this often per zombie even though movement integrates every 50 ms.
-WEB_ZOMBIE_BITE_COOLDOWN = 1.2
+# Per-zombie bite cooldown (seconds): damage lands at most this often per
+# zombie even though movement integrates every 50 ms.
+WEB_ZOMBIE_BITE_COOLDOWN = 1.8
+# Length of ONE bite swing on the web client (4 atk frames x 90 ms). Kept a
+# touch SHORTER than the bite cooldown so the pose un-freezes before the
+# next bite re-arms it.
+WEB_ZOMBIE_ATK_MS = 4 * 90
 # Spawn/despawn distances in float tiles (mirror the int constants).
 WEB_ZOMBIE_MIN_SPAWN_DIST = 8.0
 WEB_ZOMBIE_DESPAWN_DIST = 90.0
 WEB_ZOMBIE_VISION_RADIUS = 6.0
+# Hard chase leash (tiles, centre distance): a zombie NEVER chases or bites
+# beyond this even if its steering got confused by a lagging player ghost.
+# Without a leash a bad server tick made zombies pursue (and damage) a
+# player-position from tiles away ("đánh mình khi đứng xa 7-8 ô").
+WEB_ZOMBIE_LEASH = 3.5
 # Kaetram mob sheet rows for the zombie (5 cols x 9 rows of 32px, see
 # util.ts getDefaultAnimations "mobs"): row 0 = atk (5f), row 1 = walk (4f),
 # row 2 = idle (2f). Sent to the web client as anim state, NOT pixels.
@@ -74,7 +83,11 @@ ZOMBIE_HUNTER_CHANCE = 0.005
 ZOMBIE_MAX_HUNTERS = 2
 # Despawn when the nearest player is farther than this (they "wandered off").
 ZOMBIE_DESPAWN_DISTANCE = 90
-ZOMBIE_DROP_TABLE = (("rotten_flesh", 1.0, 1), ("coin", 0.35, 1))
+ZOMBIE_DROP_TABLE = (
+    ("rotten_flesh", 1.0, 1),
+    ("coin", 0.35, 1),
+    ("raw_meat", 0.5, 1),  # cook it in the furnace (game/smelting.py)
+)
 
 _DIRECTIONS: Tuple[Tuple[int, int], ...] = (
     (-1, -1), (0, -1), (1, -1),
@@ -540,6 +553,9 @@ def advance_visible_zombies(
             before = target.hp
             target.hp = max(0, target.hp - zombie.damage)
             if target.hp != before:
+                # Out-of-combat regen clock: any HP loss re-arms the 5 s wait.
+                target.last_damaged_at = time.monotonic()
+                target.regen_bank = 0.0
                 result.changed = True
                 result.visible_changed = True
                 result.damaged_player_ids.add(target.user_id)
@@ -612,6 +628,13 @@ def _web_facing(dx: float, dy: float) -> str:
 def _web_set_anim(z: Zombie, anim: str, now: float) -> None:
     if z.anim != anim:
         z.anim = anim
+        z.anim_t = now
+        return
+    # Re-arm on a repeated BITE (not just on the first): the zombie keeps
+    # anim="atk" between successive bites, so without this the client would
+    # replay the swing frames only once and then freeze on the lunge pose
+    # ("đấm xong đơ") until the zombie moved again.
+    if anim == "atk":
         z.anim_t = now
 
 
@@ -713,6 +736,11 @@ def web_tick(
             _web_set_anim(z, "idle", now_mono)
             continue
         dist = _web_dist(z, target)
+        # LEASH: beyond WEB_ZOMBIE_LEASH a zombie simply loses interest (no
+        # steering, no bite) — every attack the player sees is within reach.
+        if dist > WEB_ZOMBIE_LEASH:
+            _web_set_anim(z, "idle", now_mono)
+            continue
         dx = target.x_f - z.x_f
         dy = target.y_f - z.y_f
         length = _math.hypot(dx, dy)
@@ -723,6 +751,10 @@ def web_tick(
                 before = target.hp
                 target.hp = max(0, target.hp - z.damage)
                 if target.hp != before:
+                    # Out-of-combat regen clock: any HP loss re-arms the 5 s
+                    # wait (web pack — same rule as the Discord pack).
+                    target.last_damaged_at = now_mono
+                    target.regen_bank = 0.0
                     result.changed = True
                     result.damaged_player_ids.add(target.user_id)
                     z.last_bite = now_mono

@@ -19,7 +19,7 @@ export interface NetHandlers {
   onPush: (message: string) => void;
   onError: (code: string) => void;
   onAssetData: (name: string, b64: string | null) => void;
-  onLoginOk: (token: string, displayName: string) => void;
+  onLoginOk: (token: string, displayName: string, avatarUrl: string) => void;
   onLoginFail: (error: string) => void;
   onHeld: (slot: number, itemId: string | null) => void;
   onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }) => void;
@@ -285,12 +285,16 @@ export class Net {
   /** Craft: send the LOCAL material grid's exact multiset once — the server
    *  validates against the real bag and consumes there. */
   craftFromGrid(inputs?: { id: string; qty: number }[]): void {
+    // DIAG (temporary): confirms the browser actually sent the craft frame.
+    console.log("[CRAFT] sending craft_op", JSON.stringify(inputs ?? []));
     this.send({ type: "craft_op", op: "craft", inputs: inputs ?? [] });
   }
 
-  /** Collect the parked craft result into the bag. */
-  craftCollect(): void {
-    this.send({ type: "craft_op", op: "collect" });
+  /** Collect the parked craft result into the bag. ``slot`` targets a
+   *  specific bag cell (drag-to-slot); null = first free slot (click). */
+  craftCollect(slot: number | null = null): void {
+    this.send({ type: "craft_op", op: "collect",
+      ...(slot !== null ? { slot } : {}) });
   }
 
   /** Legacy recipe-id craft (Discord parity). */
@@ -337,7 +341,7 @@ export class Net {
           this.token = frame.token;
           localStorage.setItem("web_token", frame.token);
           localStorage.setItem("web_name", frame.display_name ?? "");
-          this.handlers.onLoginOk(frame.token, frame.display_name ?? "");
+          this.handlers.onLoginOk(frame.token, frame.display_name ?? "", (frame as { avatar_url?: string }).avatar_url ?? "");
         } else {
           this.handlers.onLoginFail(frame.error ?? "login_failed");
         }
@@ -364,6 +368,8 @@ export class Net {
       case "craft_result":
         // Server verdict for craft_op (previously silently dropped): success
         // toast + the inventory_delta that follows refreshes the bag grid.
+        // DIAG (temporary): the verdict as the browser sees it.
+        console.log("[CRAFT] verdict", frame.ok, frame.reason, frame.item_id, frame.qty);
         this.handlers.onCraftResult(frame.ok, frame.reason, frame.item_id, frame.qty);
         break;
       case "push":

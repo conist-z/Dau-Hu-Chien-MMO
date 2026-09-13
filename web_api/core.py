@@ -285,7 +285,7 @@ class WebHub:
             "user_id": sess.user_id,
             "display_name": sess.display_name,
         }
-        if sess.avatar_hash:
+        if getattr(sess, "avatar_hash", ""):
             frame["avatar_url"] = (
                 f"https://cdn.discordapp.com/avatars/{sess.user_id}/"
                 f"{sess.avatar_hash}.png?size=128"

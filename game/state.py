@@ -88,6 +88,12 @@ class Player:
     # positions, 20 Hz tick) — never the Discord turn-based pack, so neither
     # side lags or interferes with the other.
     is_web: bool = False
+    # Which client mode currently CONTROLS this body ("chat" | "web").
+    # Runtime-only (never persisted): the snapshot carries it per player so
+    # the web client renders chat players as round avatar tokens, and the
+    # Discord side gates its own input while the web session holds the body
+    # ("web wins" — web vào thì Discord tắt, web thoát Discord tự lấy lại).
+    mode: str = "chat"
     sprite_id: str = ""
     visible: bool = True
     # RPG stats (MVP defaults; persisted as primitives in SQLite).
@@ -95,6 +101,13 @@ class Player:
     max_hp: int = 100
     mana: int = 50
     max_mana: int = 50
+    # Out-of-combat HP regen (user rule 13/09). Runtime-only (not persisted):
+    # ``last_damaged_at`` = monotonic time of the last HP LOSS (zombie bite /
+    # any damage — apply_regen heals only after REGEN_DELAY_S of quiet), and
+    # ``regen_bank`` carries sub-1-HP fractional healing between ticks so the
+    # 2 HP/s pace is smooth even at 20 Hz.
+    last_damaged_at: Optional[float] = None
+    regen_bank: float = 0.0
     level: int = 1
     xp: int = 0
     coins: int = 0
@@ -144,7 +157,17 @@ class Player:
         self.visible = True
         self.dead_until = None
         self.death_reason = None
+        # Revive teleports like the task path: a random walkable tile +
+        # re-centred float pos. Without this the player woke up exactly where
+        # they died — inside the zombie pack — and was bitten to 0 HP again
+        # on the very next tick (the "treo màn hồi sinh" loop). Callers that
+        # own a map/collision pass them; otherwise position is left alone.
         return True
+
+    def revive_teleport(self, x: int, y: int) -> None:
+        """Place a reviving player on (x, y) with float pos re-centred."""
+        self.x, self.y = x, y
+        self.sync_float_from_int()
 
     def sync_int_from_float(self) -> None:
         """Derive int grid coords from the float position (floor)."""
@@ -191,6 +214,10 @@ class GameState:
         # Entries are (x, y, radius_tiles, intensity, RGB) and are consumed by
         # the renderer only; they are not persisted as gameplay state.
         self.light_sources: List[tuple] = []
+        # Furnace states keyed by the placed furnace block's tile (x, y)
+        # (game/smelting.py). Persisted in SQLite so smelting survives a
+        # restart — the deadline keeps ticking through downtime.
+        self.furnaces: Dict[Tuple[int, int], "object"] = {}
 
     def add_player(self, user_id: int, display_name: str, x: int = 0, y: int = 0) -> Player:
         if user_id in self.players:

@@ -407,7 +407,11 @@ def apply_break_block(
         td is not None and (right_family is None or td.family == right_family)
     )
     damage = 2 if right_tool else 1
-    total = blocks.add_damage(tx, ty, damage)
+    # Stamp wall-clock time for the block self-repair countdown (user rule
+    # 13/09): nobody hitting the block for 3.5 s heals its crack gradually.
+    import time as _time
+
+    total = blocks.add_damage(tx, ty, damage, _time.time())
     if total < hardness:
         return ActionResult(
             True, state_changed=True, pos=(tx, ty), block_id=block_id,
@@ -427,6 +431,13 @@ def apply_break_block(
     )
 
 
+# Out-of-combat HP regen (user rule 13/09): after REGEN_DELAY_S without
+# taking damage a player heals REGEN_HP_PER_SEC HP/s (2 HP/s — 30 HP lost
+# heals in 15 s). Data-driven so the numbers are tunable without logic edits.
+REGEN_DELAY_S = 5.0
+REGEN_HP_PER_SEC = 2.0
+
+
 def apply_weather_regen(player: Player, ws: WeatherState) -> None:
     """Apply passive mana/hp regen from the current national weather.
 
@@ -440,3 +451,21 @@ def apply_weather_regen(player: Player, ws: WeatherState) -> None:
         player.mana = min(player.max_mana, player.mana + mana_gain)
     if hp_gain and player.hp < player.max_hp:
         player.hp = min(player.max_hp, player.hp + hp_gain)
+
+
+def apply_regen(player: Player, dt: float) -> bool:
+    """Out-of-combat HP regen (user rule 13/09): a player that has not taken
+    damage for REGEN_DELAY_S heals REGEN_HP_PER_SEC HP per second (float bank,
+    rendered HP stays int until a full point accumulates).
+
+    Returns True when the player's hp changed (caller persists).
+    """
+    if player.hp <= 0 or player.hp >= player.max_hp or dt <= 0:
+        return False
+    player.regen_bank += dt * REGEN_HP_PER_SEC
+    if player.regen_bank < 1.0:
+        return False
+    gain = int(player.regen_bank)
+    player.regen_bank -= gain
+    player.hp = min(player.max_hp, player.hp + gain)
+    return True

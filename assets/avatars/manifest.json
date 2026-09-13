@@ -1,0 +1,414 @@
+{
+ "attribution": "Twemoji by Twitter/jdecked fork — CC-BY 4.0 — https://github.com/jdecked/twemoji",
+ "source": "https://github.com/jdecked/twemoji (CC-BY 4.0)",
+ "categories": [
+  "animals",
+  "faces",
+  "food",
+  "fantasy"
+ ],
+ "category_labels": {
+  "animals": "Động vật",
+  "faces": "Khuôn mặt",
+  "food": "Đồ ăn",
+  "fantasy": "Fantasy"
+ },
+ "avatars": [
+  {
+   "id": "twe:1f436",
+   "unicode": "1f436",
+   "label": "Mặt chó",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f431",
+   "unicode": "1f431",
+   "label": "Mặt mèo",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f43b",
+   "unicode": "1f43b",
+   "label": "Gấu",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f428",
+   "unicode": "1f428",
+   "label": "Koala",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f437",
+   "unicode": "1f437",
+   "label": "Mặt lợn",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f43c",
+   "unicode": "1f43c",
+   "label": "Gấu trúc",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f427",
+   "unicode": "1f427",
+   "label": "Chim cánh cụt",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f98a",
+   "unicode": "1f98a",
+   "label": "Cáo",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f438",
+   "unicode": "1f438",
+   "label": "Ếch",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f435",
+   "unicode": "1f435",
+   "label": "Khỉ",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f434",
+   "unicode": "1f434",
+   "label": "Mặt ngựa",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f42f",
+   "unicode": "1f42f",
+   "label": "Mặt hổ",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f981",
+   "unicode": "1f981",
+   "label": "Sư tử",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f430",
+   "unicode": "1f430",
+   "label": "Mặt thỏ",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f433",
+   "unicode": "1f433",
+   "label": "Cá voi",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f42d",
+   "unicode": "1f42d",
+   "label": "Chuột",
+   "category": "animals"
+  },
+  {
+   "id": "twe:1f600",
+   "unicode": "1f600",
+   "label": "Cười tươi",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f60e",
+   "unicode": "1f60e",
+   "label": "Lạnh lùng",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f973",
+   "unicode": "1f973",
+   "label": "Mặt quái dị",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f92a",
+   "unicode": "1f92a",
+   "label": "Điên điên",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f608",
+   "unicode": "1f608",
+   "label": "Mặt quỷ",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f47b",
+   "unicode": "1f47b",
+   "label": "Con ma",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f9d1-200d-1f9d2",
+   "unicode": "1f9d1-200d-1f9d2",
+   "label": "Gia đình",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f916",
+   "unicode": "1f916",
+   "label": "Robot",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f60d",
+   "unicode": "1f60d",
+   "label": "Mắt trái tim",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f621",
+   "unicode": "1f621",
+   "label": "Tức giận",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f976",
+   "unicode": "1f976",
+   "label": "Choáng lạnh",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f635",
+   "unicode": "1f635",
+   "label": "Xỉu",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f602",
+   "unicode": "1f602",
+   "label": "Cười chảy nước mắt",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f921",
+   "unicode": "1f921",
+   "label": "Mặt hề",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f47e",
+   "unicode": "1f47e",
+   "label": "Quái vật game",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f634",
+   "unicode": "1f634",
+   "label": "Buồn ngủ",
+   "category": "faces"
+  },
+  {
+   "id": "twe:1f354",
+   "unicode": "1f354",
+   "label": "Hamburger",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f355",
+   "unicode": "1f355",
+   "label": "Pizza",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f32d",
+   "unicode": "1f32d",
+   "label": "Bánh mì kẹp",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f35f",
+   "unicode": "1f35f",
+   "label": "Khoai tây chiên",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f363",
+   "unicode": "1f363",
+   "label": "Sushi",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f35c",
+   "unicode": "1f35c",
+   "label": "Mì tô",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f35a",
+   "unicode": "1f35a",
+   "label": "Cơm",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f366",
+   "unicode": "1f366",
+   "label": "Kem",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f370",
+   "unicode": "1f370",
+   "label": "Bánh kem",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f34e",
+   "unicode": "1f34e",
+   "label": "Táo đỏ",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f34c",
+   "unicode": "1f34c",
+   "label": "Chuối",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f347",
+   "unicode": "1f347",
+   "label": "Nho",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f345",
+   "unicode": "1f345",
+   "label": "Cà chua",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f951",
+   "unicode": "1f951",
+   "label": "Bơ",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f351",
+   "unicode": "1f351",
+   "label": "Đào",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f36d",
+   "unicode": "1f36d",
+   "label": "Kẹo gậy",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f36b",
+   "unicode": "1f36b",
+   "label": "Sô-cô-la",
+   "category": "food"
+  },
+  {
+   "id": "twe:1f9da",
+   "unicode": "1f9da",
+   "label": "Tiên",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9dc",
+   "unicode": "1f9dc",
+   "label": "Nàng tiên cá",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9db",
+   "unicode": "1f9db",
+   "label": "Vampire",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9df",
+   "unicode": "1f9df",
+   "label": "Zombie",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9cc",
+   "unicode": "1f9cc",
+   "label": "Troll",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f409",
+   "unicode": "1f409",
+   "label": "Rồng",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9e9",
+   "unicode": "1f9e9",
+   "label": "Mảnh ghép",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f531",
+   "unicode": "1f531",
+   "label": "Trident",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:26ea",
+   "unicode": "26ea",
+   "label": "Nhà thờ",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f3f0",
+   "unicode": "1f3f0",
+   "label": "Lâu đài",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f9ff",
+   "unicode": "1f9ff",
+   "label": "Gậy phép",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f31f",
+   "unicode": "1f31f",
+   "label": "Sao lấp lánh",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f4a5",
+   "unicode": "1f4a5",
+   "label": "Nổ",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f525",
+   "unicode": "1f525",
+   "label": "Lửa",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:2728",
+   "unicode": "2728",
+   "label": "Lấp lánh",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f48e",
+   "unicode": "1f48e",
+   "label": "Đá quý",
+   "category": "fantasy"
+  },
+  {
+   "id": "twe:1f5ff",
+   "unicode": "1f5ff",
+   "label": "Tượng Moai",
+   "category": "fantasy"
+  }
+ ]
+}

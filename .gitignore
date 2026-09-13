@@ -34,3 +34,16 @@ web_client/relay/node_modules/
 # Deploy scratch
 deploy_log.txt
 
+
+# Vendored reference sources (never ship these)
+_kaetram_src/
+kaetram_extract/
+
+# Local debug scratch
+.tmp_v5/
+temp_*/
+temp_*
+deploy_resume_log.txt
+_kenney_ui.zip
+.kilo/
+.freebuff/

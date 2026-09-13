@@ -140,12 +140,16 @@ export class Hud {
   private listEl = document.getElementById("scenario-list")!;
   private btnLogin = document.getElementById("btn-login") as HTMLButtonElement;
   private btnQuick = document.getElementById("btn-quick") as HTMLButtonElement;
-  // Dashboard (post-login pre-join panel).
-  private dashPanel = document.getElementById("dash-panel") as HTMLDivElement;
-  private dashAvatar = document.getElementById("dash-avatar") as HTMLImageElement;
-  private dashName = document.getElementById("dash-name")!;
-  private dashSub = document.getElementById("dash-sub") as HTMLElement;
-  private dashLogout = document.getElementById("dash-logout") as HTMLButtonElement;
+  // Lobby (main menu, post-login pre-join).
+  private lobbyEl = document.getElementById("lobby") as HTMLDivElement;
+  private lobbyAvatar = document.getElementById("lobby-avatar") as HTMLSpanElement;
+  private lobbyName = document.getElementById("lobby-name")!;
+  private lobbySub = document.getElementById("lobby-sub")!;
+  private lobbyMenu = document.getElementById("lobby-menu") as HTMLElement;
+  private lobbyServers = document.getElementById("lobby-servers") as HTMLElement;
+  private lobbyPaneEvents = document.getElementById("lobby-pane-events") as HTMLElement;
+  private lobbyPaneSettings = document.getElementById("lobby-pane-settings") as HTMLElement;
+  private lobbyStatus = document.getElementById("lobby-status")!;
   private gatePanel = document.querySelector(".gate-panel") as HTMLDivElement;
   // Referenced in renderDashboard (WIP dashboard thread); the TS6133 guard
   // below is satisfied by this touch.
@@ -1034,6 +1038,72 @@ export class Hud {
 
   onQuickClick(cb: () => void): void {
     this.btnQuick.addEventListener("click", cb);
+  }
+
+  // ----- lobby (main menu) -----
+
+  /** Profile chip: avatar image (Discord CDN) or letter badge, name + sub. */
+  setLobbyProfile(name: string, sub: string, avatarUrl: string): void {
+    this.lobbyName.textContent = name || "—";
+    this.lobbySub.textContent = sub;
+    if (avatarUrl) {
+      const img = document.createElement("img");
+      img.src = avatarUrl;
+      img.alt = "";
+      img.draggable = false;
+      this.lobbyAvatar.replaceChildren(img);
+    } else {
+      // Letter badge over the gradient circle (guests).
+      this.lobbyAvatar.replaceChildren((name || "?").trim().charAt(0).toUpperCase());
+    }
+  }
+
+  /** Show the lobby, hiding the login panel. `view` picks the initial pane. */
+  showLobby(view: "menu" | "servers" = "menu"): void {
+    this.gatePanel.classList.add("hidden");
+    this.lobbyEl.classList.remove("hidden");
+    this.showLobbyView(view);
+  }
+
+  hideLobby(): void {
+    this.lobbyEl.classList.add("hidden");
+    this.gatePanel.classList.remove("hidden");
+  }
+
+  /** Swap lobby content: rail menu | server list | events | settings. */
+  showLobbyView(view: "menu" | "servers" | "events" | "settings"): void {
+    this.lobbyMenu.classList.toggle("hidden", view !== "menu");
+    this.lobbyServers.classList.toggle("hidden", view !== "servers");
+    this.lobbyPaneEvents.classList.toggle("hidden", view !== "events");
+    this.lobbyPaneSettings.classList.toggle("hidden", view !== "settings");
+  }
+
+  setLobbyStatus(text: string | null): void {
+    this.lobbyStatus.hidden = text === null;
+    this.lobbyStatus.textContent = text ?? "";
+  }
+
+  onLobbyPlay(cb: () => void): void {
+    document.getElementById("lobby-play")!.addEventListener("click", cb);
+  }
+
+  onLobbyEvents(cb: () => void): void {
+    document.getElementById("lobby-events")!.addEventListener("click", cb);
+  }
+
+  onLobbySettings(cb: () => void): void {
+    document.getElementById("lobby-settings")!.addEventListener("click", cb);
+  }
+
+  onLobbyLogout(cb: () => void): void {
+    document.getElementById("lobby-logout")!.addEventListener("click", cb);
+  }
+
+  onLobbyBack(cb: () => void): void {
+    document.getElementById("lobby-back")!.addEventListener("click", cb);
+    for (const b of this.lobbyEl.querySelectorAll<HTMLButtonElement>("[data-pane-back]")) {
+      b.addEventListener("click", cb);
+    }
   }
 
   showScenarioList(items: { channel_id: number; map_name: string; players: number }[],

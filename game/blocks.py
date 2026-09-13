@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional, Tuple
+
+# Self-repair tuning (user rule 13/09): a block nobody hits for 3.5 s starts
+# healing its crack damage back to full, LINEARLY at 1 damage/s ("tua ngược
+# từ từ", never a sudden pop). Decay itself is driven by manager tick loops.
+BLOCK_REPAIR_DELAY_S = 3.5
+BLOCK_REPAIR_RATE = 1.0  # damage points healed per second after the delay
 
 
 @dataclass
@@ -86,6 +94,13 @@ class BlockGrid:
         # Progressive break damage: (x, y) -> accumulated damage. A block
         # breaks when damage >= its hardness; heal-to-full on regrow/reset.
         self.damage: Dict[Tuple[int, int], int] = {}
+        # Self-repair (user rule 13/09): a block nobody hit for
+        # BLOCK_REPAIR_DELAY_S seconds starts healing back to full — GRADUALLY
+        # ("tua ngược", reverse at BLOCK_REPAIR_RATE damage/s), never a sudden
+        # pop back. ``hit_at`` = last hit (drives the delay);
+        # ``damage_at`` = last heal check (drives the incremental drain).
+        self.damage_at: Dict[Tuple[int, int], float] = {}
+        self.hit_at: Dict[Tuple[int, int], float] = {}
 
     def __len__(self) -> int:
         return len(self._cells)
@@ -102,19 +117,75 @@ class BlockGrid:
             return False
         self._cells[(x, y)] = block_id
         self.damage.pop((x, y), None)
+        self.damage_at.pop((x, y), None)
+        self.hit_at.pop((x, y), None)
         return True
 
     def remove(self, x: int, y: int) -> Optional[str]:
         """Break the block; the ground shows again. None if the tile is bare."""
         self.damage.pop((x, y), None)
+        self.damage_at.pop((x, y), None)
+        self.hit_at.pop((x, y), None)
         return self._cells.pop((x, y), None)
 
-    def add_damage(self, x: int, y: int, amount: int) -> int:
-        """Accumulate break damage; returns the new total."""
+    def add_damage(self, x: int, y: int, amount: int, now: Optional[float] = None) -> int:
+        """Accumulate break damage; returns the new total.
+
+        Self-repair aware (user rule 13/09): healing accrued since the last
+        hit is materialised FIRST so a fresh hit stacks on the CURRENT
+        (partially healed) damage, then the 3.5 s countdown restarts.
+        """
         if (x, y) not in self._cells:
             return 0
+        if now is None:
+            now = time.time()
+        self._materialize_heal(x, y, now)
         self.damage[(x, y)] = self.damage.get((x, y), 0) + max(0, amount)
+        self.hit_at[(x, y)] = now
+        self.damage_at[(x, y)] = now
         return self.damage[(x, y)]
+
+    def _materialize_heal(self, x: int, y: int, now: float) -> None:
+        """Drain the tile's damage for the heal window elapsed since the last
+        check (only the part after hit + delay). Exact, incremental, no
+        double-counting across beats.
+        """
+        hit = self.hit_at.get((x, y))
+        checked = self.damage_at.get((x, y), hit)
+        if hit is None or checked is None:
+            return
+        start = max(checked, hit + BLOCK_REPAIR_DELAY_S)
+        if now > start:
+            self.damage[(x, y)] = max(
+                0.0, self.damage.get((x, y), 0) - (now - start) * BLOCK_REPAIR_RATE
+            )
+
+    def decay_damage(self, now: Optional[float] = None) -> None:
+        """Self-repair beat (call every tick): after the idle delay elapses,
+        heal damaged blocks back to full LINEARLY at BLOCK_REPAIR_RATE/s
+        ("tua ngược từ từ", never a sudden pop).
+        """
+        if not self.damage:
+            return
+        if now is None:
+            now = time.time()
+        for (x, y) in list(self.damage_at.keys()):
+            if (x, y) not in self.damage:
+                self.damage_at.pop((x, y), None)
+                self.hit_at.pop((x, y), None)
+                continue
+            if (x, y) not in self._cells:
+                # Block was broken/removed: nothing to repair.
+                self.damage.pop((x, y), None)
+                self.damage_at.pop((x, y), None)
+                self.hit_at.pop((x, y), None)
+                continue
+            self._materialize_heal(x, y, now)
+            if self.damage.get((x, y), 0) <= 0:
+                # Fully repaired: crack gone, block looks brand new.
+                self.damage.pop((x, y), None)
+                self.damage_at.pop((x, y), None)
+                self.hit_at.pop((x, y), None)
 
     def damage_of(self, x: int, y: int) -> int:
         return self.damage.get((x, y), 0)
@@ -132,6 +203,8 @@ class BlockGrid:
         Collision/manager references."""
         self._cells.clear()
         self.damage.clear()
+        self.damage_at.clear()
+        self.hit_at.clear()
 
     def solid_at(self, x: int, y: int) -> bool:
         bid = self._cells.get((x, y))

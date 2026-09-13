@@ -1,0 +1,16 @@
+[
+  {"id": "HN",   "name": "Hà Nội",         "lat": 21.0285, "lon": 105.8542},
+  {"id": "HP",   "name": "Hải Phòng",      "lat": 20.8652, "lon": 106.6830},
+  {"id": "SAPA", "name": "Sa Pa",          "lat": 22.3364, "lon": 103.8436},
+  {"id": "SL",   "name": "Sơn La",         "lat": 21.3256, "lon": 103.9188},
+  {"id": "TH",   "name": "Thanh Hóa",      "lat": 19.8065, "lon": 105.7856},
+  {"id": "VINH", "name": "Vinh",           "lat": 18.6708, "lon": 105.6813},
+  {"id": "HUE",  "name": "Huế",            "lat": 16.4637, "lon": 107.5909},
+  {"id": "DN",   "name": "Đà Nẵng",        "lat": 16.0544, "lon": 108.2022},
+  {"id": "QN",   "name": "Quy Nhơn",       "lat": 13.7667, "lon": 109.2237},
+  {"id": "BMT",  "name": "Buôn Ma Thuột",  "lat": 12.6667, "lon": 108.0500},
+  {"id": "HCM",  "name": "TP. Hồ Chí Minh", "lat": 10.8231, "lon": 106.6297},
+  {"id": "NT",   "name": "Nha Trang",      "lat": 12.2388, "lon": 109.1967},
+  {"id": "CT",   "name": "Cần Thơ",        "lat": 10.0452, "lon": 105.7469},
+  {"id": "PQ",   "name": "Phú Quốc",       "lat": 10.2899, "lon": 103.9846}
+]

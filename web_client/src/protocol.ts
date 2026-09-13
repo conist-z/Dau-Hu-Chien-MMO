@@ -53,6 +53,10 @@ export interface WelcomePayload {
   item_emojis: Record<string, string>;
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
+  // "x,y" -> [damage, needed(hardness)] — only DAMAGED blocks appear. The
+  // server drains damage after an idle gap (self-repair); the client
+  // reverse-heals the crack overlay smoothly between samples.
+  block_damage?: Record<string, [number, number]>;
   resources: [number, number, number][];
   // "ax,ay" -> [hits, base_needed, tiles] (node bbox for the bar + fall anim)
   res_progress: Record<string, [number, number, number[][]]>;
@@ -115,6 +119,10 @@ export interface SnapshotPayload {
   weather: string;
   players: PlayerPayload[];
   blocks: [number, number, string][];
+  // "x,y" -> [damage, needed(hardness)] — only DAMAGED blocks appear, so it
+  // rides EVERY snapshot. Damage drains server-side after an idle gap
+  // (self-repair); the client reverse-heals the crack smoothly.
+  block_damage?: Record<string, [number, number]>;
   zombies: WebZombiePayload[];
   drops?: DropPayload[];
   self: {
@@ -210,7 +218,7 @@ export interface ScenarioItem {
 export type ServerFrame =
   | WelcomePayload
   | SnapshotPayload
-  | { type: "login_result"; ok: boolean; token?: string; user_id?: number; display_name?: string; error?: string }
+  | { type: "login_result"; ok: boolean; token?: string; user_id?: number; display_name?: string; avatar_url?: string; error?: string }
   | { type: "scenario_list"; items: ScenarioItem[] }
   | { type: "inventory_delta"; inventory: InventoryPayload; inv_version?: number; mat_grid?: [string, number][]; craft_result?: { id: string; qty: number } | null }
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }

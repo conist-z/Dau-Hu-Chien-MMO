@@ -428,6 +428,34 @@ html, body {
   z-index: 4;
 }
 
+/* Quick-craft slot that CANNOT be crafted AT ALL right now (needs a table
+   but none nearby): full red brick HATCH over the icon — "not possible". */
+.slot-pix.quick.locked::after {
+  content: "";
+  position: absolute; inset: 1px;
+  z-index: 4;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(140, 30, 20, 0.55) 0px,
+    rgba(140, 30, 20, 0.55) 3px,
+    rgba(60, 10, 5, 0.55) 3px,
+    rgba(60, 10, 5, 0.55) 6px
+  );
+  image-rendering: pixelated;
+}
+.slot-pix.quick.locked .icon-img,
+.slot-pix.quick.locked .icon { opacity: 0.45; }
+
+/* Craftable recipe that is only short on MATERIALS: thin red border frame
+   around the slot (icon stays fully visible — the desc rows say what's
+   missing). Distinct from the "impossible" hatch above. */
+.slot-pix.quick.short::after {
+  content: "";
+  position: absolute; inset: 0;
+  box-shadow: inset 0 0 0 2px rgba(190, 60, 40, 0.85);
+  z-index: 4;
+}
+
 /* Hover: 4-corner bracket highlight (pixel-art style — no rounded glow).
    Drawn as 4 small L-shapes on ::before so ::after stays free for state
    overlays (selected/craftable/ready). */
@@ -495,16 +523,25 @@ html, body {
   padding: 28px;
   text-align: center;
 }
-#login-gate h1 { font-size: 22px; margin-bottom: 8px; }
+#login-gate h1 { font-size: 22px; margin-bottom: 4px; }
+.gate-sub { opacity: 0.55; font-size: 12px; margin-bottom: 14px; }
 #login-status { opacity: 0.7; font-size: 13px; margin-bottom: 16px; }
-#btn-login {
-  background: var(--accent); color: white;
-  border: none; border-radius: 10px;
-  padding: 10px 18px; font-size: 14px; font-weight: 600;
+/* Two clean login paths: Discord (primary) + quick guest (dev/test). */
+.gate-actions { display: flex; flex-direction: column; gap: 10px; }
+.gate-btn {
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  padding: 11px 18px; font-size: 14px; font-weight: 600;
   cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
 }
-#btn-login:hover { filter: brightness(1.1); }
-#btn-login:disabled { opacity: 0.5; cursor: wait; }
+.gate-btn:hover { border-color: var(--accent); filter: brightness(1.1); }
+.gate-btn:disabled { opacity: 0.5; cursor: wait; }
+.gate-btn.primary {
+  background: var(--accent); color: white; border-color: transparent;
+}
+.gate-btn.subtle { font-size: 12px; opacity: 0.8; padding: 8px 14px; }
 #scenario-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
 .scenario-btn {
   background: rgba(255, 255, 255, 0.06);
@@ -534,3 +571,84 @@ html, body {
 .death-panel h2 { font-size: 24px; color: #ff6b7d; margin-bottom: 6px; }
 .death-panel p { font-size: 14px; opacity: 0.85; }
 #death-timer { font-weight: 700; color: #ffd75e; margin-top: 8px; }
+
+/* ============================== LOBBY (main menu) ==============================
+   game-menu-html5 style, modernised: dark backdrop, big title, vertical button
+   rail with hover glow, profile chip. Pure CSS, no framework. */
+.lobby {
+  width: min(430px, 92vw);
+  max-height: 88vh; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center;
+  background: #12151c;
+  border: 1px solid var(--hud-border);
+  border-radius: 18px;
+  padding: 26px 30px 24px;
+  text-align: center;
+  animation: lobby-in 0.25s ease-out;
+}
+.lobby.hidden { display: none; }
+@keyframes lobby-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.lobby-profile {
+  display: flex; align-items: center; gap: 10px;
+  align-self: flex-start;
+  margin-bottom: 14px;
+}
+.lobby-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: linear-gradient(135deg, #7c5cff 0%, #38bdf8 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; color: #fff;
+  box-shadow: 0 0 0 2px #12151c, 0 0 0 3.5px rgba(124, 92, 255, 0.55);
+  overflow: hidden; flex: none;
+}
+.lobby-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.lobby-who { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; }
+.lobby-who #lobby-name { font-weight: 700; font-size: 14px; }
+.lobby-who #lobby-sub { font-size: 11px; opacity: 0.5; }
+.lobby-title {
+  font-size: 30px; letter-spacing: 1px; line-height: 1.1;
+  margin: 2px 0 2px;
+  background: linear-gradient(90deg, #fff 30%, #b9a8ff 75%, #7cd8ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lobby-title span { display: block; font-size: 0.62em; letter-spacing: 6px; opacity: 0.95; }
+.lobby-tag { font-size: 12px; opacity: 0.55; margin-bottom: 18px; }
+.lobby-menu { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.lobby-btn {
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  padding: 13px 18px;
+  font-size: 15px; font-weight: 600; color: inherit;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+  text-align: left;
+}
+.lobby-btn:hover { border-color: var(--accent); background: rgba(255, 255, 255, 0.09); transform: translateY(-1px); }
+.lobby-btn:active { transform: translateY(0); }
+.lobby-btn.primary {
+  background: linear-gradient(135deg, #7c5cff, #5a8dff);
+  border-color: transparent; color: #fff;
+  box-shadow: 0 4px 18px rgba(92, 118, 255, 0.35);
+}
+.lobby-btn.primary:hover { filter: brightness(1.08); background: linear-gradient(135deg, #8a6cff, #6a9aff); }
+.lobby-btn.subtle { opacity: 0.75; font-size: 13px; padding: 10px 18px; }
+.lobby-btn.subtle:hover { opacity: 1; color: #ff8b96; border-color: #ba2d40; background: rgba(186, 45, 64, 0.12); }
+/* Sub-views (server list / events / settings) replace the rail. */
+.lobby-servers, .lobby-pane { width: 100%; display: flex; flex-direction: column; align-items: stretch; }
+.lobby-servers.hidden, .lobby-pane.hidden { display: none; }
+.lobby-back {
+  align-self: flex-start;
+  background: none; border: none; color: var(--accent);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 2px 4px; margin-bottom: 4px;
+}
+.lobby-back:hover { text-decoration: underline; }
+.lobby-h2 { font-size: 18px; margin: 2px 0 10px; }
+.lobby-empty { font-size: 13px; opacity: 0.6; padding: 18px 4px; }
+.lobby-status { font-size: 12px; opacity: 0.7; margin-top: 12px; }
+.lobby-status[hidden] { display: none; }
+#lobby-servers .scenario-btn { padding: 12px 14px; font-size: 14px; border-radius: 12px; }

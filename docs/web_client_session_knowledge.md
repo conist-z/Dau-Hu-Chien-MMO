@@ -192,6 +192,23 @@ git add … ; git commit; git push github-dauhu main; git push origin main
   được thời tiết đó trên web, cảm giác như "bị tắt".
 
 ## 5. Test / debug nhanh (không đoán mò)
+### Chéo deploy nhiều session (vụ "vào game nhưng map đơ" 13/09)
+- **Triệu chứng:** web vào được (chat/hotbar OK) nhưng map không hiện, không
+  di chuyển. Restart + Ctrl+Shift+R không ăn.
+- **Nguyên nhân gốc:** NHIỀU session song song — một session upload cả WIP
+  chưa commit lên panel, một session upload commit riêng lẻ → panel chạy
+  HỖN HỢP: một nửa WIP (file mới như game/drops.py tồn tại) + một nửa cũ →
+  import/call lệch nhau nổ trong snapshot loop.
+- **Cách rà vét 2 phút (không đoán mò):** so MD5 từng file .py trên panel vs
+  worktree vs HEAD qua SFTP (script paramiko + hashlib, chỉ ĐỌC — không ghi
+  lên panel khi chưa rõ). Kết quả `panel==worktree≠HEAD` = có session upload
+  WIP; `panel≠cả hai` = file hỏng nửa chừng.
+- **Luật:** khi có WIP dở của session khác trong working tree, KHÔNG upload
+  từng file lẻ cho fix của mình — dùng deploy_files.py chỉ với file mình sửa
+  và ghi rõ trong báo cáo; nếu nghi lệch, rà MD5 TOÀN BỘ .py trước khi upload
+  tiếp.
+- Output `OK` của deploy_files.py KHÔNG đảm bảo file tới nơi khớp — luôn
+  verify bằng MD5 sau upload khi debugging triệu chứng run-time.
 - **Smoke test live flow** (chạy từ máy dev, không cần browser):
   ```python
   # ws → railway /ws → guest_login → list → join → welcome (như các lần debug)

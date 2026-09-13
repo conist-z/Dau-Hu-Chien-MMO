@@ -87,7 +87,7 @@
         </div>
         <!-- Login / join gate -->
         <div id="login-gate">
-          <div class="panel">
+          <div class="panel gate-panel">
             <h1>Map Game</h1>
             <p class="gate-sub">Chơi ngay trên web — nhân vật dùng chung với Discord</p>
             <p id="login-status">Đang tải…</p>
@@ -95,7 +95,43 @@
               <button id="btn-login" type="button" class="gate-btn primary">🔑 Đăng nhập Discord</button>
               <button id="btn-quick" type="button" class="gate-btn">⚡ Vào nhanh (thử nghiệm)</button>
             </div>
-            <div id="scenario-list"></div>
+          </div>
+          <!-- Main lobby (game-menu style): title, profile card, vertical
+               button rail, server list view. Shown after login. -->
+          <div class="lobby hidden" id="lobby">
+            <div class="lobby-profile">
+              <span class="lobby-avatar" id="lobby-avatar"></span>
+              <span class="lobby-who">
+                <span id="lobby-name">—</span>
+                <span id="lobby-sub">—</span>
+              </span>
+            </div>
+            <h1 class="lobby-title">ĐẬU HÙ
+              <span>CHIẾN MMO</span>
+            </h1>
+            <p class="lobby-tag">Chơi ngay trên web — nhân vật dùng chung với Discord</p>
+            <nav class="lobby-menu" id="lobby-menu">
+              <button id="lobby-play" type="button" class="lobby-btn primary">▶&nbsp; Chơi ngay</button>
+              <button id="lobby-events" type="button" class="lobby-btn">🎉&nbsp; Sự kiện</button>
+              <button id="lobby-settings" type="button" class="lobby-btn">⚙️&nbsp; Cài đặt</button>
+              <button id="lobby-logout" type="button" class="lobby-btn subtle">⏻&nbsp; Đăng xuất</button>
+            </nav>
+            <section class="lobby-servers hidden" id="lobby-servers">
+              <button id="lobby-back" type="button" class="lobby-back">← Quay lại</button>
+              <h2 class="lobby-h2">Chọn server</h2>
+              <div id="scenario-list"></div>
+            </section>
+            <section class="lobby-pane hidden" id="lobby-pane-events">
+              <button class="lobby-back" data-pane-back type="button">← Quay lại</button>
+              <h2 class="lobby-h2">Sự kiện</h2>
+              <p class="lobby-empty">Chưa có sự kiện nào đang diễn ra. Theo dõi kênh thông báo trên Discord!</p>
+            </section>
+            <section class="lobby-pane hidden" id="lobby-pane-settings">
+              <button class="lobby-back" data-pane-back type="button">← Quay lại</button>
+              <h2 class="lobby-h2">Cài đặt</h2>
+              <p class="lobby-empty">Cài đặt sẽ ra mắt sau — hiện chỉnh trong game (Esc → Setting).</p>
+            </section>
+            <p id="lobby-status" class="lobby-status" hidden></p>
           </div>
         </div>
       </div>

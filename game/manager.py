@@ -37,6 +37,7 @@ from game.inventory import Inventory
 from game.map_loader import MapData, load_map
 from game.npc import NpcMap, load_npcs
 from game.rules import (
+    REGEN_DELAY_S,
     apply_aim,
     apply_aim_reset,
     apply_attack,
@@ -590,6 +591,15 @@ class GameManager:
         import time as _time
 
         async with rt.lock:
+            # --- block self-repair beat (user rule 13/09) ------------------
+            # One call per tick drives the WHOLE grid's gradual crack healing:
+            # 3.5 s after a block's last hit its damage drains back to zero at
+            # 1/s ("tua ngược"), driven by the server clock — the client only
+            # mirrors the damage carried by snapshots/echoes.
+            try:
+                rt.state.blocks.decay_damage(_time.time())
+            except Exception as e:  # noqa: BLE001 — must never kill the tick
+                log.warning("[WEB] block repair beat failed: %s", e)
             for user_id, sess in list(sessions.items()):
                 player = rt.state.get_player(user_id)
                 if player is None:
@@ -616,7 +626,9 @@ class GameManager:
                     continue
                 if sess.dx == 0.0 and sess.dy == 0.0:
                     sess.last_tick = now
+                    self._regen_player_beat(rt, player, now)
                     continue
+                self._regen_player_beat(rt, player, now)
                 # Clamp dt so a stalled loop can never teleport the player
                 # through the world (swept collision assumes <= 1 tile steps).
                 raw_dt = max(0.0, now - sess.last_tick)
@@ -694,6 +706,27 @@ class GameManager:
             # Discord coalescer work is scheduled here (that was the "cắn là
             # giật" cause — every web bite re-rendered chat screens).
             pass
+
+    def _regen_player_beat(self, rt: ScenarioRuntime, player, now: float) -> None:
+        """One 20 Hz out-of-combat HP-regen beat for one web player.
+
+        Healing starts only after REGEN_DELAY_S of NO hp loss (user rule
+        13/09) and runs at REGEN_HP_PER_SEC HP/s; the fractional bank keeps
+        the pace smooth at 20 Hz. Any future damage source stamps
+        ``last_damaged_at`` (zombie bites do it in game.zombies) and healing
+        stops the same tick.
+        """
+        if player.hp <= 0 or player.hp >= player.max_hp:
+            player.regen_bank = 0.0
+            return
+        if player.last_damaged_at is not None and (
+            now - player.last_damaged_at < REGEN_DELAY_S
+        ):
+            return  # recently hurt: no healing yet
+        from game.rules import apply_regen
+
+        if apply_regen(player, 1.0 / max(1.0, WEB_TICK_HZ)):
+            self._schedule_save(rt, player)
 
     def _touch_web_activity(self, rt: ScenarioRuntime) -> None:
         """Hook for the web layer (set by bot.py): notify snapshot consumers

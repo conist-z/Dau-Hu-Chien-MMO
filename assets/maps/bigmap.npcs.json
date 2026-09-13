@@ -1,0 +1,27 @@
+{
+  "npcs": [
+    {
+      "id": "elder",
+      "name": "Ông lão",
+      "emoji": "🧓",
+      "x": 1,
+      "y": 0,
+      "dialogue": "elder_intro"
+    }
+  ],
+  "dialogues": {
+    "elder_intro": {
+      "text": "Chào người lạ! Ta có một món thuốc cho người.",
+      "options": [
+        {"label": "Xin cảm ơn", "next": "elder_gift", "effect": {}},
+        {"label": "Đi luôn", "next": null, "effect": {}}
+      ]
+    },
+    "elder_gift": {
+      "text": "Cầm lấy Potion HP này, lúc nguy hiểm hãy dùng!",
+      "options": [
+        {"label": "Nhận Potion", "next": null, "effect": {"give_item": "potion_hp"}}
+      ]
+    }
+  }
+}

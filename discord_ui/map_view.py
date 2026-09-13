@@ -630,6 +630,28 @@ class MapView(View):
             self.manager, rt, self.channel_id, channel, screen.user_id, view=view
         )
 
+    async def _gate_web_controlled(self, interaction: discord.Interaction, rt) -> bool:
+        """True when the web client currently controls this player's body.
+
+        "Web wins" agreement: while the web session is attached the Discord
+        screen is PAUSED — presses are answered once with an ephemeral notice
+        and never dispatched. No re-render is scheduled here; the screen
+        simply sits out (the refresh pacer already skips web-controlled
+        players) and revives through its normal cadence after detach.
+        """
+        checker = getattr(self.manager, "web_controlled", None)
+        if checker is None or rt is None or not checker(rt, interaction.user.id):
+            return False
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "🎮 Bạn đang chơi trên web — màn hình Discord tạm dừng.",
+                    ephemeral=True, delete_after=EPHEMERAL_WARN,
+                )
+        except (discord.NotFound, discord.HTTPException):
+            pass
+        return True
+
     async def _ack_controls(self, interaction: discord.Interaction) -> None:
         """ACK the controls interaction without touching the map attachment."""
         try:
@@ -889,6 +911,8 @@ class MapView(View):
             await self._create_screen_for(interaction, rt, uid)
             return
         self.manager.touch_session(self.channel_id, uid)
+        if await self._gate_web_controlled(interaction, rt):
+            return
 
         if kind == "t_refresh":
             # Backwards-compatible custom_id, new meaning: attack the nearest
@@ -1040,6 +1064,8 @@ class MapView(View):
             await self._create_screen_for(interaction, rt, uid)
             return
         self.manager.touch_session(self.channel_id, uid)
+        if await self._gate_web_controlled(interaction, rt):
+            return
         rt.members[uid] = interaction.user
         if uid not in rt.state.players:
             rt.state.add_player(uid, interaction.user.display_name, *rt.map_data.spawn)
@@ -1480,6 +1506,8 @@ class MapView(View):
             await self._create_screen_for(interaction, rt, uid)
             return
         self.manager.touch_session(self.channel_id, uid)
+        if await self._gate_web_controlled(interaction, rt):
+            return
         rt.members[uid] = interaction.user
         if uid not in rt.state.players:
             rt.state.add_player(uid, interaction.user.display_name, *rt.map_data.spawn)
@@ -1680,6 +1708,8 @@ class MapView(View):
             await self._create_screen_for(interaction, rt, uid)
             return
         self.manager.touch_session(self.channel_id, uid)
+        if await self._gate_web_controlled(interaction, rt):
+            return
 
         rt.members[uid] = interaction.user
         if uid not in rt.state.players:

@@ -67,6 +67,9 @@ class WebSession:
     # falling back to a fresh login (which for guests was instant, but for
     # Discord users stranded them on the login gate).
     orphaned_at: float = 0.0
+    # Discord avatar hash from OAuth profile (CDN avatar on the dashboard;
+    # empty for guests — they get a letter badge client-side).
+    avatar_hash: str = ""
 
     def input_allowed(self) -> bool:
         now = time.monotonic()

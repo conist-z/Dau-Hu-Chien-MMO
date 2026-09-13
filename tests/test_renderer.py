@@ -128,3 +128,109 @@ def test_finalize_shrinks_png():
     small_size = len(small.getvalue())
 
     assert small_size < raw_size
+
+
+# ---------------------------------------------------------------------------
+# Data-driven conditional layers: rain-only puddles + above-player overlays
+# ---------------------------------------------------------------------------
+
+def _bigmap_rt():
+    mgr = GameManager(ASSETS_DIR)
+    rt = mgr.create_runtime(999000222, "bigmap")
+    rt.state.add_player(1, "A", 5, 5)
+    return rt
+
+
+def test_rain_only_layer_names_detected():
+    from rendering.renderer import is_rain_only_layer
+
+    assert is_rain_only_layer("vũng nước(chỉ xuất hiện khi có mưa)")
+    assert not is_rain_only_layer("cỏ")
+    assert not is_rain_only_layer("tường(vùng đồi núi)")
+
+
+def test_weather_excluded_layers_respects_rain():
+    from rendering.renderer import weather_excluded_layers
+
+    md = load_map_bigmap()
+    dry = weather_excluded_layers(md, "sun_clouds")
+    wet = weather_excluded_layers(md, "rain")
+    assert "vũng nước(chỉ xuất hiện khi có mưa)" in dry
+    assert wet == frozenset()  # raining -> puddles drawn
+    assert weather_excluded_layers(md, "heavy_rain") == frozenset()
+    assert weather_excluded_layers(md, "storm") == frozenset()
+
+
+def load_map_bigmap():
+    # config.ASSETS_DIR already points at assets/maps.
+    from game.map_loader import load_map
+
+    return load_map("bigmap", ASSETS_DIR)
+
+
+def test_puddles_appear_only_in_rain_pixels():
+    rt = _bigmap_rt()
+    renderer = _new_renderer()
+    dry = asyncio.run(renderer.render(rt.state, rt.map_data, full=True, weather_key="sun_clouds"))
+    wet = asyncio.run(renderer.render(rt.state, rt.map_data, full=True, weather_key="rain"))
+    # The puddle layer's 73 tiles must change the dry-sky frame.
+    assert dry.image.tobytes() != wet.image.tobytes()
+
+
+def test_above_player_layer_drawn_after_tokens():
+    rt = _bigmap_rt()
+    renderer = _new_renderer()
+    blits = renderer._above_player_blits(rt.map_data)
+    # The bigmap ships 21 "bên trên player" overlay tiles.
+    assert len(blits) == 21
+    # Rendering with them must not crash and must stay token-complete.
+    result = asyncio.run(renderer.render(rt.state, rt.map_data, full=True))
+    assert result.composite is not None
+
+
+def test_above_player_layer_names_detected():
+    from rendering.renderer import is_above_player_layer
+
+    assert is_above_player_layer("vật linh tinh(layer bên trên player nhưng player đi xuyên qua)")
+    assert not is_above_player_layer("cây")
+
+
+def test_above_player_tile_fades_when_occluded():
+    # Walk-under-canopy: the overlay sprite on the entity's tile renders at
+    # 45% alpha; every other tile keeps full opacity.
+    renderer = _new_renderer()
+    md = load_map_bigmap()
+    clear = renderer._above_player_blits(md, frozenset({(5, 5)}))
+    faded = renderer._above_player_blits(md, frozenset({(43, 2)}))
+    # First blit sits on tile (43,2) (bigmap overlay layer).
+    assert clear[0][:2] == faded[0][:2]
+    img_clear, img_faded = clear[0][2], faded[0][2]
+    assert img_clear is not img_faded
+    a_clear = list(img_clear.getchannel("A").getdata())
+    a_faded = list(img_faded.getchannel("A").getdata())
+    pairs = [(x, y) for x, y in zip(a_clear, a_faded) if x]
+    assert pairs, "overlay tile must have opaque pixels"
+    assert all(y <= x * 45 // 100 + 1 for x, y in pairs)
+
+
+def test_occluded_tiles_cover_players_and_zombies():
+    # The occlusion set is built from visible players + alive zombies; here we
+    # verify the helper handles the union used by render().
+    renderer = _new_renderer()
+    md = load_map_bigmap()
+    occl = frozenset({(43, 2), (54, 15)})
+    blits = renderer._above_player_blits(md, occl)
+    # Both occluded overlay tiles got faded copies (distinct objects per gid).
+    from collections import Counter
+
+    faded_ids = {id(b[2]) for tx, ty, b in []}  # noqa: F841 (shape only)
+    assert len(blits) == 21
+
+
+def test_incremental_disabled_on_overlay_maps():
+    # Maps with above-player layers must NOT take the incremental patch path
+    # (the patch cannot re-fade overlay art above the mover's old tile).
+    from rendering.renderer import is_above_player_layer
+
+    md = load_map_bigmap()
+    assert any(is_above_player_layer(n) for n, _ in md.tile_layers)

@@ -25,6 +25,11 @@ const DIR_VECTORS: Record<string, [number, number]> = {
   SOUTH_EAST: [1, 1], SOUTH_WEST: [-1, 1],
 };
 
+// Client-side projection of the server's block self-repair (user rule
+// 13/09): damage drains at 1/s after the 3.5 s idle — the client mirrors
+// that pace between 20 Hz samples so the crack rewinds smoothly.
+const BLOCK_HEAL_RATE = 1.0;
+
 interface RemotePlayer {
   container: Phaser.GameObjects.Container;
   // Square (web players → paperdoll) or circle ("chat" mode players —
@@ -150,8 +155,17 @@ export class WorldScene extends Phaser.Scene {
   private splats = new Set<{ txt: Phaser.GameObjects.Text; t0: number; x: number; y: number }>();
   // Progressive block-break cracks: tileKey -> Minetest-style crack stage
   // sprite (10-stage sheet ui/fx/cracks.png, CC0) drawn OVER the block.
+  // RENDER-ONLY: the SERVER owns the damage number (apply_break_block) and
+  // its self-repair beat (blocks.decay_damage — 3.5 s idle then heal 1/s).
+  // The client mirrors it through syncBlockDamage (snapshots, 20 Hz) and the
+  // break echo, and reverse-heals SMOOTHLY between samples so nobody mining
+  // a half-cracked block sees it pop back to pristine (user rule 13/09).
   private crackOverlays = new Map<string, Phaser.GameObjects.Image>();
   private crackTextureReady = false;
+  // tileKey -> [displayed damage, needed] the overlay currently shows.
+  private crackState = new Map<string, { dmg: number; needed: number; t0: number }>();
+  // tileKey -> performance.now() of the last server sample for that tile
+  // (fresh samples reset the local heal projection).
   // Drop entities ("linh khí"): id -> live sprite group. Server-authoritative
   // position/phase at 20 Hz; the client animates bob/glow/collect locally.
   private dropLayer: Phaser.GameObjects.Layer | null = null;
@@ -527,28 +541,115 @@ export class WorldScene extends Phaser.Scene {
       if (!seen.has(tileKey)) {
         this.crackOverlays.get(tileKey)?.destroy();
         this.crackOverlays.delete(tileKey);
+        this.crackState.delete(tileKey);
       }
     }
   }
 
-  /** Progressive crack overlay for a block being broken (server echo carries
-   * damage/hardness). Stage 0..9 from the Minetest-style CC0 crack sheet;
-   * a gentle flicker makes long grinds feel alive. ratio >= 1 or a gone
-   * block clears the overlay. */
+  /**
+   * SERVER SAMPLE (20 Hz + break echo): authoritative damage for ONE block.
+   *
+   * The server drains damage after a 3.5 s idle (its self-repair beat); the
+   * client projects that drain FORWARD between samples — dmg decreases at
+   * BLOCK_HEAL_RATE/s until the next sample corrects it — so the crack
+   * "rewinds" smoothly instead of jumping (user rule 13/09).
+   */
   setBlockCrack(tx: number | null, ty: number | null, damage: number, needed: number): void {
     if (tx === null || ty === null) return;
     const key = `${tx},${ty}`;
-    const existing = this.crackOverlays.get(key);
-    const ratio = needed > 0 ? Math.max(0, Math.min(1, damage / needed)) : 0;
-    if (ratio <= 0 || ratio >= 1 || !this.blockSet.has(key)) {
-      existing?.destroy();
+    const dmg = Math.max(0, damage);
+    const need = Math.max(1, needed || this.crackState.get(key)?.needed || 1);
+    // GROWING damage (a new hit landed): show it immediately.
+    const prev = this.crackState.get(key);
+    if (prev && dmg > prev.dmg) {
+      this.crackState.set(key, { dmg, needed: need, t0: performance.now() });
+      this.renderCrack(key);
+      return;
+    }
+    if (dmg <= 0 || !this.blockSet.has(key)) {
+      this.clearBlockCrack(key);
+      return;
+    }
+    // Same-or-lower damage: a routine server sample — keep the displayed
+    // value monotonic (a late/reordered frame must not rewind the crack).
+    const shown = prev ? Math.min(prev.dmg, dmg) : dmg;
+    this.crackState.set(key, { dmg: shown, needed: need, t0: performance.now() });
+    this.renderCrack(key);
+  }
+
+  /**
+   * FULL SYNC from a snapshot: "x,y" -> [damage, needed]. Removes overlays
+   * for tiles the server no longer reports (fully healed or block gone).
+   * Lowered damage is applied by REWINDING the overlay from its last shown
+   * value over the real elapsed time — the gradual self-repair animation.
+   */
+  syncBlockDamage(
+    damage: Record<string, [number, number]> | undefined,
+    blockTiles: Set<string>,
+  ): void {
+    const now = performance.now();
+    const reported = new Set<string>();
+    if (damage) {
+      for (const [key, entry] of Object.entries(damage)) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        reported.add(key);
+        const [dmgRaw, neededRaw] = entry;
+        const dmg = Math.max(0, Number(dmgRaw) || 0);
+        const need = Math.max(1, Number(neededRaw) || 1);
+        const prev = this.crackState.get(key);
+        if (prev && dmg < prev.dmg - 0.01) {
+          // Server healed this block while we watched: keep showing the OLD
+          // (deeper) crack and let the per-frame projection drain it at
+          // BLOCK_HEAL_RATE/s — the smooth "tua ngược". The sample time is
+          // NOT reset here, so the drain continues from the shown value.
+          this.crackState.set(key, { dmg: prev.dmg, needed: need, t0: prev.t0 });
+        } else {
+          this.crackState.set(key, { dmg, needed: need, t0: now });
+        }
+      }
+    }
+    // Fully healed / broken tiles: drop the overlay (a kept block keeps
+    // nothing; a broken block must not keep a ghost crack).
+    for (const key of [...this.crackState.keys()]) {
+      if (!reported.has(key) || !blockTiles.has(key)) {
+        this.clearBlockCrack(key);
+      }
+    }
+    // Paint all reported tiles (renderCrack skips unchanged ones).
+    for (const key of reported) {
+      this.renderCrack(key);
+    }
+  }
+
+  /** Drop one crack overlay + its state. */
+  private clearBlockCrack(key: string): void {
+    this.crackState.delete(key);
+    const img = this.crackOverlays.get(key);
+    if (img) {
+      img.destroy();
       this.crackOverlays.delete(key);
+    }
+  }
+
+  /** Paint the crack overlay for one tile from its CURRENT projected state. */
+  private renderCrack(key: string): void {
+    const st = this.crackState.get(key);
+    if (!st) return;
+    // Server heals at 1 dmg/s after 3.5 s idle; project that drain forward
+    // from the sample time so the 20 Hz updates never show a sawtooth.
+    const healed = Math.max(0, (performance.now() - st.t0) / 1000) * BLOCK_HEAL_RATE;
+    const ratio = st.needed > 0 ? Math.max(0, Math.min(1, (st.dmg - healed) / st.needed)) : 0;
+    const [txStr, tyStr] = key.split(",");
+    const tx = Number(txStr);
+    const ty = Number(tyStr);
+    if (ratio <= 0 || ratio >= 1 || !this.blockSet.has(key) || !Number.isFinite(tx) || !Number.isFinite(ty)) {
+      this.clearBlockCrack(key);
       return;
     }
     if (!this.crackTextureReady) {
       // Load the 10-stage crack sheet once from the static bundle (no
       // server round-trip). Until it decodes, cracks simply don't show —
-      // the next hit's echo will draw them.
+      // the next render pass will draw them.
       if (!this.textures.exists("fx-cracks")) {
         // SPRITESHEET (not image): the file is a 10-frame 32x32 strip —
         // loading it as a plain image crams the whole chain into one frame
@@ -557,13 +658,16 @@ export class WorldScene extends Phaser.Scene {
           frameWidth: 32,
           frameHeight: 32,
         });
-        this.load.once("complete", () => { this.crackTextureReady = true; });
+        this.load.once("complete", () => {
+          this.crackTextureReady = true;
+        });
         this.load.start();
       }
       return;
     }
-    let img = existing;
-    if (!img) {
+    let img = this.crackOverlays.get(key);
+    if (!img || !img.active) {
+      this.crackOverlays.get(key)?.destroy();
       img = this.add.image(tx * 32 + 16, ty * 32 + 16, "fx-cracks", 0);
       if (this.blockLayer) this.blockLayer.add(img);
       img.setDepth(1); // above the block sprite, below actors
@@ -579,6 +683,26 @@ export class WorldScene extends Phaser.Scene {
       ? 0.9 + 0.1 * Math.sin(this.time.now / 120)
       : 1.0;
     img.setAlpha((0.55 + ratio * 0.45) * wobble);
+  }
+
+  /** Per-frame crack maintenance (60 fps): advance the server's self-repair
+   * projection for every damaged tile and repaint the changed stages. The
+   * server keeps sending authoritative samples — this is render-only and
+   * self-corrects on the next sample. */
+  tickBlockCracks(): void {
+    if (this.crackState.size === 0) return;
+    for (const key of [...this.crackState.keys()]) {
+      const st = this.crackState.get(key);
+      if (!st) continue;
+      const healed = Math.max(0, (performance.now() - st.t0) / 1000) * BLOCK_HEAL_RATE;
+      // Fully healed locally: drop the overlay now (the server sample will
+      // agree a moment later).
+      if (st.dmg - healed <= 0) {
+        this.clearBlockCrack(key);
+        continue;
+      }
+      this.renderCrack(key);
+    }
   }
 
   /** A block face PNG arrived: register + redraw with the real sprite. */
@@ -899,6 +1023,8 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.updateZombieFrames();
+    // Block crack self-repair projection (render-only; server owns truth).
+    this.tickBlockCracks();
     // Drop entities: per-frame bob/glow/collect animation (server phase).
     this.updateDrops(performance.now());
     // Kaetram hitsplats: float + fade every frame (spawned from action_result).
@@ -2109,6 +2235,10 @@ export class WorldScene extends Phaser.Scene {
     this.blockSet = new Set(snap.blocks.map((b) => `${b[0]},${b[1]}`));
     for (const k of pendingSolid) this.blockSet.add(k);
     for (const k of this.optimisticBreaks.keys()) this.blockSet.delete(k);
+    // Block crack damage (server self-repair truth, rides every snapshot —
+    // damage drains even when nobody mines). MUST run AFTER blockSet is
+    // rebuilt: the sync clears overlays for tiles that are no longer blocks.
+    this.syncBlockDamage(snap.block_damage, this.blockSet);
   }
 
   // Local self position in tile units (for the HUD + camera sanity).

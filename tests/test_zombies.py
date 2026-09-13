@@ -228,7 +228,7 @@ def test_attack_hits_facing_zombie_and_removes_it_at_zero(world):
 
     assert result.success is True
     # Bare-handed default: 6 dmg (zombie hp 40 -> 7 punches to fell).
-    assert result.damage == 6
+    assert result.damage == 6  # BARE_HAND_ATTACK_DAMAGE
     assert result.target_id == "z1"
     assert result.target_defeated is False
     assert "z1" in state.zombies
@@ -256,9 +256,9 @@ def test_attack_does_not_advance_visible_zombie():
 
 
 def test_attack_bare_hand_vs_weapon_damage():
-    """Balance rule: zombie hp 40 -> 7 bare-hand punches (6 dmg) vs 2 weapon
-    hits (20 dmg). Weapon = a bound hotbar slot holding axe/pickaxe with
-    stock in the bag."""
+    """Balance rule: zombie hp 40 -> 7 bare-hand punches (6 dmg). Held tools
+    deal PER-FAMILY damage (game/tools.py FAMILY_BASE_DAMAGE) scaled by the
+    material tier: sword > axe > pickaxe > shovel."""
     map_data = MapData(
         map_id="zombie-attack-dmg",
         width=20,
@@ -281,15 +281,28 @@ def test_attack_bare_hand_vs_weapon_damage():
     # Weapon: bind wood_axe to slot 0 and give one to the bag. The rule
     # targets the nearest zombie (z1, same tile as z2 but lower id wins tie).
     from game.inventory import Inventory
+    from game.tools import tool_damage
 
     state.hotbars = {1: {0: "wood_axe"}}
     state.inventories = {1: Inventory()}
     state.inventories[1].add("wood_axe", 1)
     r2 = apply_attack(state, AttackAction(1))
-    assert r2.damage == 20 and z1.hp == 34 - 20
+    assert r2.damage == tool_damage("wood_axe") and z1.hp == 34 - r2.damage
+
+    # Family ranking: a same-tier sword hits harder than the axe, a shovel
+    # hits weakest — what you hold decides how hard you hit. Fresh inventory
+    # per weapon: the hotbar is a projection of the ordered bag, so a leftover
+    # axe would keep winning the "held" scan.
+    for iid in ("wood_sword", "wood_shovel"):
+        state.hotbars = {1: {0: iid}}
+        state.inventories = {1: Inventory()}
+        state.inventories[1].add(iid, 1)
+        r = apply_attack(state, AttackAction(1))
+        assert r.damage == tool_damage(iid)
+    assert tool_damage("wood_sword") > tool_damage("wood_axe") > tool_damage("wood_shovel")
 
     # Binding present but item out of stock -> still bare-handed.
-    state.inventories[1].remove("wood_axe", 1)
+    state.inventories = {1: Inventory()}
     r3 = apply_attack(state, AttackAction(1))
     assert r3.damage == 6
 

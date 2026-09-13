@@ -1,6 +1,16 @@
 import os
 from pathlib import Path
 
+# Load .env BEFORE any os.getenv below — bot.py used to call load_dotenv()
+# after importing this module, so .env-only vars (e.g. DISCORD_OAUTH_*) were
+# read as empty. Panel env vars still win: override=False by default.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 ASSETS_DIR = PROJECT_ROOT / "assets" / "maps"
 DATA_DIR = PROJECT_ROOT / "data"

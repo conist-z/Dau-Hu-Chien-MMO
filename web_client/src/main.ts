@@ -277,8 +277,12 @@ const net = new Net({
   onAssetData: (name, b64) => {
     if (b64) applyTexture(name, b64);
   },
-  onLoginOk: (token, displayName) => {
+  onLoginOk: (token, displayName, avatarUrl) => {
     hud.setLoginButton(true, `Tiếp: ${displayName}`);
+    // Persist the profile for the lobby chip across reloads.
+    localStorage.setItem("web_name", displayName);
+    if (avatarUrl) localStorage.setItem("web_avatar", avatarUrl);
+    else localStorage.removeItem("web_avatar");
     // Silent reconnect recovery: a stale-token error queued the last map —
     // join it immediately on this fresh session (guest OR Discord).
     if (pendingRejoinChannel) {
@@ -288,23 +292,24 @@ const net = new Net({
       net.joinScenario(ch, token);
       return;
     }
-    // Guest flow: auto-join the remembered map immediately (no pick step).
-    // Discord flow: ALWAYS show the map list — never auto-join on behalf of
-    // a logged-in user.
+    // Everyone lands on the LOBBY (main menu). Guest "vào nhanh" keeps its
+    // auto-join shortcut (that is the point of quick-play); Discord users
+    // always see the menu and pick explicitly.
+    hud.setLobbyProfile(
+      displayName,
+      token.startsWith("guest:") ? "Khách (thử nghiệm)" : "Tài khoản Discord",
+      avatarUrl,
+    );
     if (token.startsWith("guest:")) {
       const lastMap = localStorage.getItem("last_channel");
       if (lastMap) {
         hud.showGate("Đang vào map…");
         // Keep the channel id as a STRING: snowflakes exceed JS Number precision.
         net.joinScenario(lastMap, token);
-      } else {
-        hud.showGate("Chọn map…");
-        net.requestScenarioList();
+        return;
       }
-      return;
     }
-    hud.showGate("Đăng nhập xong — chọn map…");
-    net.requestScenarioList();
+    hud.showLobby("menu");
     void token;
   },
   onLoginFail: (error) => {
@@ -327,9 +332,12 @@ const net = new Net({
     // phantom until some unrelated snapshot change.
     if (frame.name === "place" || frame.name === "break") {
       scene.reconcileBlockAction(frame.name, frame.ok, frame.tx, frame.ty);
-      // Progressive crack: the echo carries (damage, needed) = crack progress
-      // for the hit block. A break (block gone) clears the overlay.
-      if (frame.name === "break" && frame.ok) {
+      // Progressive crack: the echo carries (damage, needed) = the SERVER's
+      // authoritative hit progress. A break (block gone) clears the overlay.
+      // NOTE: nothing client-optimistic here anymore — pre-painting a fake
+      // crack before the echo raced the real server sample and made the
+      // damage appear to jump backwards ("crack tua ngược" bug).
+      if (frame.name === "break" && !frame.ok) {
         scene.setBlockCrack(frame.tx, frame.ty, frame.damage ?? 0, frame.needed ?? 0);
       }
     }
@@ -469,14 +477,10 @@ const input = new KeyboardInput({
       const breaking = scene.isBlockAt(target.x, target.y);
       net.actionAt(breaking ? "break" : "chop", target.x, target.y);
       scene.swingSelfHand();
-      if (breaking) {
-        // Progressive hardness: one click is one HIT, not a break — keep the
-        // block solid optimistically and just pre-show a light crack; the
-        // server echo (setBlockCrack) draws the real damage and the snapshot
-        // removes the block when it finally breaks. (The old unconditional
-        // optimisticBreak made the block walkable on hit #1 of N.)
-        scene.setBlockCrack(target.x, target.y, 1, 3);
-      }
+      // NO optimistic crack here: the block stays fully solid and pristine
+      // until the server echo reports the real damage (the client used to
+      // pre-paint a light crack that clashed with the echo and made the
+      // damage look like it rewound on rapid clicks).
       return;
     }
     // Secondary (right-click): scope follows the HELD hotbar slot ONLY —

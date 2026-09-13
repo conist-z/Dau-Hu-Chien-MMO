@@ -118,6 +118,26 @@ def _blocks_payload(rt: ScenarioRuntime) -> List[list]:
     return [[x, y, bid] for (x, y), bid in rt.state.blocks.items()]
 
 
+def _block_damage_payload(rt: ScenarioRuntime) -> Dict[str, List[float]]:
+    """Progressive break damage per placed block: "x,y" -> [damage, needed].
+
+    ``needed`` is the block's hardness (server truth). The web client renders
+    the crack overlay from damage/needed AND reverse-heals it smoothly when
+    the server's self-repair beat drains damage (user rule 13/09: a block
+    nobody hits for 3.5 s heals gradually — "tua ngược"). Only DAMAGED tiles
+    appear, so the payload is tiny.
+    """
+    out: Dict[str, List[float]] = {}
+    for (x, y), dmg in rt.state.blocks.damage.items():
+        if dmg <= 0:
+            continue
+        needed = rt.state.blocks.hardness_of(x, y)
+        if needed <= 0:
+            continue
+        out[f"{x},{y}"] = [round(float(dmg), 2), needed]
+    return out
+
+
 # ---- world-signature cache (perf: snapshot pump runs at 20 Hz) -------------
 # Blocks / resource tiles / felled nodes only change on discrete actions, not
 # every tick — but _blocks_payload et al. rebuild hundreds of rows 20x/second
@@ -321,6 +341,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # Heavy world parts come from the signature cache (rebuilt only when
         # blocks/resources actually changed — perf at 20 Hz).
         **_heavy_payloads(rt),
+        # Progressive block damage (cracks) — tiny, computed fresh.
+        "block_damage": _block_damage_payload(rt),
         "res_progress": _resource_progress_payload(rt),
         "players": _players_payload(rt, user_id),
         "zombies": _zombies_payload(rt),
@@ -459,6 +481,9 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         **_inventory_snapshot_part(rt, user_id),
         # Resource node chop progress (per-node bars; small).
         "res_progress": _resource_progress_payload(rt),
+        # Progressive block damage (cracks) — server-driven self-repair means
+        # damage drains even while nobody mines, so this rides EVERY snapshot.
+        "block_damage": _block_damage_payload(rt),
     }
     # PERF (world-delta model — how MMOs ship static world state): the
     # resource tile list (~5 KB) used to ride along on EVERY 20 Hz snapshot
