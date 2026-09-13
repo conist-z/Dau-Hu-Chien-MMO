@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-Bh__zwQT.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Cf5f2jmN.css">
+    <script type="module" crossorigin src="./assets/index-BphmyVQp.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BiOErnZy.css">
   </head>
   <body>
     <div id="game-root">
@@ -100,7 +100,7 @@
           <!-- Main lobby (NEXT GAME style): logo + 3 columns — account |
                play menu | server selection. Shown after login. -->
           <div class="nx hidden" id="lobby">
-            <h1 class="nx-logo">ĐẬU HÙ<span>CHIẾN MMO</span></h1>
+            <h1 class="nx-logo">ĐẬU HŨ<span>CHIÊN&nbsp;MMO</span></h1>
             <div class="nx-cols">
               <!-- LEFT: account -->
               <section class="nx-panel">
@@ -112,6 +112,13 @@
                     <span id="lobby-sub">—</span>
                   </span>
                   <button id="lobby-logout" type="button" class="nx-btn nx-btn-orange nx-logout">Đăng xuất</button>
+                  <!-- Chat frame (mock's input-field style): lobby/system feed. -->
+                  <div class="nx-chat">
+                    <div class="nx-chat-log" id="nx-chat-log"></div>
+                    <form id="nx-chat-form" autocomplete="off">
+                      <input id="nx-chat-input" type="text" maxlength="120" placeholder="Vào game để chat với mọi người…" />
+                    </form>
+                  </div>
                 </div>
               </section>
               <!-- CENTER: play menu -->
@@ -119,10 +126,10 @@
                 <header class="nx-panel-h">Trò chơi</header>
                 <div class="nx-panel-b nx-menu">
                   <button id="lobby-play" type="button" class="nx-btn nx-play">▶ CHƠI NGAY</button>
-                  <button id="lobby-servers-btn" type="button" class="nx-btn nx-btn-wide">SERVERS</button>
+                  <button id="lobby-servers-btn" type="button" class="nx-btn nx-btn-wide">SERVERS <span class="nx-gear">⟳</span></button>
                   <div class="nx-grid">
                     <button id="lobby-events" type="button" class="nx-btn">SỰ KIỆN</button>
-                    <button id="lobby-settings" type="button" class="nx-btn">CÀI ĐẶT</button>
+                    <button id="lobby-settings" type="button" class="nx-btn"><span class="nx-gear">⚙</span> CÀI ĐẶT</button>
                     <button id="lobby-help" type="button" class="nx-btn">TRỢ GIÚP</button>
                     <button id="lobby-players" type="button" class="nx-btn">PLAYER</button>
                   </div>

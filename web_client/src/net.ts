@@ -47,6 +47,9 @@ export class Net {
   private pingTimer: number | null = null;
   private lastRttMs = 0;
   onRtt: ((rttMs: number) => void) | null = null;
+  /** Extra connection listener (lobby auto-refresh etc.); called after the
+   * primary handler on every connect/disconnect. */
+  onConnectionChangeExtra: ((connected: boolean) => void) | null = null;
   // --- auto-reconnect (tab-return freshness) ---
   /** Last joined channel id — replayed verbatim on reconnect. */
   private lastChannel: string | null = null;
@@ -79,6 +82,7 @@ export class Net {
         this.connecting = false;
         this.reconnectAttempt = 0; // healthy again
         this.handlers.onConnectionChange(true);
+        this.onConnectionChangeExtra?.(true);
         this.startPing();
         resolve();
       };
@@ -89,6 +93,7 @@ export class Net {
       this.ws.onclose = () => {
         this.joined = false;
         this.handlers.onConnectionChange(false);
+        this.onConnectionChangeExtra?.(false);
         // Auto-reconnect with capped backoff — the tab-return freshness
         // story: rAF pauses while hidden, the OS may drop the idle socket,
         // and on return the client silently reconnects + rejoins the map.

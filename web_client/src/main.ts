@@ -174,6 +174,7 @@ const net = new Net({
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
     beginLoadTracking(frame);
     hud.hideGate();
+    hud.hideLobby();
     hud.setInventory(frame.inventory);
     hud.setRecipes(frame.recipes);
     hud.setNearStation(!!frame.near_station);
@@ -567,12 +568,25 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  // ALWAYS land on the clean two-button panel — never auto-login. Auto-guest
-  // on every page load made it impossible to pick Discord (bug report 13/09).
-  hud.showGate(saved ? "Chọn cách vào game:" : "Chọn cách vào game:");
+  // Authenticated sessions skip the login panel entirely and land on the
+  // main lobby (server list auto-refreshes there). Only fresh visitors see
+  // the two-button login panel.
+  if (saved) {
+    hud.setLoginButton(true);
+    hud.setQuickButton(true);
+    // Silent identity restore: replay the last login against the fresh
+    // socket (guest re-runs guest_login; Discord tokens are server-side
+    // sessions — a stale one just errors and lands back here).
+    if (saved.startsWith("guest:")) {
+      guestLogin(net);
+    } else {
+      hud.showGate("Phiên cũ — bấm nút để vào lại.");
+    }
+    return;
+  }
+  hud.showGate("Chọn cách vào game:");
   hud.setLoginButton(true);
   hud.setQuickButton(true);
-  if (saved && !saved.startsWith("guest:")) net.requestScenarioList();
 }
 
 // (input declared below onSnapshot's usage — hoisted const reference is
@@ -620,11 +634,7 @@ hud.onLobbyPlay(() => {
   }
 });
 
-hud.onLobbyServers(() => {
-  hud.setLobbyStatus("Đang lấy danh sách server…");
-  net.requestScenarioList();
-});
-
+hud.onLobbyServers(() => net.requestScenarioList()); // manual refresh (⟳)
 hud.onLobbyEvents(() => hud.toast("Chưa có sự kiện nào đang diễn ra."));
 hud.onLobbySettings(() => hud.toast("Cài đặt sẽ ra mắt sau — hiện chỉnh trong game (Esc → Setting)."));
 hud.onLobbyHelp(() => hud.toast("Di chuyển bằng WASD/mũi tên, đập block bằng chuột. /help trong game để xem lệnh."));
@@ -636,11 +646,52 @@ hud.onLobbyLogout(() => {
   location.reload();
 });
 
-// scenario_list arrived: clear the loading status once painted.
+// scenario_list arrived: paint + clear the loading status.
 const _paintScenarioList = hud.showScenarioList.bind(hud);
 hud.showScenarioList = (items, onPick) => {
   hud.setLobbyStatus(null);
   _paintScenarioList(items, onPick);
 };
+
+// The server list is ALWAYS live while the lobby is open: refresh every 5s
+// and immediately when the socket (re)connects — no click needed.
+let lobbyListTimer: number | null = null;
+net.onConnectionChangeExtra = (connected: boolean) => {
+  if (connected && !net.isJoined) net.requestScenarioList();
+  if (lobbyListTimer !== null) {
+    window.clearInterval(lobbyListTimer);
+    lobbyListTimer = null;
+  }
+  if (connected) {
+    lobbyListTimer = window.setInterval(() => {
+      if (!net.isJoined) net.requestScenarioList();
+    }, 5000);
+  }
+};
+
+// Lobby chat box: local system feed while in the menu (join/leave hints).
+// Real cross-player chat needs a session — pre-join we keep it informative.
+const nxChatLog = document.getElementById("nx-chat-log")!;
+const nxChatForm = document.getElementById("nx-chat-form") as HTMLFormElement;
+const nxChatInput = document.getElementById("nx-chat-input") as HTMLInputElement;
+function nxChatLine(html: string, cls = ""): void {
+  const div = document.createElement("div");
+  div.className = `nx-chat-line ${cls}`;
+  div.innerHTML = html;
+  nxChatLog.appendChild(div);
+  while (nxChatLog.childElementCount > 30) nxChatLog.firstElementChild!.remove();
+  nxChatLog.scrollTop = nxChatLog.scrollHeight;
+}
+nxChatLine("Chào mừng đến Đậu Hũ Chiến MMO!", "nx-chat-sys");
+nxChatLine("Chọn server ở cột phải rồi bấm CHƠI NGAY.");
+nxChatForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const text = nxChatInput.value.trim();
+  if (!text) return;
+  nxChatInput.value = "";
+  if (!net.isJoined) {
+    nxChatLine(`<b>Bạn:</b> ${text.replace(/[<&>]/g, "")} <span style="opacity:.5">(vào game để chat công khai)</span>`);
+  }
+});
 
 void boot();
