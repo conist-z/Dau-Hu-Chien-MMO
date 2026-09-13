@@ -89,13 +89,24 @@ def test_place_consumes_material_and_break_returns_it():
         assert not res2.success and res2.reason == "blocked_tile"
         assert inv.count("stone") == 1  # no material lost
 
-        # Breaking removes the overlay (ground shows again) and refunds material.
-        # Stone blocks require a pickaxe (dirt tier or better).
-        inv.add("dirt_pickaxe", 1)
+        # Breaking: stone hardness 6 (tune 13/09), the RIGHT tool (pickaxe)
+        # deals 2 damage per hit -> 3 hits to crack. Only the final hit
+        # removes the block and spawns a drop entity (no direct bag refund).
+        inv.add("wood_pickaxe", 1)
+        from game.drops import get_drop_field
+
         res3 = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
         assert res3.success and res3.pos == (6, 5) and res3.block_id == "stone"
-        assert state.blocks.get(6, 5) is None
-        assert inv.count("stone") == 2
+        assert state.blocks.get(6, 5) == "stone"  # still standing (2/6)
+        assert res3.damage == 2
+        res4 = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
+        assert state.blocks.get(6, 5) == "stone"  # cracked (4/6)
+        res5 = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
+        assert state.blocks.get(6, 5) is None      # broken on hit 3
+        assert res5.drops == [("stone", 1)]
+        field_ = get_drop_field(state)
+        assert any(d.item_id == "stone" for d in field_.drops.values())
+        assert inv.count("stone") == 1             # bag unchanged on break
     finally:
         blocks_mod.CREATIVE_MODE = original
 
@@ -251,8 +262,19 @@ def test_manager_dispatch_place_and_break_with_db():
             assert res.success and rt.state.blocks.get(6, 5) == "wood"
             assert await load_blocks(db, 1) == [(6, 5, "wood")]
             _, res2 = await mgr.dispatch(1, BreakBlockAction(10))
-            assert res2.success and rt.state.blocks.get(6, 5) is None
-            assert mgr.get_inventory(1, 10).count("wood") == 1  # refunded
+            # wood hardness 4 (tune 13/09, bare hand 1 dmg/hit): hit 1 cracks,
+            # hit 4 breaks + spawns a drop.
+            assert res2.success and rt.state.blocks.get(6, 5) == "wood"
+            _, res3 = await mgr.dispatch(1, BreakBlockAction(10))
+            assert res3.success and rt.state.blocks.get(6, 5) == "wood"
+            _, res4 = await mgr.dispatch(1, BreakBlockAction(10))
+            _, res5 = await mgr.dispatch(1, BreakBlockAction(10))
+            assert res5.success and rt.state.blocks.get(6, 5) is None
+            from game.drops import get_drop_field
+
+            assert any(
+                d.item_id == "wood" for d in get_drop_field(rt.state).drops.values()
+            )
             assert await load_blocks(db, 1) == []
             await db.close()
 

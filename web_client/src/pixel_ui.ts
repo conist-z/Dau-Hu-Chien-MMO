@@ -60,8 +60,8 @@ export const CRAFT_LAYERS = [
   { x: 28, y: 18, w: 10, h: 13, file: "ui/v5/layers/craft_top2.png" },
   { x: 43, y: 18, w: 11, h: 13, file: "ui/v5/layers/craft_top3.png" },
   { x: 67, y: 87, w: 37, h: 22, file: "ui/v5/layers/craft_anvil.png" },
-  { x: 142, y: 85, w: 6, h: 7, file: "ui/v5/layers/craft_round1.png" },
-  { x: 142, y: 101, w: 6, h: 7, file: "ui/v5/layers/craft_round2.png" },
+  // craft_round1/round2 (the two small green dots) deliberately NOT drawn —
+  // user request: tắt 2 chấm xanh lá nhỏ trong vùng mô tả.
   { x: 193, y: 14, w: 3, h: 20, file: "ui/v5/layers/craft_scroll.png" },
 ];
 export const CRAFT_TITLE = { x: 82, y: 3, w: 29, h: 8, file: "ui/v5/layers/craft_title.png" };
@@ -112,22 +112,19 @@ export const ITEM_ICONS: Record<string, string> = {
   floor: "ui/icons/1f7e4.png",
   crafting_table: "ui/icons/1f6e0.png",
   furnace: "ui/icons/1f525.png",
-  dirt_axe: "ui/icons/1fa93.png",
-  dirt_pickaxe: "ui/icons/26cf.png",
-  dirt_sword: "ui/icons/1f5e1.png",
-  dirt_shovel: "ui/icons/1f944.png",
   wood_axe: "ui/icons/1fa93.png",
   wood_pickaxe: "ui/icons/26cf.png",
   wood_sword: "ui/icons/1f5e1.png",
   wood_shovel: "ui/icons/1f944.png",
-  stone_axe: "ui/icons/1fa93.png",
-  stone_pickaxe: "ui/icons/26cf.png",
-  stone_sword: "ui/icons/1f5e1.png",
-  stone_shovel: "ui/icons/1f944.png",
   iron_axe: "ui/icons/1fa93.png",
   iron_pickaxe: "ui/icons/26cf.png",
   iron_sword: "ui/icons/1f5e1.png",
-  iron_shovel: "ui/icons/1f944.png",
+  gold_axe: "ui/icons/1fa93.png",
+  gold_pickaxe: "ui/icons/26cf.png",
+  gold_sword: "ui/icons/1f5e1.png",
+  steel_axe: "ui/icons/1fa93.png",
+  steel_pickaxe: "ui/icons/26cf.png",
+  steel_sword: "ui/icons/1f5e1.png",
   dirt: "ui/icons/1f7e4.png",
 };
 

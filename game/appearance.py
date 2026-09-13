@@ -45,18 +45,22 @@ SPEEDS = {"idle": 250, "walk": 120, "atk": 50}
 # (scripts/make_held_sheet.py from scripts/held_anchor_table.json) let any
 # item/block be held with the same paperdoll quality.
 WEAPON_SHEETS: Dict[str, str] = {
-    "dirt_sword": "coppersword",
-    "wood_sword": "ironsword",
-    "stone_sword": "goldsword",
-    "dirt_axe": "bronzeaxe",
-    "wood_axe": "ironaxe",
-    "stone_axe": "cobaltaxe",
-    "dirt_pickaxe": "bronzepickaxe",
-    "wood_pickaxe": "ironpickaxe",
-    "stone_pickaxe": "cobaltpickaxe",
-    "dirt_shovel": "spoon",
-    "wood_shovel": "smithshammer",
-    "stone_shovel": "ancientshovel",
+    # 4 tool tiers x 3 families (game/tools.py): wood renders the Kaetram
+    # BRONZE sheets, iron -> IRON, gold -> GOLD, steel -> COBALT (blue-steel).
+    # The shovel ships ONLY at the wood tier (one shovel total).
+    "wood_sword": "bronzesword",
+    "iron_sword": "ironsword",
+    "gold_sword": "goldsword",
+    "steel_sword": "steelsword",
+    "wood_axe": "bronzeaxe",
+    "iron_axe": "ironaxe",
+    "gold_axe": "goldaxe",
+    "steel_axe": "cobaltaxe",
+    "wood_pickaxe": "bronzepickaxe",
+    "iron_pickaxe": "ironpickaxe",
+    "gold_pickaxe": "goldpickaxe",
+    "steel_pickaxe": "cobaltpickaxe",
+    "wood_shovel": "spoon",  # placeholder art; the only shovel
     # generated held-item sheets (blocks + common items)
     "apple": "apple",
     "stone": "stone",

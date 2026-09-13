@@ -71,8 +71,9 @@ const ITEM_EMOJI: Record<string, string> = {
   grass: "🌿", sand: "🏖️", coin: "🪙", rotten_flesh: "🍖",
   crafting_table: "🛠️", furnace: "🔥",
   wood_axe: "🪓", wood_pickaxe: "⛏️", wood_sword: "🗡️", wood_shovel: "🥄",
-  stone_axe: "🪓", stone_pickaxe: "⛏️", stone_sword: "🗡️", stone_shovel: "🥄",
-  dirt_axe: "🪓", dirt_pickaxe: "⛏️", dirt_sword: "🗡️", dirt_shovel: "🥄",
+  iron_axe: "🪓", iron_pickaxe: "⛏️", iron_sword: "⚔️",
+  gold_axe: "🪓", gold_pickaxe: "⛏️", gold_sword: "⚔️",
+  steel_axe: "🪓", steel_pickaxe: "⛏️", steel_sword: "⚔️",
 };
 
 function itemEmoji(id: string | null): string {
@@ -230,18 +231,27 @@ export class Hud {
   }
 
 
-  /** Frame from the server after craft_op: success toast / error message. */
+  /** Frame from the server after craft_op: success toast / error message.
+   *  A FAILED craft restores the material grid (optimistic clear reverted). */
   craftResult(ok: boolean, reason: string, itemId: string | null, qty: number): void {
     if (ok) {
+      this.pendingCraftSnapshot = null;
       const r = this.recipes.find((x) => x.output.id === itemId);
       this.toast(`Đã chế tạo ${r?.name ?? itemId} ×${qty}`);
     } else {
+      if (this.pendingCraftSnapshot) {
+        this.matGrid = this.pendingCraftSnapshot;
+        this.pendingCraftSnapshot = null;
+        this.renderInventory();
+      }
       const WHY: Record<string, string> = {
         missing_materials: "Không đủ nguyên liệu.",
         no_station: "Cần đứng gần bàn chế tạo.",
         unknown_recipe: "Công thức không tồn tại.",
         no_matching_recipe: "Chưa đúng công thức — xem Description.",
         empty_grid: "Đặt nguyên liệu vào ô tối màu trước.",
+        result_slot_occupied:
+          "Hãy lấy vật phẩm ra khỏi ô nhận vật phẩm trước!",
       };
       this.toast(WHY[reason] ?? `Chế tạo thất bại (${reason}).`);
     }
@@ -322,12 +332,15 @@ export class Hud {
   private lastBagSig = "";
 
   private renderInventory(): void {
-    // Repaint guard: identical bag + same tab = nothing to do. This keeps
-    // hover brackets stable (no DOM rebuild under the cursor) and kills the
-    // residual jitter from out-of-band setInventory calls.
+    // Repaint guard: identical bag + same tab + same craft context = skip.
+    // nearTable + parkedResult are part of the sig: a stale quick-craft
+    // overlay (stuck red hatch while near the table) meant those state
+    // flips didn't repaint the slots.
     const bagSig = JSON.stringify(this.inventory.bag);
     const craftActive = this.craftTab.classList.contains("active");
-    const sig = bagSig + "|" + (craftActive ? "craft" : "items");
+    const sig = bagSig + "|" + (craftActive ? "craft" : "items") +
+      "|" + (this.nearTable ? 1 : 0) +
+      "|" + (this.parkedResult ? this.parkedResult.id + this.parkedResult.qty : "-");
     if (sig === this.lastBagSig && this.drag === null) return;
     this.lastBagSig = sig;
     if (craftActive) {
@@ -407,6 +420,7 @@ export class Hud {
       this.inventory.bag[from] = b ?? null;
       this.inventory.bag[to] = a;
     }
+    this.renderHotbar(); // INSTANT local hotbar echo (no server wait)
     this.syncBagOrder();
     this.renderInventory();
   }
@@ -575,7 +589,8 @@ export class Hud {
       if (rec) {
         slot.classList.add("quick");
         if (haveAll) slot.classList.add("ready");
-        else slot.classList.add("locked"); // red hatched overlay
+        else if (this.isShortOnMaterials(rec)) slot.classList.add("short");
+        else slot.classList.add("locked"); // red hatched overlay (no table)
         // mousedown (not click): guaranteed to fire even if another layer
         // stops the click event; ALSO more responsive (fires on press).
         slot.addEventListener("mousedown", (e) => {
@@ -646,6 +661,12 @@ export class Hud {
     return r.inputs.every((inp) => this.bagCountOf(inp.id) >= inp.qty);
   }
 
+  /** Craftable-in-principle (table OK) but short on materials. */
+  private isShortOnMaterials(r: RecipePayload): boolean {
+    if (r.needs_table && !this.nearTable) return false;
+    return r.inputs.some((inp) => this.bagCountOf(inp.id) < inp.qty);
+  }
+
   /** Total qty of ``id`` across ALL bag stacks (plus placed-on-grid stacks
    *  are NOT counted — the grid is what CREATE consumes). */
   private bagCountOf(id: string): number {
@@ -690,20 +711,23 @@ export class Hud {
   }
 
   /** CREATE pressed: send the material grid's multiset to the server.
-   *  The grid was filled FROM the bag view, so the multiset the client
-   *  shows is exactly what the server will find in the bag. */
+   *  Optimistic: the grid clears AT ONCE (local); the server's craft_result
+   *  verdict parks the output in the result slot. A FAILED craft restores
+   *  the grid (nothing was consumed server-side). */
   private pressCreate(): void {
     const inputs = this.compactMatGrid();
     if (inputs.length === 0) return;
-    // Optimistic: clear the consumed inputs from the grid + park the best-
-    // guess result locally; the server's craft_result/inv_delta reconciles.
+    const snapshot = this.matGrid.map((s) => (s ? { ...s } : null));
     this.matGrid = Array(9).fill(null);
     if (this.craftTab.classList.contains("active")) {
       this.renderInventory();
       this.renderCraftPanel();
     }
+    this.pendingCraftSnapshot = snapshot;
     this.onCraftGrid?.(inputs);
   }
+
+  private pendingCraftSnapshot: (Stack | null)[] | null = null;
 
   /** Pixel CREATE button (demo sprite; states via filters). */
   private makeCraftButton(gridHasMaterials: boolean, sel: RecipePayload | null): HTMLElement {

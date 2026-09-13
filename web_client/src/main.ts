@@ -200,8 +200,8 @@ const net = new Net({
     if (frame.inventory) applyInventory(frame.inventory, frame.inv_version);
     // Craft-panel parked RESULT rides along with the bag (server truth);
     // the material grid is a local buffer and is never echoed here.
-    if (frame.craft_result !== undefined) {
-      hud.setCraftResult(frame.craft_result ?? null);
+    if (frame.craft_result) {
+      hud.setCraftResult(frame.craft_result);
     }
   },
   onScenarioList: (items) => {
@@ -256,6 +256,13 @@ const net = new Net({
     }
     if (code === "scenario_missing_or_full") {
       hud.showGate("Map đầy hoặc không tồn tại.");
+    }
+    // Inventory/craft housekeeping errors are NEVER user-facing: a stale
+    // reorder/split frame just means the server state moved on — the next
+    // inventory delta repaints the truth. Toasting them was the "bad other"
+    // spam during fast drags.
+    if (code === "bad_order" || code === "bad_split" || code === "bad_slot") {
+      return;
     }
     hud.toast(`Lỗi: ${code}`);
   },
@@ -379,7 +386,7 @@ hud.setHooks(
 // from the real bag). Split = slot-based op. Bag reorder is debounced
 // client-side (ui.ts) so fast drags never spam the network.
 hud.setCraftHooks(
-  (inputs) => net.craftMatSync(inputs),
+  (inputs) => net.craftFromGrid(inputs),
   (_grid) => { /* no-op: the grid is local now */ },
   (slot) => net.inventoryOp("split", { slot }),
 );

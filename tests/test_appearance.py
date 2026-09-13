@@ -64,11 +64,13 @@ def test_unknown_inputs_fall_back_idle_down():
 def test_weapon_sheet_mapping_complete():
     m = load_manifest()
     for item_id, stem in [
-        ("dirt_sword", "coppersword"),
-        ("wood_sword", "ironsword"),
-        ("stone_sword", "goldsword"),
-        ("wood_pickaxe", "ironpickaxe"),
-        ("stone_shovel", "ancientshovel"),
+        ("wood_sword", "bronzesword"),
+        ("iron_sword", "ironsword"),
+        ("gold_sword", "goldsword"),
+        ("steel_sword", "steelsword"),
+        ("wood_pickaxe", "bronzepickaxe"),
+        ("steel_pickaxe", "cobaltpickaxe"),
+        ("wood_shovel", "spoon"),
     ]:
         assert weapon_sheet_for(item_id) == stem
         entry = layer_manifest(m, item_id)

@@ -33,10 +33,10 @@ def test_held_follows_hotbar_slot():
     p = rt.state.add_player(41, "T", 5, 5)
     p.sync_float_from_int()
     inv = gm.get_inventory(782, 41)
-    inv.add("dirt_pickaxe", 1)
+    inv.add("wood_pickaxe", 1)
     inv.add("stone", 5)
     # slot 0 -> first stack, slot 1 -> second stack.
-    assert _held_of(rt, 41) == "dirt_pickaxe"
+    assert _held_of(rt, 41) == "wood_pickaxe"
     rt.held_slots[41] = 1
     assert _held_of(rt, 41) == "stone"
 
@@ -49,14 +49,14 @@ def test_snapshot_and_welcome_carry_held():
     other = rt.state.add_player(2, "Other", 6, 5)
     other.sync_float_from_int()
     inv_me = gm.get_inventory(783, 1)
-    inv_me.add("dirt_pickaxe", 1)
+    inv_me.add("wood_pickaxe", 1)
     inv_other = gm.get_inventory(783, 2)
     inv_other.add("stone", 2)
     rt.held_slots[2] = 0
     w = build_welcome(rt, 1)
-    assert w["held"] == "dirt_pickaxe"
+    assert w["held"] == "wood_pickaxe"
     s = build_snapshot(rt, 1, 1)
-    assert s["self"]["held"] == "dirt_pickaxe"
+    assert s["self"]["held"] == "wood_pickaxe"
     by_id = {pl["id"]: pl for pl in s["players"]}
     assert by_id[2]["held"] == "stone"
 
@@ -73,7 +73,7 @@ def test_select_slot_mirrors_held_slots_and_echoes():
             "frame": {"type": "join", "token": sess.token, "channel_id": 784},
         })
         inv = hub.manager.get_inventory(784, 41)
-        inv.add("dirt_pickaxe", 1)
+        inv.add("wood_pickaxe", 1)
         inv.add("stone", 5)
         await hub.handle_envelope({
             "cid": 1, "frame": {"type": "select_slot", "slot": 1},

@@ -242,6 +242,42 @@
       "rows": 9,
       "offset_x": -8,
       "offset_y": -24
+    },
+    "bronzesword": {
+      "file": "weapon/bronzesword.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "goldaxe": {
+      "file": "weapon/goldaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "goldpickaxe": {
+      "file": "weapon/goldpickaxe.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "steelsword": {
+      "file": "weapon/steelsword.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
     }
   },
   "rows": {
@@ -262,5 +298,5 @@
     "atk": 50
   },
   "scale": 1.5,
-  "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 \u2014 see kaetram_extract/_license/ATTRIBUTION.md"
+  "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 — see kaetram_extract/_license/ATTRIBUTION.md"
 }

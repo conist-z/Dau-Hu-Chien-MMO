@@ -38,13 +38,13 @@ def _make_state(grid, px, py, facing="NORTH") -> GameState:
 
 def test_grid_indexes_bigmap_trees_and_bushes():
     g = _bigmap_grid()
-    assert len(g.nodes) == 82
+    assert len(g.nodes) == 156
     kinds = {}
     for n in g.nodes.values():
         kinds[n.kind] = kinds.get(n.kind, 0) + 1
-    assert kinds == {"tree": 76, "ore": 1, "bush": 5}
-    assert g.layer_names == {"cây", "vật phẩm ko liên quan"}
-    assert len(g.visible_tiles()) == 310
+    assert kinds == {"tree": 76, "ore": 1, "bush": 5, "rock_small": 38, "rock_big": 36}
+    assert g.layer_names == {"cây", "vật phẩm ko liên quan", "tảng đá nhỏ", "tảng đá lớn"}
+    assert len(g.visible_tiles()) == 384
 
 
 def test_ore_nodes_are_indexed_and_mined_with_pickaxe():
@@ -57,7 +57,7 @@ def test_ore_nodes_are_indexed_and_mined_with_pickaxe():
     assert all(is_ore_kind(n.kind) for n in ores)
     # An ore node is minable: full-hits swinging yields stone drops.
     inv = Inventory()
-    inv.add("stone_pickaxe", 1)  # stone blocks need at least a dirt-tier pickaxe
+    inv.add("wood_pickaxe", 1)  # rocks need at least a wood-tier pickaxe
     node = ores[0]
     tx, ty = node.tiles[0]
     s = _make_state(g, tx, ty + 1, "NORTH")
@@ -67,7 +67,11 @@ def test_ore_nodes_are_indexed_and_mined_with_pickaxe():
             break
         assert r.success
     assert g.is_chopped(node.anchor)
-    assert inv.count("stone") >= 1
+    # Felling spawns drop entities (no direct bag add anymore).
+    from game.drops import get_drop_field
+
+    dropped = [d for d in get_drop_field(s).drops.values() if d.item_id == "stone"]
+    assert len(dropped) >= 1
 
 
 def test_tree_is_2x2_node_and_anchor_mapping():
@@ -95,12 +99,20 @@ def test_apply_chop_progress_then_felling():
         assert r.success and r.state_changed and r.drops is None
     assert g.is_chopped(TREE_ANCHOR) is False
 
-    # Final swing: felled + at least the guaranteed 1 wood in the bag.
+    # Final swing: felled + wood pops out as drop entities (not the bag).
     r = apply_chop(s, ChopAction(10), g, inv, rng=rng, now=100.0)
     assert r.success and r.drops is not None
     assert g.is_chopped(TREE_ANCHOR)
-    assert inv.count("wood") >= 1
-    assert inv.count("wood") == sum(q for iid, q in r.drops if iid == "wood")
+    from game.drops import get_drop_field
+
+    wood_drops = [
+        d for d in get_drop_field(s).drops.values() if d.item_id == "wood"
+    ]
+    assert sum(d.qty for d in wood_drops) >= 1
+    assert inv.count("wood") == 0  # bag untouched until a player collects
+    assert inv.count("wood") == 0 and sum(
+        q for iid, q in r.drops if iid == "wood"
+    ) == sum(d.qty for d in wood_drops)
 
 
 def test_chopped_node_disappears_and_regrows():
@@ -114,7 +126,7 @@ def test_chopped_node_disappears_and_regrows():
     # All 4 tree tiles vanish from the visible set (other trees remain).
     visible = set((x, y) for x, y, _g in g.visible_tiles())
     assert not (set(g.nodes[TREE_ANCHOR].tiles) & visible)
-    assert len(g.visible_tiles()) == 306  # 310 - 4
+    assert len(g.visible_tiles()) == 380  # 384 - 4
 
     # Chopping again while regrowing is rejected.
     r = apply_chop(s, ChopAction(10), g, inv, rng=random.Random(3), now=101.0)
@@ -126,14 +138,16 @@ def test_chopped_node_disappears_and_regrows():
     assert TREE_ANCHOR in ready
     g.regrow(TREE_ANCHOR)
     assert not g.is_chopped(TREE_ANCHOR)
-    assert len(g.visible_tiles()) == 310
+    assert len(g.visible_tiles()) == 384
 
 
 def test_bush_requires_two_hits_and_less_drops():
     g = _bigmap_grid()
-    assert NODE_DEFS["bush"].hits == 2
+    assert NODE_DEFS["bush"].hits == 3
     inv = Inventory()
     s = _make_state(g, BUSH_ANCHOR[0], BUSH_ANCHOR[1] + 1, "NORTH")
+    r = apply_chop(s, ChopAction(10), g, inv, rng=random.Random(4), now=200.0)
+    assert r.drops is None
     r = apply_chop(s, ChopAction(10), g, inv, rng=random.Random(4), now=200.0)
     assert r.drops is None
     r = apply_chop(s, ChopAction(10), g, inv, rng=random.Random(4), now=200.0)
@@ -153,14 +167,16 @@ def test_render_kwargs_hides_chopped_trees():
     rt = type("RT", (), {})()
     rt.resources = g
     kw = render_kwargs(rt)
-    assert kw["resource_layer_names"] == {"cây", "vật phẩm ko liên quan"}
-    assert len(kw["resource_tiles"]) == 310
+    assert kw["resource_layer_names"] == {
+        "cây", "vật phẩm ko liên quan", "tảng đá nhỏ", "tảng đá lớn",
+    }
+    assert len(kw["resource_tiles"]) == 384
 
     inv = Inventory()
     s = _make_state(g, TREE_ANCHOR[0], TREE_ANCHOR[1] + 1, "NORTH")
     for _ in range(NODE_DEFS["tree"].hits):
         apply_chop(s, ChopAction(10), g, inv, rng=random.Random(5), now=100.0)
-    assert len(render_kwargs(rt)["resource_tiles"]) == 306
+    assert len(render_kwargs(rt)["resource_tiles"]) == 380
 
 
 def test_persistence_roundtrip():
@@ -203,7 +219,12 @@ def test_manager_dispatch_chop_persists_inventory():
             _rt, last = await mgr.dispatch(1, ChopAction(10))
         assert last.drops is not None
         inv = mgr.get_inventory(1, 10)
-        assert inv.count("wood") >= 1
+        # Loot pops out as drop entities now (bag fills only on collect).
+        from game.drops import get_drop_field
+
+        assert any(
+            d.item_id == "wood" for d in get_drop_field(rt.state).drops.values()
+        )
         assert rt.resources.is_chopped(TREE_ANCHOR)
         # Re-swing while regrowing is blocked.
         _rt, again = await mgr.dispatch(1, ChopAction(10))

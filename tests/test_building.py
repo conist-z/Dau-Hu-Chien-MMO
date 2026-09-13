@@ -136,12 +136,17 @@ def test_break_block_targets_aim_cursor_tile():
         from game.rules import apply_aim, apply_break_block
 
         apply_aim(state, AimAction(10, 0, -1))
-        inv.add("dirt_pickaxe", 1)  # stone blocks require a pickaxe
+        inv.add("wood_pickaxe", 1)  # stone blocks require a pickaxe
+        # stone hardness 6 (tune 13/09), pickaxe deals 2/hit -> 3 hits.
         res = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
+        res2 = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
+        res3 = apply_break_block(state, BreakBlockAction(10), state.blocks, inv)
         assert res.success is True and res.pos == (5, 4)
-        assert state.blocks.get(5, 4) is None
+        assert res2.success and res2.pos == (5, 4)
+        assert res3.success and res3.pos == (5, 4)
+        assert state.blocks.get(5, 4) is None      # broken on hit 3
         assert state.blocks.get(6, 5) == "floor"  # facing tile untouched
-        assert inv.count("stone") == 11           # material returned (10 + 1)
+        assert inv.count("stone") == 10           # no direct refund anymore
     finally:
         blocks_mod.CREATIVE_MODE = original
 

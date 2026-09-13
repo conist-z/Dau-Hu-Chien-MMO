@@ -25,6 +25,8 @@ RESOURCE_LAYER_NAMES = {
     "cây", "cay", "tree", "trees", "resources",
     # Ore/rock veins live on the bigmap's misc-item layer.
     "vật phẩm ko liên quan", "vat pham ko lien quan", "ore", "ores", "mine",
+    # Mineable rock nodes (bigmap layers "tảng đá nhỏ" / "tảng đá lớn").
+    "tảng đá nhỏ", "tang da nho", "tảng đá lớn", "tang da lon",
     # NOTE: the dead-tree layer ("cây chết") is deliberately NOT here — its
     # art reuses the same Pipoya gids as the misc-item layer, so scanning it
     # would resurrect the minable-dead-tree bug (gid 47/48).
@@ -46,6 +48,10 @@ TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     # Only keep the clearly-ore-only gids (44, 46).
     44: ("ore", 0, 0),
     46: ("ore", 0, 0),
+    # Mineable rocks (bigmap layers "tảng đá nhỏ/gross"):
+    # 65 = small rock, 66 = big rock (yields 1.5x stone, 1.4x hits).
+    65: ("rock_small", 0, 0),
+    66: ("rock_big", 0, 0),
 }
 
 
@@ -60,19 +66,50 @@ class ResourceDef:
     drops: List[Tuple[str, float, int]]  # (item_id, chance 0..1, qty)
 
 
+# Ore/rock vein tiles ("vật phẩm ko liên quan") + mineable rocks.
 NODE_DEFS: Dict[str, ResourceDef] = {
     "ore": ResourceDef(
         "ore",
         "Quặng",
         hits=5,
         respawn_s=420.0,
-        # Always 1 stone, +60% for a second; occasional key_stone bonus.
-        drops=[("stone", 1.0, 1), ("stone", 0.6, 1), ("key_stone", 0.08, 1)],
+        # Always 1 stone, +60% for a second; smelting chain adds iron ore and
+        # coal (game/smelting.py) plus the rare key_stone bonus.
+        drops=[
+            ("stone", 1.0, 1),
+            ("stone", 0.6, 1),
+            ("iron_ore", 0.4, 1),
+            ("coal", 0.25, 1),
+            ("key_stone", 0.08, 1),
+        ],
+    ),
+    # Small rock (gid 65): user tune 14/09 — 12 wood-pickaxe swings or 65
+    # bare-hand swings. Recipe table intentionally EMPTY (coming later).
+    "rock_small": ResourceDef(
+        "rock_small",
+        "Đá",
+        hits=12,
+        respawn_s=420.0,
+        drops=[("stone", 1.0, 1)],
+    ),
+    # Big rock (gid 66): +0.4x hits (17) and 1.5x yield (user rule).
+    "rock_big": ResourceDef(
+        "rock_big",
+        "Đá lớn",
+        hits=17,  # round(12 * 1.4)
+        respawn_s=420.0,
+        drops=[
+            ("stone", 1.0, 1),
+            ("stone", 0.5, 1),
+        ],
     ),
     "tree": ResourceDef(
         "tree",
         "Cây",
-        hits=4,
+        # Bare-hand swings to fell a tree (user tune 13/09: 12). Holding an
+        # axe replaces this via axe_hits(material) — dirt 9, wood 6, stone 4,
+        # iron 3 — so tools stay the fast path.
+        hits=12,
         respawn_s=300.0,
         # Always 1 wood, +50% for a second; leaves/apples are chance rolls.
         drops=[("wood", 1.0, 1), ("wood", 0.5, 1), ("leaves", 0.6, 1), ("apple", 0.3, 1)],
@@ -81,7 +118,7 @@ NODE_DEFS: Dict[str, ResourceDef] = {
     "bush": ResourceDef(
         "bush",
         "Bụi cây",
-        hits=2,
+        hits=3,
         respawn_s=180.0,
         drops=[("wood", 0.7, 1), ("leaves", 0.35, 1), ("apple", 0.12, 1)],
     ),
@@ -211,7 +248,8 @@ CHOP_RANGE = 3
 AIM_RANGE = 3
 
 # Node kinds harvested with a PICKAXE instead of the axe (ore/rock veins).
-ORE_NODE_KINDS = {"ore", "rock", "stone_node", "iron_ore", "coal"}
+ORE_NODE_KINDS = {"ore", "rock", "stone_node", "iron_ore", "coal",
+                  "rock_small", "rock_big"}
 
 
 def is_ore_kind(kind: str) -> bool:
@@ -313,7 +351,7 @@ def apply_chop(state: GameState,
     if tool_id is None:
         tool_id = tool_mod.best_tool_of_family(inventory, family)
 
-    if ore and not tool_mod.has_pickaxe_tier(inventory, "dirt"):
+    if ore and not tool_mod.has_pickaxe_tier(inventory, "wood"):
         return ActionResult(False, "too_hard")
 
     tool = parse_tool_id(tool_id) if tool_id else None
@@ -321,9 +359,15 @@ def apply_chop(state: GameState,
     if tool is not None:
         hits = hits_fn(tool.material)
     else:
-        # Bare hands / no tool of the family: the base (dirt-tier) grind but
-        # allowed — stone nodes were already gated above.
-        hits = NODE_DEFS[node.kind].hits
+        # Bare hands / no tool of the family: the grind tier. For mineable
+        # rocks the user tune 14/09 applies: 65 bare-hand swings on a small
+        # rock (scaled 1.4x for big ones); ore keeps its base hits.
+        if node.kind == "rock_small":
+            hits = 65
+        elif node.kind == "rock_big":
+            hits = 91  # round(65 * 1.4)
+        else:
+            hits = NODE_DEFS[node.kind].hits
 
     now = time.time() if now is None else now
     rng = rng if rng is not None else random
@@ -337,8 +381,15 @@ def apply_chop(state: GameState,
     drops: List[Tuple[str, int]] = []
     for item_id, chance, qty in NODE_DEFS[node.kind].drops:
         if rng.random() < chance:
-            inventory.add(item_id, qty)
             drops.append((item_id, qty))
+    # Felled: the loot pops out as "linh khí" drop entities at the node
+    # centre (the manager grants the bag only when a player collects them).
+    from game.drops import spawn_drops
+
+    if drops:
+        cx = sum(x for x, _y in node.tiles) / len(node.tiles)
+        cy = sum(y for _x, y in node.tiles) / len(node.tiles)
+        spawn_drops(state, cx, cy, drops, rng=rng)
     return ActionResult(
         True, state_changed=True, pos=(tx, ty), block_id=node.kind, drops=drops,
         needed=hits,
