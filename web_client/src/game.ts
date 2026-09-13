@@ -330,7 +330,7 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
-    this.cameras.main.setZoom(1.6); // zoom IN — close-up view
+    this.cameras.main.setZoom(2.0); // zoom IN — close-up view (+25%)
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
