@@ -611,6 +611,29 @@ class WebHub:
                     self.manager.db, cid, uid, list(inv.items))
         elif op == "use":
             await self.manager.use_item(cid, uid, frame.get("item_id", ""))
+        elif op == "purse_withdraw":
+            # Drag the coin/crystal icon OUT of the panel = pull exactly ONE
+            # unit from the purse into the bag. Fails silently (client
+            # springs the ghost back) when the purse can't afford it or the
+            # bag is full.
+            from game.purse import is_currency, purse_withdraw
+            item_id = str(frame.get("item_id", ""))
+            if not is_currency(item_id):
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR, "code": "bad_op"})
+                return
+            ok = await purse_withdraw(self.manager, cid, uid, item_id)
+            if ok:
+                rt = self.manager.get_runtime_for(cid, uid)
+                if rt is not None:
+                    p = rt.state.get_player(uid)
+                    if p is not None:
+                        self.manager._schedule_save(rt, p)
+                await self.manager._persist_full_inventory(cid, uid, inv)
+                self.manager._notify_inventory_change(cid, uid)
+            else:
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR, "code": "purse_empty"})
         elif op == "throw":
             # Drag-an-item-outside-the-panel + left click = toss it into the
             # world as a drop entity at the player's feet. Server-authoritative
@@ -629,18 +652,24 @@ class WebHub:
             inv.remove(item_id, take)
             rt = self.manager.get_runtime_for(cid, uid)
             if rt is not None:
-                from game.drops import spawn_drops
+                from game.drops import NO_COLLECT_WINDOW_S, spawn_drops
                 p = rt.state.get_player(uid)
+                # Client tells us where the player faces ("N".."SE"); fall
+                # back to the player's own direction field when absent.
+                direction = str(frame.get("direction", "") or (
+                    getattr(p, "direction", "SOUTH") if p else "SOUTH"))
                 spawn_drops(
                     rt.state,
                     p.x_f if p else 0.5,
                     p.y_f if p else 0.5,
                     [(item_id, take)],
+                    no_collect_window=NO_COLLECT_WINDOW_S,
+                    direction=direction,
                 )
             if self.manager.db is not None:
                 from persistence.repositories import save_inventory_order
                 await save_inventory_order(self.manager.db, cid, uid, list(inv.items))
-            self._notify_inventory_change(cid, uid)
+            self.manager._notify_inventory_change(cid, uid)
         else:
             await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
             return

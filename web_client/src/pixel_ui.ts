@@ -58,6 +58,9 @@ export const PURSE_DIGIT = {
   baselineY: 86,                // counter digits' top y (panel coords) —
                                 // vertically centred on the 10px coin icon
 };
+// Digit-run anchor x (panel coords): 1px right of each icon's right edge.
+export const PURSE_COIN_X = INV_COIN.x + INV_COIN.w + 1;   // 23
+export const PURSE_CRYSTAL_X = INV_CRYSTAL.x + INV_CRYSTAL.w + 1;  // 71
 export const INV_SLOT = "ui/v5/atoms/inv_cell.png";
 // The kit's 5×5 close component (0091) — the X ACTUALLY painted into each
 // frame (measured from the PNGs by its dark-glyph bbox): inv X at (88,4),
@@ -277,17 +280,18 @@ export function sizePanel(
 }
 
 /**
- * Render a number in the kit's own v5 pixel font (right-aligned so the
- * count grows leftward from the icon's right edge — classic purse layout).
+ * Render a number in the kit's own v5 pixel font (left-aligned starting
+ * 1px right of the icon's right edge — digits grow rightward into the
+ * empty band next to each icon).
  * Returns the digit <img>s; the caller positions/removes them.
  */
 export function makeDigitRun(
   value: number,
-  rightPx: number,
+  leftPx: number,
 ): HTMLImageElement[] {
   const text = String(Math.max(0, Math.floor(value)));
   const out: HTMLImageElement[] = [];
-  let x = rightPx - text.length * PURSE_DIGIT.advance; // right-aligned
+  let x = leftPx;
   for (const ch of text) {
     const im = document.createElement("img");
     im.className = "pix-layer purse-digit";

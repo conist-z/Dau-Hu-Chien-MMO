@@ -21,6 +21,7 @@ import {
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
+  PURSE_COIN_X, PURSE_CRYSTAL_X,
   itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
 
@@ -1603,8 +1604,8 @@ export class Hud {
     this.purseLastSig = sig;
     for (const el of this.purseDigitEls) el.remove();
     this.purseDigitEls = [
-      ...makeDigitRun(this.purseCoins, INV_COIN.x + INV_COIN.w),
-      ...makeDigitRun(this.purseCrystals, INV_CRYSTAL.x + INV_CRYSTAL.w + 2),
+      ...makeDigitRun(this.purseCoins, PURSE_COIN_X),
+      ...makeDigitRun(this.purseCrystals, PURSE_CRYSTAL_X),
     ];
     this.invItemsWrap.append(...this.purseDigitEls);
     this.invItemsCraftWrap.append(...this.purseDigitEls.map((im) => {

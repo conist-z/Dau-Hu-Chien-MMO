@@ -40,6 +40,7 @@ export interface WelcomePayload {
     mana: number;
     max_mana: number;
     coins: number;
+    crystals?: number;
     walk_speed: number;
     run_speed: number;
     dir: string;
@@ -133,6 +134,7 @@ export interface SnapshotPayload {
     mana: number;
     max_mana: number;
     coins: number;
+    crystals?: number;
     x: number;
     y: number;
     dir: string;
