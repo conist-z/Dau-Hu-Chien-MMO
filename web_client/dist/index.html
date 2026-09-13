@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-6nRUlBob.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BmqrQTRD.css">
+    <script type="module" crossorigin src="./assets/index-CPQUzhZ4.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-72O_B7Fe.css">
   </head>
   <body>
     <div id="game-root">
@@ -90,8 +90,12 @@
         <div id="login-gate">
           <div class="panel">
             <h1>Map Game</h1>
-            <p id="login-status">Đăng nhập bằng Discord…</p>
-            <button id="btn-login" type="button">Đăng nhập bằng Discord</button>
+            <p class="gate-sub">Chơi ngay trên web — nhân vật dùng chung với Discord</p>
+            <p id="login-status">Đang tải…</p>
+            <div class="gate-actions">
+              <button id="btn-login" type="button" class="gate-btn primary">🔑 Đăng nhập Discord</button>
+              <button id="btn-quick" type="button" class="gate-btn">⚡ Vào nhanh (thử nghiệm)</button>
+            </div>
             <div id="scenario-list"></div>
           </div>
         </div>

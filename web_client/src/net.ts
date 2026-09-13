@@ -13,6 +13,8 @@ export interface NetHandlers {
   onSnapshot: (frame: Extract<ServerFrame, { type: "snapshot" }>) => void;
   onScenarioList: (items: ScenarioItem[]) => void;
   onInventory: (inv: InventoryPayload, version?: number) => void;
+  /** Craft-panel state sync (server material grid + parked result). */
+  onCraftState?: (matGrid: [string, number][], result: { id: string; qty: number } | null) => void;
   onCraftResult: (ok: boolean, reason: string, itemId: string | null, qty: number) => void;
   onPush: (message: string) => void;
   onError: (code: string) => void;
@@ -268,16 +270,28 @@ export class Net {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }
 
-  craftOp(recipeId: string): void {
-    this.send({ type: "craft_op", recipe_id: recipeId });
-  }
-
-  /** Grid craft: send exactly what sits in the material grid. */
-  craftGrid(inputs: { id: string; qty: number }[]): void {
+  /** Sync the craft material grid (server-authoritative bag<->grid delta). */
+  craftMatSync(grid: { id: string; qty: number }[]): void {
     this.send({
       type: "craft_op",
-      inputs: inputs.map((s) => ({ id: s.id, qty: s.qty })),
+      op: "mat_sync",
+      grid: grid.filter((g) => g.qty > 0),
     });
+  }
+
+  /** Craft: consume the server-side material grid. */
+  craftFromGrid(): void {
+    this.send({ type: "craft_op", op: "craft" });
+  }
+
+  /** Collect the parked craft result into the bag. */
+  craftCollect(): void {
+    this.send({ type: "craft_op", op: "collect" });
+  }
+
+  /** Legacy recipe-id craft (Discord parity). */
+  craftOp(recipeId: string): void {
+    this.send({ type: "craft_op", recipe_id: recipeId });
   }
 
   chatCommand(text: string): void {
@@ -339,6 +353,9 @@ export class Net {
         break;
       case "inventory_delta":
         this.handlers.onInventory(frame.inventory, frame.inv_version);
+        if (frame.mat_grid || frame.craft_result !== undefined) {
+          this.handlers.onCraftState?.(frame.mat_grid ?? [], frame.craft_result ?? null);
+        }
         break;
       case "craft_result":
         // Server verdict for craft_op (previously silently dropped): success

@@ -125,6 +125,7 @@ export class Hud {
   private statusEl = document.getElementById("login-status")!;
   private listEl = document.getElementById("scenario-list")!;
   private btnLogin = document.getElementById("btn-login") as HTMLButtonElement;
+  private btnQuick = document.getElementById("btn-quick") as HTMLButtonElement;
   private invPanel = document.getElementById("inv-panel")!;
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
@@ -141,16 +142,18 @@ export class Hud {
   // covers the bootstrap moment before welcome arrives.
   private itemEmojis: Record<string, string> = {};
   private recipes: RecipePayload[] = [];
-  // MATERIAL grid state (3×3): what the player placed for crafting. Purely
-  // a UI buffer — the server validates the multiset at CREATE time.
+  // MATERIAL grid state: SERVER truth (synced via craft_op mat_sync). The
+  // client keeps a local mirror for instant painting; the server owns the
+  // bag<->grid delta.
   private matGrid: (Stack | null)[] = Array(9).fill(null);
-  private resultStack: Stack | null = null;
+  private parkedResult: { id: string; qty: number } | null = null;
   private drag: DragSrc | null = null;
   private dragGhost: HTMLDivElement | null = null;
   private activeSlot = 0;
   private onCommand: ((text: string) => void) | null = null;
-  private onCraftGrid: ((inputs: Stack[]) => void) | null = null;
-  private onSplit: ((itemId: string) => void) | null = null;
+  private onCraftGrid: ((inputs: { id: string; qty: number }[]) => void) | null = null;
+  private onSplit: ((slot: number) => void) | null = null;
+  private onCollect: (() => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
   constructor() {
     this.chatForm.addEventListener("submit", (e) => {
@@ -258,14 +261,30 @@ export class Hud {
     }, { passive: true });
   }
 
-  /** Extra craft hooks: grid craft + quick-fill + split (all optional). */
+  /** Extra craft hooks: grid craft + split (all optional). The material
+   *  grid is a LOCAL buffer — no per-move network op exists anymore. */
   setCraftHooks(
-    onCraftGrid: (inputs: Stack[]) => void,
-    _onQuickFill: (recipeId: string) => void,
-    onSplit: (itemId: string) => void,
+    onCraftGrid: (inputs: { id: string; qty: number }[]) => void,
+    _onQuickFill: (grid: { id: string; qty: number }[]) => void,
+    onSplit: (slot: number) => void,
   ): void {
     this.onCraftGrid = onCraftGrid;
     this.onSplit = onSplit;
+  }
+
+  /** Server-synced parked craft RESULT (the result slot is server truth).
+   *  The material grid itself is a local buffer and is never overwritten
+   *  by server echoes. */
+  setCraftResult(result: { id: string; qty: number } | null): void {
+    this.parkedResult = result;
+    if (this.inventoryOpen && this.craftTab.classList.contains("active")) {
+      this.renderCraftPanel();
+    }
+  }
+
+  /** Register the result-slot collect callback. */
+  onCollectResult(cb: () => void): void {
+    this.onCollect = cb;
   }
 
   get gateVisible(): boolean {
@@ -392,14 +411,30 @@ export class Hud {
     this.renderInventory();
   }
 
-  /** Send the whole bag order to the server (validated multiset there). */
+  /** Send the whole bag order to the server (validated multiset there).
+   *  DEBOUNCED 400ms: fast consecutive drags coalesce into ONE reorder
+   *  frame — the UI stays instant (local edit) and the network never sees
+   *  the intermediate states (no jitter, no ping spikes, no bad_order). */
   private syncBagOrder(): void {
-    const order = this.inventory.bag.map((s) =>
-      s ? { id: s.id, qty: s.qty } : { id: "", qty: 0 });
-    this.onReorder?.(order);
+    if (this.reorderTimer !== null) {
+      window.clearTimeout(this.reorderTimer);
+    }
+    this.reorderTimer = window.setTimeout(() => {
+      this.reorderTimer = null;
+      const order = this.inventory.bag.map((s) =>
+        s ? { id: s.id, qty: s.qty } : { id: "", qty: 0 });
+      this.onReorder?.(order);
+    }, 400);
   }
 
-  /** Material grid internal move/merge. */
+  private reorderTimer: number | null = null;
+
+  // ===== CRAFT: the 9-cell material grid is a PURE LOCAL BUFFER =====
+  // The player "takes" stacks out of the bag view onto the grid; nothing
+  // touches the network until CREATE (or a right-click put-back). The server
+  // re-validates everything at craft time, so lag can never corrupt moves.
+
+  /** Material grid internal move/merge — local only, zero network. */
   private moveMat(from: number, to: number): void {
     const a = this.matGrid[from];
     if (!a) return;
@@ -414,39 +449,34 @@ export class Hud {
     this.renderCraftPanel();
   }
 
-  /** Bag → material grid: place 1 (left-click drag) — Minecraft feel. */
+  /** Bag → material grid: TAKE the whole stack off the bag view (local).
+   *  The stack disappears from the bag panel and appears on the grid; the
+   *  server never hears about it until CREATE (or put-back). */
   private bagToMat(bagIndex: number, matIndex: number): void {
     const src = this.inventory.bag[bagIndex];
     if (!src) return;
     const dst = this.matGrid[matIndex];
     if (dst && dst.id !== src.id) {
-      // Different item: swap the two stacks.
+      // Different item: swap bag stack with the placed stack (local).
       this.matGrid[matIndex] = { ...src };
       this.inventory.bag[bagIndex] = { ...dst };
-      this.syncBagOrder();
-      this.renderCraftPanel();
-      return;
-    }
-    if (dst) {
-      dst.qty += 1;
+    } else if (dst) {
+      dst.qty += src.qty;
+      this.inventory.bag[bagIndex] = null;
     } else {
-      this.matGrid[matIndex] = { id: src.id, qty: 1 };
+      this.matGrid[matIndex] = { ...src };
+      this.inventory.bag[bagIndex] = null;
     }
-    src.qty -= 1;
-    if (src.qty <= 0) this.inventory.bag[bagIndex] = null;
-    // Server: consume exactly 1 via move_to-free path — we model placement
-    // client-side and reconcile at CREATE; a mid-session rejoin rebuilds
-    // the bag from the server truth. Repaint now.
+    this.renderInventory();
     this.renderCraftPanel();
   }
 
-  /** Material grid → bag: return the stack (or 1 unit) to the bag. */
+  /** Material grid → bag: put the stack back into the bag view (local). */
   private matToBag(matIndex: number, bagIndex: number): void {
     const src = this.matGrid[matIndex];
     if (!src) return;
     const target = this.inventory.bag[bagIndex];
     if (target && target.id !== src.id) {
-      // Swap bag stack with the placed stack.
       this.matGrid[matIndex] = { ...target };
       this.inventory.bag[bagIndex] = { ...src };
     } else if (target) {
@@ -456,7 +486,15 @@ export class Hud {
       this.inventory.bag[bagIndex] = { ...src };
       this.matGrid[matIndex] = null;
     }
+    this.renderInventory();
     this.renderCraftPanel();
+  }
+
+  /** Compact the 9 material cells into the CREATE input list. */
+  private compactMatGrid(): { id: string; qty: number }[] {
+    return this.matGrid
+      .filter((s): s is Stack => !!s && s.qty > 0)
+      .map((s) => ({ id: s.id, qty: s.qty }));
   }
 
   // Wire with bindMoveTo() — kept optional so a half-wired build never
@@ -464,14 +502,13 @@ export class Hud {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private onReorder: ((order: { id: string; qty: number }[]) => void) | null = null;
 
-  /** Right-click a BAG slot: split half into the next empty bag slot. */
+  /** Right-click a BAG slot: split half into the next empty bag slot.
+   *  Client mirror first (instant), server op persists the new grid. */
   private splitBag(index: number): void {
     const st = this.inventory.bag[index];
     if (!st || st.qty < 2) return;
-    // Client-side split (visual) + server op to persist the new order.
     const half = st.qty - Math.floor(st.qty / 2);
     st.qty -= half;
-    // Find the first empty slot after index (wrap).
     const bag = this.inventory.bag;
     let at = -1;
     for (let i = 1; i <= bag.length; i++) {
@@ -479,8 +516,9 @@ export class Hud {
       if (!bag[j]) { at = j; break; }
     }
     if (at >= 0) bag[at] = { id: st.id, qty: half };
-    else st.qty += half; // no room: undo
-    this.onSplit?.(st.id);
+    else { st.qty += half; return; } // no room: undo locally
+    this.onSplit?.(index);
+    this.syncBagOrder();
     this.renderInventory();
   }
 
@@ -537,6 +575,7 @@ export class Hud {
       if (rec) {
         slot.classList.add("quick");
         if (haveAll) slot.classList.add("ready");
+        else slot.classList.add("locked"); // red hatched overlay
         // mousedown (not click): guaranteed to fire even if another layer
         // stops the click event; ALSO more responsive (fires on press).
         slot.addEventListener("mousedown", (e) => {
@@ -544,18 +583,21 @@ export class Hud {
           e.stopPropagation();
           e.preventDefault();
           this.selectedQuick = i;
-          // Quick-fill: pull this recipe's materials from the bag into the
-          // material grid (server validates the multiset at CREATE).
+          // QUICK CRAFT — REAL takeover: take the recipe's materials out of
+          // the BAG VIEW (local, instant) onto the grid. First return any
+          // previously placed stacks, then pull from the bag stacks.
           this.fillMatGridFromBag(rec);
+          this.renderInventory(); // bag cells that lost stacks repaint now
+          this.renderCraftPanel();
         });
       }
       this.invCraftWrap.appendChild(slot);
     }
 
-    // --- MATERIAL grid (dark 3×3, top right; draggable).
+    // --- MATERIAL grid (dark 3×3, top right; draggable) — local buffer.
     for (let i = 0; i < CRAFT_MAT_GRID.cols * CRAFT_MAT_GRID.rows; i++) {
       const [x, y] = slotXY(CRAFT_MAT_GRID, i);
-      const st = this.matGrid[i];
+      const st = this.matGrid[i] ?? null;
       const slot = makeSlot(CRAFT_MAT_GRID.slotW, x, y, CRAFT_MAT_CELL, {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
@@ -574,118 +616,94 @@ export class Hud {
       this.invCraftWrap.appendChild(slot);
     }
 
-    // --- RESULT slot [108,90,16,16]: last craft's output; click collects.
+    // --- RESULT slot [108,90,16,16]: parked craft output; click collects.
     const outSlot = makeSlot(CRAFT_RESULT.w, CRAFT_RESULT.x, CRAFT_RESULT.y, CRAFT_RESULT_ATOM, {
-      // class hook for the larger result-icon CSS rule
-      iconUrl: this.resultStack ? itemIconUrl(this.resultStack.id) : undefined,
-      emoji: this.resultStack ? iconFor(this.resultStack.id, this.itemEmojis) : "",
-      qty: this.resultStack ? String(this.resultStack.qty) : "",
-      title: this.resultStack ? this.resultStack.id : undefined,
+      iconUrl: this.parkedResult ? itemIconUrl(this.parkedResult.id) : undefined,
+      emoji: this.parkedResult ? iconFor(this.parkedResult.id, this.itemEmojis) : "",
+      qty: this.parkedResult ? String(this.parkedResult.qty) : "",
+      title: this.parkedResult ? this.parkedResult.id : undefined,
     });
     outSlot.classList.add("result");
-    if (this.resultStack) {
+    if (this.parkedResult) {
       outSlot.classList.add("craftable");
-      outSlot.addEventListener("click", () => this.collectResult());
+      outSlot.addEventListener("click", () => this.onCollect?.());
     }
     this.invCraftWrap.appendChild(outSlot);
 
     // --- In-panel pixel CREATE button [76,69,43,13].
-    const gridHasMaterials = this.matGrid.some((s) => s);
+    const gridHasMaterials = this.compactMatGrid().length > 0;
     this.invCraftWrap.appendChild(this.makeCraftButton(gridHasMaterials, sel));
 
     // --- Description region [133,21,54,87]: selected quick-craft info.
     this.invCraftWrap.appendChild(this.makeCraftDescription(sel));
   }
 
-  /** Pure client preview of can_craft — the SERVER re-checks at craft time. */
+  /** Pure client preview of can_craft — the SERVER re-checks at craft time.
+   *  Bag TOTALS are aggregated across all stacks (sparse grid = same item
+   *  may sit in several slots). */
   private canCraftNow(r: RecipePayload): boolean {
     if (r.needs_table && !this.nearTable) return false;
-    return r.inputs.every(
-      (inp) => (this.inventory.bag.find((b) => b?.id === inp.id)?.qty ?? 0) >= inp.qty,
-    );
+    return r.inputs.every((inp) => this.bagCountOf(inp.id) >= inp.qty);
   }
 
-  /** Pull a quick-craft recipe's materials from the bag into the grid. */
+  /** Total qty of ``id`` across ALL bag stacks (plus placed-on-grid stacks
+   *  are NOT counted — the grid is what CREATE consumes). */
+  private bagCountOf(id: string): number {
+    return this.inventory.bag.reduce(
+      (n, b) => n + (b && b.id === id ? b.qty : 0), 0);
+  }
+
+  /** QUICK CRAFT: return the current grid to the bag view, then pull each
+   *  recipe input out of the bag stacks (LOCAL view edit only — the server
+   *  validates + consumes the real bag at CREATE time). Missing inputs stay
+   *  partial: the red-hatched quick slot + the desc rows say what's short. */
   private fillMatGridFromBag(rec: RecipePayload): void {
-    // Clear any previous materials back to the bag first (they were never
-    // server-consumed — this is a pure UI buffer).
-    this.returnMatGridToBag();
-    // Place each ingredient (1 stack per material, qty per recipe).
-    let slot = 0;
-    for (const inp of rec.inputs) {
-      const have = this.inventory.bag.find((b) => b?.id === inp.id)?.qty ?? 0;
-      if (have < inp.qty) {
-        this.toast(`Thiếu ${inp.id} (${have}/${inp.qty}).`);
-        this.renderCraftPanel();
-        return;
-      }
-      for (const b of this.inventory.bag) {
-        if (!b || b.id !== inp.id) continue;
-        const take = Math.min(b.qty, inp.qty);
-        b.qty -= take;
-        if (b.qty <= 0) this.inventory.bag[this.inventory.bag.indexOf(b)] = null;
-        this.matGrid[slot] = { id: inp.id, qty: take };
-        inp.qty -= take; // remaining need (mutating the payload copy is fine)
-        if (inp.qty <= 0) break;
-      }
-      slot++;
-    }
-    // Sync the bag with the server (materials were "taken" client-side).
-    this.onBagChanged?.(this.inventory);
-    this.renderCraftPanel();
-  }
-
-  /** Return everything in the material grid to the bag (no server craft). */
-  private returnMatGridToBag(): void {
+    // 1) Put back whatever sits on the grid (bag view first).
     for (let i = 0; i < this.matGrid.length; i++) {
       const st = this.matGrid[i];
       if (!st) continue;
-      const existing = this.inventory.bag.find((b) => b?.id === st.id);
-      if (existing) existing.qty += st.qty;
+      const slot = this.inventory.bag.findIndex((b) => b?.id === st.id);
+      if (slot >= 0) this.inventory.bag[slot]!.qty += st.qty;
       else {
         const free = this.inventory.bag.findIndex((b) => !b);
         if (free >= 0) this.inventory.bag[free] = st;
-        else this.inventory.bag.push(st); // grid is 20 — server trims
       }
       this.matGrid[i] = null;
     }
+    // 2) Pull each ingredient out of the bag view (multi-stack aware).
+    let cell = 0;
+    for (const inp of rec.inputs) {
+      let need = inp.qty;
+      while (need > 0 && cell < 9) {
+        const src = this.inventory.bag.find((b) => b && b.id === inp.id && b.qty > 0);
+        if (!src) break; // bag short — partial fill, desc shows the lack
+        const take = Math.min(src.qty, need);
+        this.matGrid[cell] = { id: inp.id, qty: take };
+        cell++;
+        src.qty -= take;
+        need -= take;
+        if (src.qty <= 0) {
+          this.inventory.bag[this.inventory.bag.indexOf(src)] = null;
+        }
+      }
+    }
   }
 
-  /** CREATE pressed: send the material grid's multiset to the server. */
+  /** CREATE pressed: send the material grid's multiset to the server.
+   *  The grid was filled FROM the bag view, so the multiset the client
+   *  shows is exactly what the server will find in the bag. */
   private pressCreate(): void {
-    const inputs = this.matGrid.filter((s): s is Stack => !!s);
+    const inputs = this.compactMatGrid();
     if (inputs.length === 0) return;
+    // Optimistic: clear the consumed inputs from the grid + park the best-
+    // guess result locally; the server's craft_result/inv_delta reconciles.
+    this.matGrid = Array(9).fill(null);
+    if (this.craftTab.classList.contains("active")) {
+      this.renderInventory();
+      this.renderCraftPanel();
+    }
     this.onCraftGrid?.(inputs);
   }
-
-  /** Craft result arrived: park it in the result slot (click to collect). */
-  showCraftOutput(itemId: string, qty: number): void {
-    if (!itemId) return;
-    if (this.resultStack && this.resultStack.id === itemId) {
-      this.resultStack.qty += qty;
-    } else {
-      this.resultStack = { id: itemId, qty };
-    }
-    if (this.craftTab.classList.contains("active")) this.renderCraftPanel();
-  }
-
-  /** Collect the result slot into the bag. */
-  private collectResult(): void {
-    const st = this.resultStack;
-    if (!st) return;
-    const existing = this.inventory.bag.find((b) => b?.id === st.id);
-    if (existing) existing.qty += st.qty;
-    else {
-      const free = this.inventory.bag.findIndex((b) => !b);
-      if (free >= 0) this.inventory.bag[free] = st;
-      else this.inventory.bag.push(st);
-    }
-    this.resultStack = null;
-    this.onBagChanged?.(this.inventory);
-    this.renderCraftPanel();
-  }
-
-  private onBagChanged: ((inv: InventoryPayload) => void) | null = null;
 
   /** Pixel CREATE button (demo sprite; states via filters). */
   private makeCraftButton(gridHasMaterials: boolean, sel: RecipePayload | null): HTMLElement {
@@ -814,13 +832,25 @@ export class Hud {
     this.gateEl.classList.add("hidden");
   }
 
-  setLoginButton(enabled: boolean, label = "Đăng nhập bằng Discord"): void {
+  setLoginButton(enabled: boolean, label = "🔑 Đăng nhập Discord"): void {
     this.btnLogin.disabled = !enabled;
     this.btnLogin.textContent = label;
   }
 
+  /** The quick-login (test) button: label + enabled state + visibility. */
+  setQuickButton(enabled: boolean, label = "⚡ Vào nhanh (thử nghiệm)",
+                 visible = true): void {
+    this.btnQuick.disabled = !enabled;
+    this.btnQuick.textContent = label;
+    this.btnQuick.classList.toggle("hidden", !visible);
+  }
+
   onLoginClick(cb: () => void): void {
     this.btnLogin.addEventListener("click", cb);
+  }
+
+  onQuickClick(cb: () => void): void {
+    this.btnQuick.addEventListener("click", cb);
   }
 
   showScenarioList(items: { channel_id: number; map_name: string; players: number }[],
@@ -964,7 +994,30 @@ export class Hud {
     // skipped: rebuilding the grid mid-drag is the inventory "jitter".
     if (version !== undefined && version === this.invVersion) return;
     this.invVersion = version ?? this.invVersion;
-    this.inventory = inv;
+    // MERGE with local craft takeout: the server's bag doesn't know about
+    // stacks sitting on the material grid (local buffer until CREATE).
+    // If the server bag has the taken quantities, subtract them so the bag
+    // view stays consistent with what the player sees on the grid; when a
+    // craft consumes them the server bag simply no longer has them.
+    const placed = this.compactMatGrid();
+    if (placed.length > 0) {
+      const bag = inv.bag.map((s) => (s ? { ...s } : null));
+      for (const p of placed) {
+        let need = p.qty;
+        for (const b of bag) {
+          if (need <= 0) break;
+          if (b && b.id === p.id) {
+            const take = Math.min(b.qty, need);
+            b.qty -= take;
+            need -= take;
+            if (b.qty <= 0) bag[bag.indexOf(b)] = null;
+          }
+        }
+      }
+      this.inventory = { bag, hotbar: inv.hotbar };
+    } else {
+      this.inventory = inv;
+    }
     this.renderHotbar();
     if (this.inventoryOpen) this.renderInventory();
   }
@@ -1036,10 +1089,9 @@ export class Hud {
   /** Register bag-sync + reorder callbacks (server round-trips). */
   setBagSync(
     _onMoveTo: (itemId: string, slot: number) => void,
-    onBagChanged: (inv: InventoryPayload) => void,
+    _onBagChanged: (inv: InventoryPayload) => void,
     onReorder?: (order: { id: string; qty: number }[]) => void,
   ): void {
-    this.onBagChanged = onBagChanged;
     this.onReorder = onReorder ?? null;
   }
 

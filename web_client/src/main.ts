@@ -12,7 +12,6 @@ import { dayNightFx } from "./daynight";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
-let quickPlayArmed = false;
 /** Channel to auto-join once a fresh login_result lands after a stale-token
  * error (silent reconnect path; cleared on use or when joining manually). */
 let pendingRejoinChannel: string | null = null;
@@ -199,6 +198,11 @@ const net = new Net({
     // Bag rides along only when it changed (inv_version ack) — otherwise
     // this is a no-op and the grid never re-renders mid-drag.
     if (frame.inventory) applyInventory(frame.inventory, frame.inv_version);
+    // Craft-panel parked RESULT rides along with the bag (server truth);
+    // the material grid is a local buffer and is never echoed here.
+    if (frame.craft_result !== undefined) {
+      hud.setCraftResult(frame.craft_result ?? null);
+    }
   },
   onScenarioList: (items) => {
     hud.showScenarioList(items, (channelId) => {
@@ -209,9 +213,14 @@ const net = new Net({
     });
   },
   onInventory: applyInventory,
+  onCraftState: (_matGrid, result) => {
+    // Only the parked RESULT is server truth now; the material grid is a
+    // local buffer (ignore server echoes of it entirely).
+    hud.setCraftResult(result);
+  },
   onCraftResult: (ok, reason, itemId, qty) => {
     hud.craftResult(ok, reason, itemId, qty);
-    if (ok && itemId) hud.showCraftOutput(itemId, qty);
+    if (ok && itemId) hud.setCraftResult(null);
   },
   onPush: (message) => hud.toast(message),
   onError: (code) => {
@@ -239,9 +248,10 @@ const net = new Net({
         pendingRejoinChannel = lastMap;
         return;
       }
-      quickPlayArmed = true;
-      hud.setLoginButton(true, "Vào game nhanh (không cần đăng nhập)");
-      hud.showGate("Phiên cũ đã hết — bấm vào game để chơi ngay.");
+      // No remembered map: land back on the clean two-button panel.
+      hud.showGate("Phiên cũ đã hết — chọn cách vào game:");
+      hud.setLoginButton(true);
+      hud.setQuickButton(true);
       return;
     }
     if (code === "scenario_missing_or_full") {
@@ -282,6 +292,7 @@ const net = new Net({
   },
   onLoginFail: (error) => {
     hud.setLoginButton(true);
+    hud.setQuickButton(true);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
   onHeld: (_slot, itemId) => {
@@ -363,20 +374,22 @@ hud.setHooks(
   (recipeId) => net.craftOp(recipeId),
 );
 
-// Craft-grid hooks: CREATE sends the material grid's multiset; the result
-// frame parks in the result slot (hud.showCraftOutput). Bag reorder/split
-// ops persist via inventory_op; quick-fill syncs the local buffer to the
-// server (full inventory frame re-sent from the client buffer).
+// Craft hooks (LOCAL-grid model): the material grid is a pure client
+// buffer; CREATE sends the exact multiset once (server validates + consumes
+// from the real bag). Split = slot-based op. Bag reorder is debounced
+// client-side (ui.ts) so fast drags never spam the network.
 hud.setCraftHooks(
-  (inputs) => net.craftGrid(inputs.map((s) => ({ id: s.id, qty: s.qty }))),
-  (_recipeId) => { /* quick-fill handled client-side + onBagChanged */ },
-  (itemId) => net.inventoryOp("split", { item_id: itemId }),
+  (inputs) => net.craftMatSync(inputs),
+  (_grid) => { /* no-op: the grid is local now */ },
+  (slot) => net.inventoryOp("split", { slot }),
 );
 hud.setBagSync(
   (itemId, slot) => net.inventoryOp("move_to", { item_id: itemId, slot }),
   (_inv) => { /* client buffer already updated; server delta repaints */ },
   (order) => net.inventoryOp("reorder", { order }),
 );
+// Result slot click: collect the crafted output into the bag (server op).
+hud.onCollectResult(() => net.craftCollect());
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held
 // tool only. Silent on purpose: no chat spam. The self hand updates
@@ -549,38 +562,43 @@ async function boot(): Promise<void> {
     // stale token — the server would reject them with not_joined.
     hud.showGate("Chế độ nhanh: tự động vào game…");
     guestLogin(net);
-  } else if (saved) {
-    hud.showGate("Đã có phiên — chọn map…");
-    net.requestScenarioList();
   } else {
-    // Quick-play: skip Discord login, join as a guest id.
-    hud.showGate("Chế độ nhanh: vào game không cần đăng nhập Discord.");
-    hud.setLoginButton(true, "Vào game nhanh (không cần đăng nhập)");
-    quickPlayArmed = true;
+    // Discord path (OAuth) or first visit: both land on the same clean
+    // panel with BOTH buttons live — the user picks their path.
+    hud.showGate(saved ? "Đã có phiên — chọn map…" : "Chọn cách vào game:");
+    hud.setLoginButton(true);
+    hud.setQuickButton(true);
+    if (saved) net.requestScenarioList();
   }
 }
 
 // (input declared below onSnapshot's usage — hoisted const reference is
 // fine because the handler only RUNS after boot.)
 
+// Two independent entry paths — the panel shows BOTH at once, so neither
+// "arms" anything: clicking a button IS the choice (no mode flag races).
+
 hud.onLoginClick(() => {
-  if (quickPlayArmed) {
-    hud.setLoginButton(false, "Đang vào game…");
-    guestLogin(net);
-    // Guard: server không trả lời trong 10s -> báo lỗi thay vì treo.
-    window.setTimeout(() => {
-      if (!net.isJoined) {
-        hud.setLoginButton(true);
-        hud.showGate(
-          "Server game chưa kết nối được relay (bot offline hoặc RELAY_URL sai). " +
-          "Thử lại sau — hoặc báo admin xem log panel có dòng [WEB] relay connected.",
-        );
-      }
-    }, 10000);
-    return;
-  }
   hud.setLoginButton(false, "Đang mở Discord…");
+  hud.setQuickButton(false);
   void net.loginWithDiscord();
+});
+
+hud.onQuickClick(() => {
+  hud.setQuickButton(false, "Đang vào game…");
+  hud.setLoginButton(false);
+  guestLogin(net);
+  // Guard: server không trả lời trong 10s -> báo lỗi thay vì treo.
+  window.setTimeout(() => {
+    if (!net.isJoined) {
+      hud.setQuickButton(true);
+      hud.setLoginButton(true);
+      hud.showGate(
+        "Server game chưa kết nối được relay (bot offline hoặc RELAY_URL sai). " +
+        "Thử lại sau — hoặc báo admin xem log panel có dòng [WEB] relay connected.",
+      );
+    }
+  }, 10000);
 });
 
 void boot();
