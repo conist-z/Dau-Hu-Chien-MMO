@@ -949,21 +949,23 @@ export class Hud {
       const lit = this.craftCategory === tab.group;
       const el = document.createElement("div");
       el.className = "craft-tab" + (lit ? " lit" : "");
-      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE), nudged
-      // +1px down (user calib): the container box is 18 kit px wide at the
-      // column origin; the lit box sits at y=11 (15px tall), resting/flat
-      // at y=12 (14px tall).
-      const boxY = lit ? 11 : 12;
-      const boxH = lit ? 15 : 14;
+      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE) aligned
+      // to the baked boxes in the deployed craft_frame (kit frame3 strip):
+      // lit box y=10 (15px tall), resting/flat y=11 (14px tall). The frame
+      // carries the resting boxes for ALL THREE columns, so the runtime
+      // only draws the LIT box + the icon on top of the baked art.
+      const boxY = lit ? 10 : 11;
+      const boxH = (lit ? 15 : 14) * PIXEL_SCALE;
       const iconY = lit ? tab.yActive : tab.yRest;
       el.style.cssText =
         `left:${tab.boxX * PIXEL_SCALE}px;top:${boxY * PIXEL_SCALE}px;` +
-        `width:${18 * PIXEL_SCALE}px;height:${boxH * PIXEL_SCALE}px;`;
+        `width:${18 * PIXEL_SCALE}px;height:${boxH}px;`;
       const box = document.createElement("img");
       box.className = "slot-bg";
-      box.src = lit ? tab.boxLit : tab.boxFlat;
-      box.draggable = false;
-      el.appendChild(box);
+      // Resting boxes are BAKED into the frame for every column — only
+      // the lit state draws a box overlay (the flat/rest files stay as a
+      // fallback for a future frame without baked art).
+      if (lit) el.appendChild(box);
       // Icon centered horizontally in the 18px box, on its kit y row.
       const icon = document.createElement("img");
       icon.className = "craft-tab-icon";
