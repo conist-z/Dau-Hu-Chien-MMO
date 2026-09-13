@@ -96,6 +96,9 @@ export class WorldScene extends Phaser.Scene {
   // Latest server stamina (snapshot self payload). 0 = tired: prediction
   // caps at walk speed, matching the server's run gate.
   private selfStamina = 1.0;
+  // Server says self is eating: prediction walks at HALF speed to mirror
+  // the tick (EAT_SPEED_MULT) — divergence here would glide-correct visibly.
+  private selfEating = false;
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
   private itemEmojis: Record<string, string> = {};
@@ -1051,6 +1054,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateDrops(performance.now());
     // Kaetram hitsplats: float + fade every frame (spawned from action_result).
     this.updateSplats(performance.now());
+    this.updateChew();
   }
 
   /** Sync the drop-entity layer with the server payload (20 Hz). */
@@ -1268,9 +1272,11 @@ export class WorldScene extends Phaser.Scene {
       // Stamina gate: once stamina hits 0 the server caps us at WALK speed —
       // mirror that locally so the prediction never diverges while tired.
       const tired = this.selfStamina <= 0;
-      const speed = v.running && !tired
+      // Eating: half speed while chewing (server EAT_SPEED_MULT).
+      const eatMul = this.selfEating ? 0.5 : 1.0;
+      const speed = (v.running && !tired
         ? (s?.run_speed ?? 6.0)
-        : (s?.walk_speed ?? 4.0);
+        : (s?.walk_speed ?? 4.0)) * eatMul;
       const stepX = v.dx * speed * dt;
       const stepY = v.dy * speed * dt;
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);
@@ -1516,6 +1522,106 @@ export class WorldScene extends Phaser.Scene {
    */
   /** Hitsplat over a PLAYER (victim of zombie bites etc.): resolves the
    * player's current tile from the authoritative state. */
+  // ---- EATING FX (user feature) ----
+  // Chew: colored crumbs (the item's icon color) burst around the player's
+  // head while the server's eating flag is on; heal burst: the Kaetram
+  // heal.png 8-frame sparkle plays over the player when the chew completes.
+  private chewEmitters = new Map<number, { emitter: Phaser.GameObjects.Particles.ParticleEmitter; item: string }>();
+  private healBurstT = 0;
+  private healSprite: Phaser.GameObjects.Sprite | null = null;
+  private eatColors: Record<string, number> = {
+    apple: 0xd83a3a, cooked_meat: 0xb5651d, raw_meat: 0xd96a6a,
+    potion_hp: 0xe04848, potion_mp: 0x4f6fe0, banana: 0xf0d060,
+    watermelon: 0x3fae5a, orange: 0xf09030, blueberry: 0x5060c0,
+    bread: 0xc89858, cheese: 0xf0c040, carrot: 0xe07020,
+  };
+
+  /** Server eating flag changed for self: start/stop the chew crumb burst. */
+  setSelfEating(eating: boolean, itemId: string | null): void {
+    const self = this.selfMarker;
+    if (!self) return;
+    const existing = this.chewEmitters.get(this.welcome?.self.id ?? 0);
+    if (eating && !existing && itemId) {
+      const color = this.eatColors[itemId] ?? 0xc09050;
+      const emitter = this.add.particles(0, 0, undefined, {
+        speed: { min: 14, max: 34 },
+        angle: { min: 200, max: 340 }, // upward arc from the mouth
+        gravityY: 60, // crumbs fall back down — the "chew" feel
+        lifespan: 550,
+        frequency: 70,
+        scale: { start: 1.6, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        quantity: 1,
+        tint: [color, color, 0xffffff],
+        emitting: false,
+      });
+      emitter.setDepth(150);
+      this.chewEmitters.set(this.welcome?.self.id ?? 0, { emitter, item: itemId });
+      emitter.start();
+    } else if (!eating && existing) {
+      existing.emitter.stop();
+      this.time.delayedCall(700, () => existing.emitter.destroy());
+      this.chewEmitters.clear();
+    } else if (existing) {
+      // Follow the player (mouth position, ~head height).
+      existing.emitter.setPosition(self.x, self.y - 34);
+    }
+  }
+
+  /** Per-frame: keep chew emitters glued to the player's mouth. */
+  private updateChew(): void {
+    const self = this.selfMarker;
+    if (!self) return;
+    for (const e of this.chewEmitters.values()) {
+      e.emitter.setPosition(self.x, self.y - 34);
+    }
+  }
+
+  /** The server says an eat just completed: play the Kaetram heal sparkles
+   *  + a green "+heal" splat. Called from the snapshot loop. */
+  playHealBurst(at: number): void {
+    if (at <= this.healBurstT) return; // already seen this burst
+    this.healBurstT = at;
+    const self = this.selfMarker;
+    if (!self) return;
+    // Green heal splat (Kaetram: "++" prefix for points).
+    this.spawnSplatAt(
+      Math.floor(self.x / 32), Math.floor(self.y / 32), "+", "#6fe26f", "#1d5c22",
+    );
+    // Kaetram heal.png: 8 frames of 48x48 — register once, play once.
+    if (!this.textures.exists("fx-heal")) {
+      const img = new Image();
+      img.onload = () => {
+        if (!this.textures.exists("fx-heal") && this.textures) {
+          this.textures.addSpriteSheet("fx-heal", img, { frameWidth: 48, frameHeight: 48 });
+          this.playHealFrames(self.x, self.y);
+        }
+      };
+      img.src = "ui/fx/heal.png";
+    } else {
+      this.playHealFrames(self.x, self.y);
+    }
+  }
+
+  private playHealFrames(x: number, y: number): void {
+    if (!this.textures.exists("fx-heal")) return;
+    this.healSprite?.destroy();
+    const s = this.add.sprite(x, y - 8, "fx-heal", 0).setDepth(160);
+    s.setScale(1.2);
+    this.healSprite = s;
+    this.anims.create({
+      key: "fx-heal-play",
+      frames: this.anims.generateFrameNumbers("fx-heal", { start: 0, end: 7 }),
+      frameRate: 14,
+      hideOnComplete: true,
+    });
+    s.play("fx-heal-play");
+    s.once("animationcomplete", () => {
+      s.destroy();
+      if (this.healSprite === s) this.healSprite = null;
+    });
+  }
+
   spawnSplatOnPlayer(userId: number, damage: number): void {
     let tx: number | null = null;
     let ty: number | null = null;
@@ -2199,6 +2305,12 @@ export class WorldScene extends Phaser.Scene {
     // the server's run-at-walk-speed cap once it empties).
     const st = (snap.self as { stamina?: number }).stamina;
     if (typeof st === "number") this.selfStamina = st;
+    // Eating state: chew particles while the flag is on; heal burst when a
+    // completed eat is announced (server monotonic timestamp gates replays).
+    const eat = snap.self as { eating?: boolean; eating_item?: string | null; heal_eat?: { item: string; at: number } | null };
+    this.setSelfEating(!!eat.eating, eat.eating_item ?? null);
+    this.selfEating = !!eat.eating;
+    if (eat.heal_eat) this.playHealBurst(eat.heal_eat.at);
     const nowMs = performance.now();
     if (this.lastServerRecv > 0) {
       const gap = Math.min(2000, nowMs - this.lastServerRecv);

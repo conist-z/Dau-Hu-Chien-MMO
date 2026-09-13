@@ -94,6 +94,10 @@ STAMINA_CHOP_DRAIN = float(os.getenv("STAMINA_CHOP_DRAIN", "2"))  # /s while hit
 STAMINA_REGEN = float(os.getenv("STAMINA_REGEN", "10"))           # /s refills in ~20 s
 STAMINA_REGEN_DELAY_S = float(os.getenv("STAMINA_REGEN_DELAY_S", "1.0"))  # grace after exertion
 STAMINA_TIRED_MULT = 0.5  # harvest damage multiplier once stamina is empty
+# ---- Eating (consumables): chew window + anti-spam ----
+EAT_DURATION_S = float(os.getenv("EAT_DURATION_S", "1.6"))   # chew time
+EAT_COOLDOWN_S = float(os.getenv("EAT_COOLDOWN_S", "1.5"))   # Kaetram EDIBLE_COOLDOWN
+EAT_SPEED_MULT = 0.5   # move speed multiplier while eating
 WEB_AIM_RANGE_TOLERANCE = int(os.getenv("WEB_AIM_RANGE_TOLERANCE", "1"))  # lag slack for click targeting
 # Max simultaneous web players per scenario (design ceiling; extra joins wait).
 WEB_MAX_PLAYERS = int(os.getenv("WEB_MAX_PLAYERS", "15"))

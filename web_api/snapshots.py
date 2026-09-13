@@ -322,7 +322,15 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             "max_mana": player.max_mana if player else 50,
             "stamina": int(player.stamina) if player else 0,
             "max_stamina": int(player.max_stamina) if player else 200,
+            # Eating state (chew particles + half speed on the client).
+            "eating": bool(player and player.eating_until > _time.monotonic()),
+            "eating_item": player.eating_item if player else None,
+            "heal_eat": (
+                {"item": iid, "at": round(at, 2)}
+                if player and player.last_heal_eat else None
+            ),
             "coins": player.coins if player else 0,
+            "crystals": getattr(player, "crystals", 0) if player else 0,
             "walk_speed": _walk_speed(),
             "run_speed": _run_speed(),
             "dir": player.direction if player else "SOUTH",
@@ -437,6 +445,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "stamina": int(player.stamina) if player else 0,
             "max_stamina": int(player.max_stamina) if player else 200,
             "coins": player.coins if player else 0,
+            "crystals": getattr(player, "crystals", 0) if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
             # Dead flag + respawn countdown: the web client freezes its own

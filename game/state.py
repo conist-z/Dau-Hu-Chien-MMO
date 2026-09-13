@@ -113,6 +113,19 @@ class Player:
     # monotonic() of the last exertion (sprint tick / harvest hit) — regen
     # waits STAMINA_REGEN_DELAY_S after it. Runtime-only.
     last_exert_at: Optional[float] = None
+    # EATING state (user feature): while eating, the player moves at HALF
+    # speed and the client plays the chew particles. The heal lands when the
+    # eat completes. Runtime-only.
+    eating_until: float = 0.0
+    # Item id currently being eaten (drives the particle color on the client).
+    eating_item: Optional[str] = None
+    # monotonic() of the last eat start (1.5s anti-spam cooldown, Kaetram
+    # EDIBLE_COOLDOWN).
+    last_eat_at: float = 0.0
+    # (item_id, monotonic) of the LAST COMPLETED eat — the snapshot payload
+    # exposes it so the client can fire the Kaetram-style heal burst when a
+    # chew finishes. Short-lived, runtime-only.
+    last_heal_eat: Optional[tuple] = None
     # Out-of-combat HP regen (user rule 13/09). Runtime-only (not persisted):
     # ``last_damaged_at`` = monotonic time of the last HP LOSS (zombie bite /
     # any damage — apply_regen heals only after REGEN_DELAY_S of quiet), and
@@ -123,6 +136,9 @@ class Player:
     level: int = 1
     xp: int = 0
     coins: int = 0
+    # Purse crystals (v5 inventory right counter; auto-converted from any
+    # `crystal` stack that lands in the bag — see game/purse.py).
+    crystals: int = 0
     class_id: str = "adventurer"
     learned_skills: List[str] = field(default_factory=lambda: ["slash"])
     # Discord message ids of this player's map, D-pad controls, and hub.
