@@ -402,7 +402,9 @@ const net = new Net({
 
 // Drag item outside panel + left click = toss it into the world.
 hud.onThrow = (itemId, qty) => {
-  net.inventoryOp("throw", { item_id: itemId, qty });
+  // The stack visibly flies where the player faces (server spawns the drop
+  // with a directional launch; the scene's 8-way selfDir is the label).
+  net.inventoryOp("throw", { item_id: itemId, qty, direction: scene.getSelfDir() });
   hud.toast(`Đã vứt ${itemId}×${qty}`);
 };
 

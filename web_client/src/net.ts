@@ -281,7 +281,7 @@ export class Net {
   }
 
   inventoryOp(op: "move_to" | "use" | "split" | "reorder" | "throw",
-              payload: { item_id?: string; slot?: number; qty?: number; order?: { id: string; qty: number }[] }): void {
+              payload: { item_id?: string; slot?: number; qty?: number; order?: { id: string; qty: number }[]; direction?: string }): void {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }
 
