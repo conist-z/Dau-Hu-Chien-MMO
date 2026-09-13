@@ -535,6 +535,10 @@ async function boot(): Promise<void> {
   hud.setLoginButton(false, "Đang kết nối…");
   const isOAuthReturn = new URLSearchParams(location.search).has("code");
   if (isOAuthReturn) {
+    // Discord bounced back with the code: the server now exchanges it with
+    // Discord's API (2 HTTPS roundtrips) — tell the user instead of sitting
+    // on a stale "Đang kết nối…" for 2-3s.
+    hud.showGate("Đang xác thực Discord…");
     const handled = await net.completeLoginFromUrl();
     if (handled) return; // login_result frame takes it from here
   }
