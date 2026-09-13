@@ -288,7 +288,8 @@ export class Hud {
         `left:${iconSpec.x * PIXEL_SCALE}px;top:${iconSpec.y * PIXEL_SCALE}px;` +
         `width:${iconSpec.w * PIXEL_SCALE}px;height:${iconSpec.h * PIXEL_SCALE}px;`;
       hit.dataset.itemId = itemId;
-      hit.title = "Kéo ra ngoài panel để rút 1";
+      hit.dataset.purseTarget = itemId;
+      hit.title = "Kéo ra ngoài panel để rút 1 · Kéo xu lên đây để nạp";
       hit.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
         e.preventDefault();
@@ -307,9 +308,9 @@ export class Hud {
       if (this.purseDrag) {
         const t = this.nearestDropTarget(e.clientX, e.clientY);
         if (t && t.from === "bag") {
-          const idx = t.index;
-          this.endPurseDrag(false);
-          this.endPurseDrag(true, idx); // optimistic: unit lands in idx NOW
+          // NOTE: ONE call only — endPurseDrag(nulls purseDrag) then calling
+          // it again is a no-op (the "kéo ra không được" bug).
+          this.endPurseDrag(true, t.index);
           return;
         }
         this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
@@ -318,6 +319,16 @@ export class Hud {
       // generous snap radius instead of only the exact hovered slot —
       // near-misses snap in instead of springing back.
       if (!this.drag) return;
+      // PURSE DRAG SOURCE: a currency stack from the bag released ON the
+      // matching purse icon = deposit the whole stack into the purse.
+      if (this.drag && this.drag.from === "bag" && isCurrency(this.drag.stack.id)) {
+        const pid = this.purseTargetAt(e.clientX, e.clientY);
+        if (pid) {
+          if (pid === this.drag.stack.id) this.depositDraggedCurrency();
+          else this.cancelDrag(); // wrong icon (coin onto crystal): spring back
+          return;
+        }
+      }
       const t = this.nearestDropTarget(e.clientX, e.clientY);
       if (t) {
         if (t.from === "result") {
@@ -658,6 +669,43 @@ export class Hud {
     );
   }
 
+  /** The purse icon under the pointer ("coin" | "crystal" | null). */
+  private purseTargetAt(x: number, y: number): string | null {
+    let hit: string | null = null;
+    document.querySelectorAll<HTMLElement>(".purse-hit").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) return; // hidden panel
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        hit = el.dataset.purseTarget ?? null;
+      }
+    });
+    return hit;
+  }
+
+  /** Deposit a currency stack into the purse.
+   *  OPTIMISTIC: clear the source stack + bump the counter locally, do NOT
+   *  syncBagOrder (the order we'd send contradicts server truth until
+   *  purse_deposit lands → tolerant rebuild reshuffles the layout). */
+  private depositCurrency(itemId: string, fromIndex: number, qty: number): void {
+    if (this.inventory.bag[fromIndex]?.id !== itemId) return;
+    this.inventory.bag[fromIndex] = null;
+    if (itemId === "coin") this.purseCoins += qty;
+    else this.purseCrystals += qty;
+    this.invVersion = -1; // next server delta reconciles totals
+    this.renderHotbar();
+    this.renderInventory();
+    this.toast(`Đã nạp ${qty} ${itemId === "coin" ? "xu" : "tinh thể"} vào ví`);
+    if (this.onPurseDeposit) this.onPurseDeposit(itemId, qty);
+  }
+
+  /** Drop the currently dragged currency stack onto a purse icon. */
+  private depositDraggedCurrency(): void {
+    const d = this.drag;
+    this.endDrag();
+    if (!d) return;
+    this.depositCurrency(d.stack.id, d.index, d.stack.qty);
+  }
+
   private updateDragGhost(x: number, y: number): void {
     if (this.purseGhost) {
       this.purseGhost.style.left = `${x - 16}px`;
@@ -682,17 +730,7 @@ export class Hud {
       const onto = this.inventory.bag[index];
       const isPurseCell = !!onto && onto.id === d.stack.id;
       if (isPurseCell) {
-        // OPTIMISTIC deposit: clear the source stack, bump the counter —
-        // and do NOT syncBagOrder (the order we'd send contradicts the
-        // server's bag until purse_deposit lands → rebuild chaos).
-        this.inventory.bag[d.index] = null;
-        if (d.stack.id === "coin") this.purseCoins += d.stack.qty;
-        else this.purseCrystals += d.stack.qty;
-        this.invVersion = -1; // next server delta reconciles totals
-        this.renderHotbar();
-        this.renderInventory();
-        this.toast(`Đã nạp ${d.stack.qty} ${d.stack.id === "coin" ? "xu" : "tinh thể"} vào ví`);
-        if (this.onPurseDeposit) this.onPurseDeposit(d.stack.id, d.stack.qty);
+        this.depositCurrency(d.stack.id, d.index, d.stack.qty);
         return;
       }
       // not the purse cell: fall through to the normal move below.
