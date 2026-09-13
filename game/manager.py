@@ -953,16 +953,9 @@ class GameManager:
         # — that surfaced as "bad_order" toasts mid-drag. Instead: apply the
         # client's ORDER for the items it got right and keep the server's
         # authoritative quantities for everything else (resync-on-mismatch).
-        # PURSE DEPOSIT: currency the client deliberately dragged INTO the
-        # grid is banked into the purse (withdrawing one unit per drag out).
-        from game.purse import is_currency, purse_add
-        for c in cells:
-            if c and is_currency(c[0]):
-                if purse_add(self, channel_id, user_id, c[0], c[1]):
-                    player = rt.state.get_player(user_id)
-                    if player is not None:
-                        self._schedule_save(rt, player)
-        cells = [None if (c and is_currency(c[0])) else c for c in cells]
+        # NOTE: currency in the grid is a FREE item — the reorder applies it
+        # like anything else. Deposit into the purse is the explicit
+        # purse_deposit op (drag onto a matching purse cell).
         want: Dict[str, int] = {}
         for c in cells:
             if c:

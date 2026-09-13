@@ -28,11 +28,12 @@ def is_currency(item_id: str) -> bool:
 
 def purse_add(manager, channel_id: int, user_id: int,
               item_id: str, qty: int) -> bool:
-    """Auto-convert a currency stack in the bag into the purse counters.
+    """Convert EXACTLY `qty` of `item_id` from the bag into the purse.
 
-    Call after ANY bag mutation that could introduce currency (pickup,
-    craft, zombie loot, trade...). Drains every `item_id` stack + overflow
-    into the matching Player counter. Returns True when the purse changed.
+    Explicit deposit path only (purse_deposit op): drains up to `qty` from
+    the bag stacks into the matching Player counter. Returns True when the
+    purse changed. The bag keeps any remaining currency — it is a free
+    item; nothing auto-converts it.
     """
     if not is_currency(item_id) or qty <= 0:
         return False
@@ -43,12 +44,12 @@ def purse_add(manager, channel_id: int, user_id: int,
     if player is None:
         return False
     inv = manager.get_inventory(channel_id, user_id)
-    have = inv.count(item_id)
-    if have <= 0:
+    take = min(int(qty), inv.count(item_id))
+    if take <= 0:
         return False
-    inv.remove(item_id, have)
+    inv.remove(item_id, take)
     field = _PURSE_FIELD[item_id]
-    setattr(player, field, getattr(player, field) + have)
+    setattr(player, field, getattr(player, field) + take)
     return True
 
 
