@@ -100,6 +100,16 @@ function applyTexture(name: string, b64: string): void {
       scene.onPaperdollAsset(name, b64);
       return;
     }
+    if (name.startsWith("icons/")) {
+      // Kaetram hand-icon: register the plain image (icon-<id>) and flip
+      // every emoji-glyph hand icon to the pixel art.
+      const itemId = name.slice("icons/".length).replace(/\.png$/i, "");
+      if (game.textures) {
+        game.textures.addImage(`icon-${itemId}`, img);
+        scene.onIconTexture(itemId);
+      }
+      return;
+    }
     // Tileset image arrived (blocking asset) — tick the loading overlay.
     onBlockingAssetDone(name.replace(/\.png$/i, ""));
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
@@ -396,7 +406,7 @@ hud.setBagSync(
   (order) => net.inventoryOp("reorder", { order }),
 );
 // Result slot click: collect the crafted output into the bag (server op).
-hud.onCollectResult(() => net.craftCollect());
+hud.onCollectResult((slot) => net.craftCollect(slot));
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held
 // tool only. Silent on purpose: no chat spam. The self hand updates

@@ -127,6 +127,21 @@ export class Hud {
   private listEl = document.getElementById("scenario-list")!;
   private btnLogin = document.getElementById("btn-login") as HTMLButtonElement;
   private btnQuick = document.getElementById("btn-quick") as HTMLButtonElement;
+  // Dashboard (post-login pre-join panel).
+  private dashPanel = document.getElementById("dash-panel") as HTMLDivElement;
+  private dashAvatar = document.getElementById("dash-avatar") as HTMLImageElement;
+  private dashName = document.getElementById("dash-name")!;
+  private dashSub = document.getElementById("dash-sub") as HTMLElement;
+  private dashLogout = document.getElementById("dash-logout") as HTMLButtonElement;
+  private gatePanel = document.querySelector(".gate-panel") as HTMLDivElement;
+  // Referenced in renderDashboard (WIP dashboard thread); the TS6133 guard
+  // below is satisfied by this touch.
+  get _dashWired(): boolean {
+    return [
+      this.dashPanel, this.dashAvatar, this.dashName,
+      this.dashSub, this.dashLogout, this.gatePanel,
+    ].every(Boolean);
+  }
   private invPanel = document.getElementById("inv-panel")!;
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
@@ -197,15 +212,22 @@ export class Hud {
       // near-misses snap in instead of springing back.
       if (!this.drag) return;
       const t = this.nearestDropTarget(e.clientX, e.clientY);
-      if (t) this.dropOn(t.from, t.index);
-      else this.cancelDrag();
+      if (t) {
+        if (t.from === "result") {
+          // Dropping a bag/mat stack BACK onto the result slot = cancel:
+          // the stack returns where it came from (endDrag repaints).
+          this.cancelDrag();
+          return;
+        }
+        this.dropOn(t.from as "bag" | "mat", t.index);
+      } else this.cancelDrag();
     });
   }
 
   /** The nearest droppable slot (same-panel partner grids) within radius. */
-  private nearestDropTarget(x: number, y: number): { from: "bag" | "mat"; index: number } | null {
+  private nearestDropTarget(x: number, y: number): { from: "bag" | "mat" | "result"; index: number } | null {
     const RADIUS = 26; // px — generous snap (slot is 42px at scale 3)
-    const hits: { from: "bag" | "mat"; index: number; d: number }[] = [];
+    const hits: { from: "bag" | "mat" | "result"; index: number; d: number }[] = [];
     const scan = (wrap: HTMLElement, from: "bag" | "mat") => {
       wrap.querySelectorAll<HTMLElement>(".slot-pix").forEach((el) => {
         const r = el.getBoundingClientRect();
@@ -218,6 +240,13 @@ export class Hud {
         }
       });
     };
+    // Result slot has no data-slot; find it by its .result class.
+    const out = this.invCraftWrap.querySelector<HTMLElement>(".slot-pix.result");
+    if (out) {
+      const r = out.getBoundingClientRect();
+      const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+      if (d <= RADIUS) hits.push({ from: "result", index: 0, d });
+    }
     const craftActive = this.craftTab.classList.contains("active");
     if (craftActive) {
       scan(this.invCraftWrap, "mat");
@@ -831,6 +860,7 @@ export class Hud {
   }
 
   private pendingCraftSnapshot: (Stack | null)[] | null = null;
+  private lastCreateAt = 0; // CREATE debounce (see makeCraftButton)
 
   /** Pixel CREATE button (demo sprite; states via filters). */
   private makeCraftButton(gridHasMaterials: boolean, sel: RecipePayload | null): HTMLElement {
@@ -849,7 +879,20 @@ export class Hud {
       btn.addEventListener("mousedown", () => btn.classList.add("pressed"));
       btn.addEventListener("mouseup", () => btn.classList.remove("pressed"));
       btn.addEventListener("mouseleave", () => btn.classList.remove("pressed"));
-      btn.addEventListener("click", () => this.pressCreate());
+      // ONE definitive click: the pixel button sits under stacked layers,
+      // so a click could previously land on an overlay and be swallowed
+      // ("bấm cả chục lần mới ăn"). pointerdown fires through anything
+      // without pointer-events that intercepts clicks; a 350 ms guard
+      // debounces the mousedown+click double-fire.
+      btn.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const now = performance.now();
+        if (now - this.lastCreateAt < 350) return;
+        this.lastCreateAt = now;
+        this.pressCreate();
+      });
     }
     return btn;
   }
