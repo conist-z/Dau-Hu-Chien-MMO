@@ -673,19 +673,26 @@ export class Hud {
     const d = this.drag;
     this.endDrag();
     if (!d || (d.from === target && d.index === index)) return;
-    // PURSE DEPOSIT: dragging a currency stack anywhere into the bag grid
-    // banks it instantly (the counters tick up; the stack never "sits" in
-    // a slot). Server confirms via the next inv_delta + purse numbers.
-    if (d.from === "bag" && target === "bag" && isCurrency(d.stack.id)) {
-      this.inventory.bag[d.index] = null;
-      this.purseCoins += d.stack.id === "coin" ? d.stack.qty : 0;
-      this.purseCrystals += d.stack.id === "crystal" ? d.stack.qty : 0;
-      this.renderHotbar();
-      this.syncBagOrder();
-      this.renderInventory();
-      this.toast(`Đã nạp ${d.stack.qty} ${d.stack.id === "coin" ? "xu" : "tinh thể"} vào ví`);
-      if (this.onPurseDeposit) this.onPurseDeposit(d.stack.id, d.stack.qty);
-      return;
+    // PURSE DEPOSIT: dropping a currency stack ONTO THE MATCHING PURSE
+    // CELL (a bag slot already holding the same currency) banks it. Any
+    // other slot = a normal free move (currency is a free item).
+    if (
+      d.from === "bag" && target === "bag" && isCurrency(d.stack.id)
+    ) {
+      const onto = this.inventory.bag[index];
+      const isPurseCell = !!onto && onto.id === d.stack.id;
+      if (isPurseCell) {
+        this.inventory.bag[d.index] = null;
+        if (d.stack.id === "coin") this.purseCoins += d.stack.qty;
+        else this.purseCrystals += d.stack.qty;
+        this.renderHotbar();
+        this.syncBagOrder();
+        this.renderInventory();
+        this.toast(`Đã nạp ${d.stack.qty} ${d.stack.id === "coin" ? "xu" : "tinh thể"} vào ví`);
+        if (this.onPurseDeposit) this.onPurseDeposit(d.stack.id, d.stack.qty);
+        return;
+      }
+      // not the purse cell: fall through to the normal move below.
     }
     if (d.from === "bag" && target === "bag") {
       this.moveBag(d.index, index);
@@ -975,7 +982,7 @@ export class Hud {
     // composed all-resting frame. The runtime draws ONLY the icons on top
     // of the baked boxes: green icon on the lifted column (y=12), brown
     // icons on the resting columns (y=18).
-    this.invCraftWrap.querySelectorAll(".craft-tab").forEach((n) => n.remove());
+    this.invCraftWrap.querySelectorAll(".craft-tab,.craft-tab-icon").forEach((n) => n.remove());
     const FRAME_BY_CAT: Record<string, string> = {
       all: "ui/v5/layers/craft_frame_all.png",
       tool: "ui/v5/layers/craft_frame_tool.png",
@@ -999,18 +1006,19 @@ export class Hud {
       icon.src = lit ? tab.lit : tab.rest;
       icon.draggable = false;
       // Bigger display (user request): render the kit icon ~1.7x native,
-      // bottom-anchored so it grows upward within the box (stays crisp via
-      // image-rendering: pixelated).
+      // bottom-anchored on its kit row and centered in the 18px column.
+      // Positioned against the WRAP (kit coords) so no ancestor clipping can
+      // hide it; `el` stays a transparent click hitbox.
       const SCALE_UP = 1.7;
       const iw = tab.w * SCALE_UP;
       const ih = tab.h * SCALE_UP;
-      const elW = 18 * PIXEL_SCALE;
-      const elH = (lit ? 15 : 14) * PIXEL_SCALE;
-      const left = (elW - iw * PIXEL_SCALE) / 2;
-      const top = elH - ih * PIXEL_SCALE;
+      const colW = 18 * PIXEL_SCALE;
+      const left = tab.boxX * PIXEL_SCALE + (colW - iw * PIXEL_SCALE) / 2;
+      const top = iconY * PIXEL_SCALE + tab.h * PIXEL_SCALE - ih * PIXEL_SCALE;
       icon.style.cssText =
         `left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;` +
         `width:${(iw * PIXEL_SCALE).toFixed(1)}px;height:${(ih * PIXEL_SCALE).toFixed(1)}px;`;
+      this.invCraftWrap.appendChild(icon);
       el.title =
         tab.group === "tool" ? "Công cụ / Vũ khí" :
         tab.group === "decor" ? "Trang trí / Block" : "Đồ dùng được";
