@@ -1182,10 +1182,10 @@ class GameManager:
             now = _time.monotonic()
             if now - p.last_eat_at < EAT_COOLDOWN_S:
                 return False, "eat_cooldown"
-            heals_hp = "heal_hp" in item.effect and p.hp < p.max_hp
-            heals_mp = "heal_mp" in item.effect and p.mana < p.max_mana
-            if not heals_hp and not heals_mp:
-                return False, "already_full"
+            heals_hp = "heal_hp" in item.effect
+            heals_mp = "heal_mp" in item.effect
+            # NOTE: NO "already_full" gate — full HP/mana may still eat (the
+            # user wants Minecraft-style free eating); the heal just caps.
             if self.get_inventory(channel_id, user_id).count(item_id) <= 0:
                 return False, "empty"
             # Start the eat: slow movement + client particles begin NOW; the

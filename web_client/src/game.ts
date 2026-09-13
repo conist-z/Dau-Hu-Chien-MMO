@@ -1540,27 +1540,29 @@ export class WorldScene extends Phaser.Scene {
   setSelfEating(eating: boolean, itemId: string | null): void {
     const self = this.selfMarker;
     if (!self) return;
-    const existing = this.chewEmitters.get(this.welcome?.self.id ?? 0);
+    const selfId = this.welcome?.self.id ?? 0;
+    const existing = this.chewEmitters.get(selfId);
     if (eating && !existing && itemId) {
       const color = this.eatColors[itemId] ?? 0xc09050;
       const emitter = this.add.particles(0, 0, undefined, {
-        speed: { min: 14, max: 34 },
+        speed: { min: 30, max: 70 },
         angle: { min: 200, max: 340 }, // upward arc from the mouth
-        gravityY: 60, // crumbs fall back down — the "chew" feel
-        lifespan: 550,
-        frequency: 70,
-        scale: { start: 1.6, end: 0 },
-        alpha: { start: 0.95, end: 0 },
-        quantity: 1,
-        tint: [color, color, 0xffffff],
+        gravityY: 140, // crumbs fall back down — the "chew" feel
+        lifespan: 800,
+        frequency: 40, // denser stream — crumbs must be unmissable
+        scale: { start: 2.2, end: 0 },
+        alpha: { start: 1, end: 0 },
+        quantity: 2,
+        tint: [color, color, 0xffffff, color],
         emitting: false,
       });
-      emitter.setDepth(150);
-      this.chewEmitters.set(this.welcome?.self.id ?? 0, { emitter, item: itemId });
+      emitter.setDepth(400); // IN FRONT of the paperdoll — depth 150 hid
+      // the crumbs BEHIND the body sprite (reduced visibility)
+      this.chewEmitters.set(selfId, { emitter, item: itemId });
       emitter.start();
     } else if (!eating && existing) {
       existing.emitter.stop();
-      this.time.delayedCall(700, () => existing.emitter.destroy());
+      this.time.delayedCall(900, () => existing.emitter.destroy());
       this.chewEmitters.clear();
     } else if (existing) {
       // Follow the player (mouth position, ~head height).
@@ -2349,9 +2351,18 @@ export class WorldScene extends Phaser.Scene {
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
             const s = this.welcome?.self;
+            // Mirror the server's gates INSIDE the replay too: running is
+            // capped at walk when tired, and eating halves ALL speed. The
+            // replay previously ran at full speed, so reconciliation kept
+            // erasing the chew slow-mo every snapshot (20x/s) — the slowdown
+            // existed on the server but was invisible on the client.
+            const tiredReplay = this.selfStamina <= 0;
+            const eatMulReplay = this.selfEating ? 0.5 : 1.0;
             for (const inp of this.inputLog) {
               if (inp.dx === 0 && inp.dy === 0) continue;
-              const sp = inp.running ? (s?.run_speed ?? 6.0) : (s?.walk_speed ?? 4.0);
+              const sp = (inp.running && !tiredReplay
+                ? (s?.run_speed ?? 6.0)
+                : (s?.walk_speed ?? 4.0)) * eatMulReplay;
               const sx = inp.dx * sp * inp.dt;
               const sy = inp.dy * sp * inp.dt;
               this.selfX += this.freeX(this.selfX, this.selfY, sx);
