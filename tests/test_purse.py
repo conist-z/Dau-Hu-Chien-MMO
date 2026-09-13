@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import asyncio
 
+
+def _run(coro):
+    return asyncio.run(coro)
+
 import pytest
 
 from game.purse import CURRENCY_ITEM_IDS, purse_add, purse_withdraw
@@ -114,3 +118,41 @@ def test_withdraw_crystal_uses_crystal_counter() -> None:
     assert ok
     p2 = m.rt.state.get_player(7)
     assert p2.crystals == 1 and p2.coins == 10  # coins untouched
+
+
+def test_withdraw_into_specific_slot() -> None:
+    m = FakeManager()
+    p = m.rt.state.get_player(7)
+    p.coins = 5
+    inv = m.get_inventory(1, 7)
+    inv.slots[3] = ("coin", 4)   # existing coin stack at slot 3
+    ok = _run(
+        purse_withdraw(m, 1, 7, "coin", slot=3))
+    assert ok
+    assert inv.slots[3] == ("coin", 5)   # merged onto the stack
+    assert p.coins == 4
+
+
+def test_withdraw_into_empty_slot() -> None:
+    m = FakeManager()
+    p = m.rt.state.get_player(7)
+    p.crystals = 2
+    inv = m.get_inventory(1, 7)
+    ok = _run(
+        purse_withdraw(m, 1, 7, "crystal", slot=1))
+    assert ok
+    assert inv.slots[1] == ("crystal", 1)
+    assert p.crystals == 1
+
+
+def test_withdraw_rejected_on_different_item_slot() -> None:
+    m = FakeManager()
+    p = m.rt.state.get_player(7)
+    p.coins = 3
+    inv = m.get_inventory(1, 7)
+    inv.slots[0] = ("wood", 9)
+    ok = _run(
+        purse_withdraw(m, 1, 7, "coin", slot=0))
+    assert not ok
+    assert inv.slots[0] == ("wood", 9)   # untouched
+    assert p.coins == 3                   # purse untouched

@@ -618,18 +618,21 @@ class WebHub:
             # bag is full.
             from game.purse import is_currency, purse_withdraw
             item_id = str(frame.get("item_id", ""))
+            raw_slot = frame.get("slot")
+            slot = int(raw_slot) if isinstance(raw_slot, (int, str)) and str(raw_slot).lstrip("-").isdigit() else None
             if not is_currency(item_id):
                 await self.send_to_client_conn(
                     sess, {"type": MSG_ERROR, "code": "bad_op"})
                 return
-            ok = await purse_withdraw(self.manager, cid, uid, item_id)
+            ok = await purse_withdraw(self.manager, cid, uid, item_id, slot)
             if ok:
                 rt = self.manager.get_runtime_for(cid, uid)
                 if rt is not None:
                     p = rt.state.get_player(uid)
                     if p is not None:
                         self.manager._schedule_save(rt, p)
-                await self.manager._persist_full_inventory(cid, uid, inv)
+                await self.manager._persist_full_inventory(
+                    cid, uid, self.manager.get_inventory(cid, uid))
                 self.manager._notify_inventory_change(cid, uid)
             else:
                 await self.send_to_client_conn(

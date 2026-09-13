@@ -416,9 +416,11 @@ const EDIBLE_IDS = new Set([
 
 // Drag item outside panel + left click = toss it into the world.
 // Purse drag-out: pull exactly ONE coin/crystal from the counter into the
-// bag (server op purse_withdraw — one unit per drag).
-hud.onPurseWithdraw = (itemId) => {
-  net.inventoryOp("purse_withdraw", { item_id: itemId });
+// bag (server op purse_withdraw — one unit per drag). Dropping onto a bag
+// slot deposits into that exact slot.
+hud.onPurseWithdraw = (itemId, slot) => {
+  net.inventoryOp("purse_withdraw",
+    slot === undefined ? { item_id: itemId } : { item_id: itemId, slot });
 };
 
 hud.onThrow = (itemId, qty) => {

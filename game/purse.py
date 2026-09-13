@@ -61,12 +61,15 @@ def purse_balance(state, user_id: int, item_id: str) -> int:
 
 
 async def purse_withdraw(manager, channel_id: int, user_id: int,
-                         item_id: str) -> bool:
+                         item_id: str, slot: Optional[int] = None) -> bool:
     """Pull exactly ONE unit of `item_id` from the purse into the bag.
 
-    The drag-out interaction withdraws 1 per drag. Fails (False) when the
-    purse cannot afford it or the bag has no free slot — the client then
-    springs the ghost back with no state change.
+    The drag-out interaction withdraws 1 per drag. ``slot`` (0-based bag
+    index) deposits the unit into that exact slot — merging onto a same-
+    item stack or filling an EMPTY cell; a slot holding a different item
+    rejects the deposit. Without a slot the unit goes to the first free
+    cell. Fails (False) when the purse cannot afford it or the target has
+    no room — the client then springs the ghost back, no state change.
     """
     if not is_currency(item_id):
         return False
@@ -80,6 +83,22 @@ async def purse_withdraw(manager, channel_id: int, user_id: int,
     if getattr(player, field, 0) < 1:
         return False
     inv = manager.get_inventory(channel_id, user_id)
+    if slot is not None:
+        if not 0 <= slot < len(inv.slots):
+            return False
+        cell = inv.slots[slot]
+        if cell is None:
+            pass  # empty cell: direct deposit
+        elif cell[0] == item_id:
+            pass  # same-item stack: merge (cap at stack limit below)
+        else:
+            return False  # different item occupies the slot
+        setattr(player, field, getattr(player, field) - 1)
+        if cell is None:
+            inv.set_slot(slot, item_id, 1)
+        else:
+            inv.set_slot(slot, item_id, cell[1] + 1)  # merge onto the stack
+        return True
     if inv.first_free_slot() < 0:
         return False  # bag full: the unit stays in the purse
     setattr(player, field, getattr(player, field) - 1)

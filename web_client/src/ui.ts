@@ -189,8 +189,9 @@ export class Hud {
   private drag: DragSrc | null = null;
   /** Set by main.ts: throws a stack into the world (drop entity). */
   onThrow: ((itemId: string, qty: number) => void) | null = null;
-  /** Set by main.ts: purse drag-out — pull ONE coin/crystal into the bag. */
-  onPurseWithdraw: ((itemId: string) => void) | null = null;
+  /** Set by main.ts: purse drag-out — pull ONE coin/crystal into the bag
+   * (slot = target bag slot when dropped onto one, else undefined). */
+  onPurseWithdraw: ((itemId: string, slot?: number) => void) | null = null;
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
@@ -293,11 +294,18 @@ export class Hud {
     // Global drag ghost tracking (mouse-move + drop outside any slot).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
     window.addEventListener("mouseup", (e) => {
-      // MAGNETIC DROP: resolve to the NEAREST droppable slot within a
-      // PURSE drag-out: release OUTSIDE every panel = withdraw exactly
-      // ONE coin/crystal into the bag (server op purse_withdraw). Release
-      // inside = cancel (nothing happens — the count stays put).
+      // PURSE drag: release on a bag slot = withdraw the unit INTO that
+      // slot (same "drop to deposit" as any stack); release outside every
+      // panel = withdraw 1 into the first free slot; release elsewhere in
+      // the panel = cancel (nothing happens — the count stays put).
       if (this.purseDrag) {
+        const t = this.nearestDropTarget(e.clientX, e.clientY);
+        if (t && t.from === "bag") {
+          const itemId = this.purseDrag;
+          this.endPurseDrag(false);
+          if (this.onPurseWithdraw) this.onPurseWithdraw(itemId, t.index);
+          return;
+        }
         this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
         return;
       }
