@@ -591,15 +591,17 @@ class GameManager:
         import time as _time
 
         async with rt.lock:
-            # --- block self-repair beat (user rule 13/09) ------------------
-            # One call per tick drives the WHOLE grid's gradual crack healing:
-            # 3.5 s after a block's last hit its damage drains back to zero at
-            # 1/s ("tua ngược"), driven by the server clock — the client only
-            # mirrors the damage carried by snapshots/echoes.
+            # --- block self-repair + node durability regen beats ----------
+            # One call per tick drives BOTH grids' gradual healing:
+            #   blocks: 3.5 s idle -> crack damage drains back to 0 at 1/s
+            #   nodes : 5 s idle   -> chop progress rewinds 1 hit/s
+            # Server-driven — the client only mirrors the numbers it receives.
             try:
                 rt.state.blocks.decay_damage(_time.time())
+                if rt.resources is not None:
+                    rt.resources.decay_progress(_time.time())
             except Exception as e:  # noqa: BLE001 — must never kill the tick
-                log.warning("[WEB] block repair beat failed: %s", e)
+                log.warning("[WEB] repair/regen beat failed: %s", e)
             for user_id, sess in list(sessions.items()):
                 player = rt.state.get_player(user_id)
                 if player is None:

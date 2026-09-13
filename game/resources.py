@@ -146,6 +146,13 @@ class ResourceGrid:
         self.layer_names: set = set()
         self.progress: Dict[Tuple[int, int], int] = {}
         self.chopped_at: Dict[Tuple[int, int], float] = {}
+        # Durability regen (user rule 13/09): a node nobody hits for
+        # PROGRESS_REGEN_DELAY_S seconds slowly "rewinds" its chop progress
+        # (one hit lost every PROGRESS_REGEN_STEP_S). Timestamps per anchor:
+        # ``progress_hit_at`` = last hit (drives the delay),
+        # ``progress_checked_at`` = last regen step (drives the drain).
+        self.progress_hit_at: Dict[Tuple[int, int], float] = {}
+        self.progress_checked_at: Dict[Tuple[int, int], float] = {}
 
     @classmethod
     def from_map(cls, map_data) -> "ResourceGrid":
@@ -215,6 +222,45 @@ class ResourceGrid:
     def chop(self, anchor: Tuple[int, int], ts: float) -> None:
         self.chopped_at[anchor] = float(ts)
         self.progress.pop(anchor, None)
+        self.progress_hit_at.pop(anchor, None)
+        self.progress_checked_at.pop(anchor, None)
+
+    def note_progress_hit(self, anchor: Tuple[int, int], now: float) -> None:
+        """Record a landed hit on ``anchor`` (restarts the 5 s regen delay)."""
+        self.progress_hit_at[anchor] = float(now)
+
+    def decay_progress(self, now: Optional[float] = None) -> None:
+        """Durability regen beat (call every tick): after PROGRESS_REGEN_DELAY_S
+        without a hit, a node's chop progress "rewinds" — one hit lost every
+        PROGRESS_REGEN_STEP_S (smooth reverse, not a sudden wipe).
+        """
+        if not self.progress:
+            return
+        if now is None:
+            now = time.time()
+        for anchor in list(self.progress.keys()):
+            hit = self.progress_hit_at.get(anchor)
+            if hit is None:
+                # Restored-from-DB progress without a hit stamp: just arm the
+                # clock (never wipe it on the first beat).
+                self.progress_hit_at[anchor] = now
+                self.progress_checked_at[anchor] = now
+                continue
+            if now - hit <= PROGRESS_REGEN_DELAY_S:
+                continue
+            checked = self.progress_checked_at.get(anchor, hit + PROGRESS_REGEN_DELAY_S)
+            start = max(checked, hit + PROGRESS_REGEN_DELAY_S)
+            steps = int((now - start) // PROGRESS_REGEN_STEP_S)
+            if steps <= 0:
+                continue
+            remaining = self.progress.get(anchor, 0) - steps
+            if remaining <= 0:
+                self.progress.pop(anchor, None)
+                self.progress_hit_at.pop(anchor, None)
+                self.progress_checked_at.pop(anchor, None)
+            else:
+                self.progress[anchor] = remaining
+                self.progress_checked_at[anchor] = start + steps * PROGRESS_REGEN_STEP_S
 
     def mark_chopped(self, anchor: Tuple[int, int], ts: float) -> None:
         """Restore a persisted chop (boot recovery) without touching progress."""
@@ -223,6 +269,8 @@ class ResourceGrid:
     def regrow(self, anchor: Tuple[int, int]) -> None:
         self.chopped_at.pop(anchor, None)
         self.progress.pop(anchor, None)
+        self.progress_hit_at.pop(anchor, None)
+        self.progress_checked_at.pop(anchor, None)
 
     def regrow_ready(self, now: float) -> List[Tuple[int, int]]:
         """Anchors whose respawn deadline has elapsed at unix ``now``."""
@@ -236,6 +284,8 @@ class ResourceGrid:
     def reset(self) -> None:
         self.progress.clear()
         self.chopped_at.clear()
+        self.progress_hit_at.clear()
+        self.progress_checked_at.clear()
 
 
 def _facing_tile(player) -> Tuple[int, int]:
@@ -246,6 +296,13 @@ def _facing_tile(player) -> Tuple[int, int]:
 CHOP_RANGE = 3
 # Web mouse-tile offset clamp (mirrors rules.AIM_RANGE without a cycle).
 AIM_RANGE = 3
+
+# Node durability regen (user rule 13/09): after PROGRESS_REGEN_DELAY_S
+# without a landed hit, chop progress "rewinds" one hit every
+# PROGRESS_REGEN_STEP_S (a 5-hit node fully resets 5 s + 5 s later). Tune
+# here without touching logic.
+PROGRESS_REGEN_DELAY_S = 5.0
+PROGRESS_REGEN_STEP_S = 1.0  # one hit lost per this many seconds
 
 # Node kinds harvested with a PICKAXE instead of the axe (ore/rock veins).
 ORE_NODE_KINDS = {"ore", "rock", "stone_node", "iron_ore", "coal",
@@ -382,6 +439,8 @@ def apply_chop(state: GameState,
     now = time.time() if now is None else now
     rng = rng if rng is not None else random
     grid.progress[node.anchor] = grid.progress_at(node.anchor) + 1
+    # Durability regen: stamp the hit so the 5 s rewind clock restarts.
+    grid.note_progress_hit(node.anchor, now)
     if grid.progress[node.anchor] < hits:
         return ActionResult(
             True, state_changed=True, pos=(tx, ty), block_id=node.kind, needed=hits,
