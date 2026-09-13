@@ -1074,7 +1074,16 @@ class WebHub:
 
     async def _is_web_admin(self, sess: WebSession) -> bool:
         """Admin = Administrator / Manage Server on the channel's guild,
-        resolved from the bot's member cache (same gate as /setweather)."""
+        resolved from the bot's member cache, OR an explicit WEB_ADMIN_IDS
+        entry (checked FIRST — works even when the bot cache is cold or the
+        member fetch fails, which is why the env override missed before)."""
+        # Env override: WEB_ADMIN_IDS="123,456" grants web admin to specific
+        # Discord user_ids (guests / bot-less test setups). Empty = off.
+        import os
+
+        allowed = os.environ.get("WEB_ADMIN_IDS", "")
+        if str(sess.user_id) in {s.strip() for s in allowed.split(",") if s.strip()}:
+            return True
         bot = getattr(self.manager, "bot_ref", None)
         if bot is None:
             return False
@@ -1086,14 +1095,7 @@ class WebHub:
         if member is None:
             return False
         perms = member.guild_permissions
-        if perms.administrator or perms.manage_guild:
-            return True
-        # Env override: WEB_ADMIN_IDS="123,456" grants web admin to specific
-        # Discord user_ids (guests / bot-less test setups). Empty = off.
-        import os
-
-        allowed = os.environ.get("WEB_ADMIN_IDS", "")
-        return str(sess.user_id) in {s.strip() for s in allowed.split(",") if s.strip()}
+        return perms.administrator or perms.manage_guild
 
     # ----- assets -----
 
