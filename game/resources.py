@@ -351,7 +351,10 @@ def apply_chop(state: GameState,
     if tool_id is None:
         tool_id = tool_mod.best_tool_of_family(inventory, family)
 
-    if ore and not tool_mod.has_pickaxe_tier(inventory, "wood"):
+    # Pickaxe GATE applies to ORE veins only: rocks (rock_small/rock_big)
+    # are mineable BARE-HANDED — just brutally slow (65/91 swings, user rule
+    # 14/09: "vẫn tay không đập được nhưng mà cực lâu").
+    if node.kind == "ore" and not tool_mod.has_pickaxe_tier(inventory, "wood"):
         return ActionResult(False, "too_hard")
 
     tool = parse_tool_id(tool_id) if tool_id else None
