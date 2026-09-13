@@ -34,6 +34,8 @@ MSG_PONG = "pong"
 # Rate limiting: max input frames per second per session (20 Hz tick needs
 # far fewer; the client only sends on change).
 INPUT_FRAMES_PER_SEC = 30
+# How long an orphaned session (socket died) stays joinable by its token.
+SESSION_GRACE_SECONDS = 60.0
 
 
 @dataclass
@@ -47,6 +49,10 @@ class WebSession:
     created_at: float = field(default_factory=time.monotonic)
     # Hotbar slot the web client currently holds (select_slot frame; UI-only).
     selected_slot: int = 0
+    # Last inventory version this connection has been shown (snapshots carry
+    # the bag payload only when the server-side bag version moved past this —
+    # prevents redundant 20 Hz grid re-renders on the client).
+    acked_inv_version: int = -1
     # Input flood control: timestamps of recent input frames.
     _input_times: list = field(default_factory=list)
     # Highest input sequence number seen from this client (input-sequence
@@ -55,6 +61,12 @@ class WebSession:
     # client rewinds + replays unacked inputs. Only a MONOTONIC ack is kept
     # here — never trust a lower seq (reordered frames, replay attacks).
     input_seq: int = -1
+    # monotonic() timestamp when the owning socket died (0 = attached).
+    # Orphaned sessions survive a grace window so the client's silent
+    # auto-reconnect can rejoin with the SAME token/identity instead of
+    # falling back to a fresh login (which for guests was instant, but for
+    # Discord users stranded them on the login gate).
+    orphaned_at: float = 0.0
 
     def input_allowed(self) -> bool:
         now = time.monotonic()
@@ -79,10 +91,23 @@ class SessionRegistry:
         return sess
 
     def get(self, token: str) -> Optional[WebSession]:
-        return self._sessions.get(token)
+        sess = self._sessions.get(token)
+        if sess is not None and sess.orphaned_at:
+            if time.monotonic() - sess.orphaned_at > SESSION_GRACE_SECONDS:
+                # Grace expired: the client never came back — reclaim it.
+                self._sessions.pop(token, None)
+                return None
+        return sess
 
     def drop(self, token: str) -> None:
         self._sessions.pop(token, None)
+
+    def orphan(self, token: str) -> None:
+        """Mark the session's socket as gone; keep the token alive for
+        SESSION_GRACE_SECONDS so an auto-reconnect can rejoin silently."""
+        sess = self._sessions.get(token)
+        if sess is not None:
+            sess.orphaned_at = time.monotonic()
 
     def drop_user(self, user_id: int) -> None:
         for tok in [t for t, s in self._sessions.items() if s.user_id == user_id]:

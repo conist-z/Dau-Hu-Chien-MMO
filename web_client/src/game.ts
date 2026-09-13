@@ -238,6 +238,15 @@ export class WorldScene extends Phaser.Scene {
   // asset_data frames (tilesets fetched through the relay, license-safe).
 
   buildWorld(welcome: WelcomePayload, fetchAsset: (name: string) => void): void {
+    // (Re)connection boundary: the server restarted its input sequence at 0,
+    // so stale reconciliation state from the previous session must go — or
+    // lastAckedSeq would shadow the new stream and the replay buffer would
+    // never trim (inputs replayed forever = rubber-band freeze after
+    // reconnecting without a page reload).
+    this.inputLog.length = 0;
+    this.lastAckedSeq = -1;
+    this.seqReplayActive = false;
+    this.pendingDt = 0;
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
     this.selfId = welcome.self.id;

@@ -127,7 +127,12 @@ def test_client_gone_drops_session(hub):
     p = rt.state.get_player(77)
     assert p is not None and p.is_web is False
     assert 77 not in rt.web_sessions
-    assert hub.registry.get(sess.token) is None
+    # Token now survives in a grace window so the client's silent
+    # auto-reconnect rejoins with the same identity (was: dropped →
+    # bad_token → frozen game until reload). It is reclaimed only after
+    # SESSION_GRACE_SECONDS.
+    assert hub.registry.get(sess.token) is sess
+    assert sess.orphaned_at > 0.0
 
 
 def test_chat_cmd_weather_readonly(hub):

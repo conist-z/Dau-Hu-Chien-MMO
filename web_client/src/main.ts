@@ -13,6 +13,9 @@ import { dayNightFx } from "./daynight";
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
 let quickPlayArmed = false;
+/** Channel to auto-join once a fresh login_result lands after a stale-token
+ * error (silent reconnect path; cleared on use or when joining manually). */
+let pendingRejoinChannel: string | null = null;
 
 // Quick-play guest login: derive a stable pseudo user_id from localStorage
 // so the same browser keeps the same identity/bag across sessions.
@@ -199,6 +202,7 @@ const net = new Net({
   },
   onScenarioList: (items) => {
     hud.showScenarioList(items, (channelId) => {
+      pendingRejoinChannel = null;
       const token = localStorage.getItem("web_token") ?? "";
       localStorage.setItem("last_channel", String(channelId));
       net.joinScenario(channelId, token);
@@ -218,6 +222,23 @@ const net = new Net({
       (code === "not_joined" && !net.isJoined);
     if (stale) {
       localStorage.removeItem("web_token");
+      // Silent auto-recovery: the socket auto-reconnects after the server
+      // dropped the old session (tab hidden / brief disconnect), so the
+      // stored token is stale by design — re-login and rejoin the last map
+      // WITHOUT user interaction. (Gate was: "Phiên cũ đã hết — bấm…".)
+      const lastMap = localStorage.getItem("last_channel");
+      if (lastMap) {
+        hud.showGate("Đang kết nối lại…");
+        if (localStorage.getItem("guest_id")) {
+          net.requestGuestJoin(localStorage.getItem("guest_id")!);
+        } else {
+          // No guest id (Discord-only browser): create one so the silent
+          // path still recovers; guestLogin derives/persists it itself.
+          guestLogin(net);
+        }
+        pendingRejoinChannel = lastMap;
+        return;
+      }
       quickPlayArmed = true;
       hud.setLoginButton(true, "Vào game nhanh (không cần đăng nhập)");
       hud.showGate("Phiên cũ đã hết — bấm vào game để chơi ngay.");
@@ -233,6 +254,15 @@ const net = new Net({
   },
   onLoginOk: (token, displayName) => {
     hud.setLoginButton(true, `Tiếp: ${displayName}`);
+    // Silent reconnect recovery: a stale-token error queued the last map —
+    // join it immediately on this fresh session (guest OR Discord).
+    if (pendingRejoinChannel) {
+      const ch = pendingRejoinChannel;
+      pendingRejoinChannel = null;
+      hud.showGate("Đang vào lại map…");
+      net.joinScenario(ch, token);
+      return;
+    }
     // Guest flow: auto-join the remembered map immediately (no pick step).
     const lastMap = localStorage.getItem("last_channel");
     if (token.startsWith("guest:") || localStorage.getItem("guest_id")) {

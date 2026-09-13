@@ -279,6 +279,7 @@ class WebHub:
         if sess is None:
             await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_token"})
             return
+        sess.orphaned_at = 0.0  # reattached: clear the grace-window marker
         sess.channel_id = channel_id
         ok = self.manager.register_web_session(
             channel_id, sess.user_id, sess.display_name,
@@ -304,7 +305,11 @@ class WebHub:
         if conn is None:
             return
         if conn.session is not None:
-            self.registry.drop(conn.session.token)
+            # Keep the token alive for a grace window instead of dropping it:
+            # the client auto-reconnects and rejoins with the same token —
+            # dropping it here turned every brief disconnect into a hard
+            # freeze (bad_token → dead gate) until a manual reload.
+            self.registry.orphan(conn.session.token)
             try:
                 self.manager.drop_web_session(conn.session.channel_id, conn.session.user_id)
             except Exception as e:  # noqa: BLE001 — teardown must never raise
@@ -476,6 +481,15 @@ class WebHub:
             except ValueError:
                 await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_slot"})
                 return
+        elif op == "reorder":
+            # Web drag & drop: the full bag order from the client grid.
+            try:
+                await self.manager.reorder_bag(
+                    cid, uid, [(e.get("id"), e.get("qty", 0))
+                               for e in frame.get("order", [])])
+            except ValueError:
+                await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_order"})
+                return
         elif op == "split":
             inv = self.manager.get_inventory(cid, uid)
             ok = inv.split_at(frame.get("item_id", ""))
@@ -494,10 +508,13 @@ class WebHub:
             return
         rt = self.manager.get_runtime_for(cid, uid)
         if rt is not None:
-            from web_api.snapshots import _inventory_payload
+            from web_api.snapshots import _inventory_payload, _inventory_version
 
+            version = _inventory_version(rt, uid)
+            sess.acked_inv_version = version
             await self.send_to_client_conn(sess, {
                 "type": MSG_INV_DELTA,
+                "inv_version": version,
                 "inventory": _inventory_payload(rt, uid),
             })
 
@@ -847,6 +864,10 @@ class WebHub:
                 conn.seq += 1
                 try:
                     frame = build_snapshot(rt, conn.session.user_id, conn.seq)
+                    # Ack the inventory version so the next snapshot omits the
+                    # bag payload until the bag changes again (no 20 Hz grid
+                    # re-render jitter on the client).
+                    conn.session.acked_inv_version = frame.get("inv_version", -1)
                 except Exception:
                     # Never let one bad snapshot kill the loop: a dead loop =
                     # every client frozen (welcome arrives, snapshots never
