@@ -59,6 +59,10 @@ from game.zombies import (
 )
 from rendering.daynight import ingame_seconds
 from config import (
+    STAMINA_CHOP_DRAIN,
+    STAMINA_REGEN,
+    STAMINA_REGEN_DELAY_S,
+    STAMINA_RUN_DRAIN,
     WEB_RUN_SPEED,
     WEB_TICK_HZ,
     WEB_WALK_SPEED,
@@ -629,8 +633,10 @@ class GameManager:
                 if sess.dx == 0.0 and sess.dy == 0.0:
                     sess.last_tick = now
                     self._regen_player_beat(rt, player, now)
+                    self._stamina_regen_beat(rt, player, now)
                     continue
                 self._regen_player_beat(rt, player, now)
+                self._stamina_regen_beat(rt, player, now)
                 # Clamp dt so a stalled loop can never teleport the player
                 # through the world (swept collision assumes <= 1 tile steps).
                 raw_dt = max(0.0, now - sess.last_tick)
@@ -649,7 +655,16 @@ class GameManager:
                     sess.time_debt -= repay
                     if sess.time_debt > 0.2:
                         sess.time_debt = 0.2  # cap: never owes more than one sweep step
-                speed = WEB_RUN_SPEED if sess.running else WEB_WALK_SPEED
+                # SPRINT stamina gate: running drains stamina; at zero the
+                # player falls back to WALK speed (no teleport, no block —
+                # just slower). Walking never costs stamina.
+                eff_running = sess.running
+                if eff_running and (sess.dx or sess.dy):
+                    if player.stamina <= 0.0:
+                        eff_running = False
+                    else:
+                        self._drain_stamina(player, STAMINA_RUN_DRAIN * dt)
+                speed = WEB_RUN_SPEED if eff_running else WEB_WALK_SPEED
                 step_x = sess.dx * speed * dt
                 step_y = sess.dy * speed * dt
                 nx_f, ny_f = rt.collision.can_move_float(
@@ -708,6 +723,36 @@ class GameManager:
             # Discord coalescer work is scheduled here (that was the "cắn là
             # giật" cause — every web bite re-rendered chat screens).
             pass
+
+    # ---- stamina -------------------------------------------------------
+
+    @staticmethod
+    def _drain_stamina(player, amount: float) -> None:
+        """Spend stamina (fractional, never below 0); stamps the exertion
+        time so regen waits STAMINA_REGEN_DELAY_S after the last effort."""
+        import time as _time
+        if player is None:
+            return
+        player.stamina = max(0.0, player.stamina - amount)
+        player.last_exert_at = _time.monotonic()
+
+    def _drain_stamina_harvest(self, player) -> None:
+        """One harvest swing costs a flat stamina chunk (per-swing rather
+        than per-second — swings are discrete)."""
+        if player is not None:
+            self._drain_stamina(player, STAMINA_CHOP_DRAIN * 0.25)
+
+    def _stamina_regen_beat(self, rt: ScenarioRuntime, player, now: float) -> None:
+        """Refill stamina after a short grace period since the last exertion
+        (sprint tick / harvest hit). Fast refill (~20 s to full)."""
+        last = getattr(player, "last_exert_at", None)
+        if last is not None and now - last < STAMINA_REGEN_DELAY_S:
+            return
+        if player.stamina >= player.max_stamina:
+            return
+        player.stamina = min(
+            player.max_stamina, player.stamina + STAMINA_REGEN / max(1.0, WEB_TICK_HZ)
+        )
 
     def _regen_player_beat(self, rt: ScenarioRuntime, player, now: float) -> None:
         """One 20 Hz out-of-combat HP-regen beat for one web player.
@@ -1695,11 +1740,22 @@ class GameManager:
                     await self._clear_depleted_hotbars(channel_id, action.user_id)
             elif isinstance(action, BreakBlockAction):
                 inv = self.get_inventory(channel_id, action.user_id)
-                result = apply_break_block(rt.state, action, rt.state.blocks, inv)
+                actor0 = rt.state.get_player(action.user_id)
+                tired0 = actor0 is not None and actor0.stamina <= 0.0
+                if tired0:
+                    # Out of stamina: THIS swing deals half damage (min 1) —
+                    # the block still breaks eventually, just twice as slow.
+                    self._tired_break_tile = True
+                self._drain_stamina_harvest(actor0)
+                result = apply_break_block(rt.state, action, rt.state.blocks, inv, tired=tired0)
+                self._tired_break_tile = False
                 rt.dirty = rt.dirty or result.state_changed
             elif isinstance(action, ChopAction):
                 inv = self.get_inventory(channel_id, action.user_id)
-                result = apply_chop(rt.state, action, rt.resources, inv)
+                actor1 = rt.state.get_player(action.user_id)
+                tired1 = actor1 is not None and actor1.stamina <= 0.0
+                self._drain_stamina_harvest(actor1)
+                result = apply_chop(rt.state, action, rt.resources, inv, tired=tired1)
                 rt.dirty = rt.dirty or result.state_changed
             elif isinstance(action, ShovelAction):
                 inv = self.get_inventory(channel_id, action.user_id)

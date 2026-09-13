@@ -81,8 +81,19 @@ DISCORD_OAUTH_CLIENT_SECRET = os.getenv("DISCORD_OAUTH_CLIENT_SECRET", "")
 # Continuous-movement simulation: 20 server ticks/sec, walk/run tile speeds
 # (server-authoritative cap — the client never sets its own speed).
 WEB_TICK_HZ = float(os.getenv("WEB_TICK_HZ", "20"))
-WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "4.5"))   # tiles/sec
-WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "7.5"))     # tiles/sec (Shift)
+# Halved (15/09: user report — movement feels desynced at high speed; slower
+# pace halves the per-tick step so prediction/server divergence shrinks).
+# +10% restored (15/09 later: halve felt too sluggish at 2x zoom).
+WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "2.5"))   # tiles/sec
+WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "4.15"))    # tiles/sec (Shift)
+# ---- Stamina (generous by design: a long sprint before it runs out, and
+# running out only SOFTENS actions — never a hard gate) ----
+STAMINA_MAX = float(os.getenv("STAMINA_MAX", "200"))
+STAMINA_RUN_DRAIN = float(os.getenv("STAMINA_RUN_DRAIN", "4"))     # /s while sprinting (50 s of running)
+STAMINA_CHOP_DRAIN = float(os.getenv("STAMINA_CHOP_DRAIN", "2"))  # /s while hitting nodes/blocks
+STAMINA_REGEN = float(os.getenv("STAMINA_REGEN", "10"))           # /s refills in ~20 s
+STAMINA_REGEN_DELAY_S = float(os.getenv("STAMINA_REGEN_DELAY_S", "1.0"))  # grace after exertion
+STAMINA_TIRED_MULT = 0.5  # harvest damage multiplier once stamina is empty
 WEB_AIM_RANGE_TOLERANCE = int(os.getenv("WEB_AIM_RANGE_TOLERANCE", "1"))  # lag slack for click targeting
 # Max simultaneous web players per scenario (design ceiling; extra joins wait).
 WEB_MAX_PLAYERS = int(os.getenv("WEB_MAX_PLAYERS", "15"))

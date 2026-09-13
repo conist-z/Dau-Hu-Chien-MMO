@@ -350,6 +350,7 @@ def apply_place_block(
 
 def apply_break_block(
     state: GameState, action: BreakBlockAction, blocks: BlockGrid, inventory,
+    tired: bool = False,
 ) -> ActionResult:
     """Break the block on the target tile (the square the player aims at);
     the ground shows again and the material returns to the bag.
@@ -407,6 +408,10 @@ def apply_break_block(
         td is not None and (right_family is None or td.family == right_family)
     )
     damage = 2 if right_tool else 1
+    if tired:
+        # Out of stamina (user rule): still works, HALF damage — the block
+        # breaks eventually, just twice as slow. Min 1 so it never stalls.
+        damage = max(1, damage // 2)
     # Stamp wall-clock time for the block self-repair countdown (user rule
     # 13/09): nobody hitting the block for 3.5 s heals its crack gradually.
     import time as _time

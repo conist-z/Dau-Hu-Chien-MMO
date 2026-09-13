@@ -29,6 +29,9 @@ HP_BORDER_POS = (25, 5)
 HP_FILL_POS = (26, 7)
 RES_BORDER_POS = (25, 16)
 RES_FILL_POS = (26, 18)
+# Stamina: half-height bar under the mana bar.
+SP_BORDER_POS = (25, 26)
+SP_FILL_POS = (26, 27)
 
 # Player avatar badge pasted ON TOP of the emblem diamond (its centre is
 # opaque). The badge is a circle-masked avatar with a gold ring, sized to sit
@@ -220,6 +223,9 @@ class HubRenderer:
         self._res_border = Image.open(rt / "borders" / "resource_border.png").convert("RGBA")
         self._hp_fill = Image.open(rt / "bars" / "hp_fill.png").convert("RGBA")
         self._res_fill = Image.open(rt / "bars" / "resource_fill.png").convert("RGBA")
+        # Stamina reuses the HP border clipped to half height (clean pixel
+        # frame without a third asset).
+        self._stamina_border = self._hp_border.crop((0, 0, self._hp_border.width, 6))
         self._coin = Image.open(
             assets_dir.parent / "gui" / "coin1_frames" / "frame_00.png"
         ).convert("RGBA")
@@ -306,7 +312,8 @@ class HubRenderer:
                 )
 
     def _player_unit(self, hp_frac: float, mp_frac: float,
-                     avatar: Optional[Image.Image] = None) -> Image.Image:
+                     avatar: Optional[Image.Image] = None,
+                     sp_frac: float = 1.0) -> Image.Image:
         u = Image.new("RGBA", (WIDGET_W, WIDGET_H))
         hpw = max(0, min(BAR_WIDTH, int(round(BAR_WIDTH * hp_frac))))
         mpw = max(0, min(BAR_WIDTH, int(round(BAR_WIDTH * mp_frac))))
@@ -318,6 +325,23 @@ class HubRenderer:
             u.paste(crop, RES_FILL_POS, crop)
         u.paste(self._hp_border, HP_BORDER_POS, self._hp_border)
         u.paste(self._res_border, RES_BORDER_POS, self._res_border)
+        # STAMINA bar: green, HALF the height of the HP/mana bars, tucked
+        # directly under the mana bar (user request "dày bằng 1 nữa 2 thanh").
+        spw = max(0, min(BAR_WIDTH, int(round(BAR_WIDTH * sp_frac))))
+        if spw > 0:
+            crop = self._hp_fill.crop((0, 0, spw, 7))
+            # Recolor the green HP fill to a fresh stamina green + shrink to
+            # 3px tall (half-ish of the 7px bars, pixel-art friendly).
+            green = crop.copy()
+            px = green.load()
+            for yy in range(green.height):
+                for xx in range(green.width):
+                    r, g, b, a = px[xx, yy]
+                    if a:
+                        px[xx, yy] = (int(r * 0.45), min(255, int(g * 1.05)), int(b * 0.55), a)
+            thin = green.crop((0, 0, spw, 4))
+            u.paste(thin, SP_FILL_POS, thin)
+        u.paste(self._stamina_border, SP_BORDER_POS, self._stamina_border)
         # Emblem drawn LAST so the bars tuck underneath it.
         u.paste(self._emblem, EMBLEM_POS, self._emblem)
         # The player's chosen avatar (if any) sits framed on the emblem.
@@ -378,9 +402,13 @@ class HubRenderer:
                 y = (internal_h - unit_h) // 2
                 hp_frac = p.hp / p.max_hp if p.max_hp else 0
                 mp_frac = p.mana / p.max_mana if p.max_mana else 0
+                sp_frac = (
+                    p.stamina / p.max_stamina
+                    if getattr(p, "max_stamina", 0) else 1.0
+                )
                 avatar = avatars.get(p.user_id) if avatars else None
                 unit = self._player_unit(
-                    hp_frac, mp_frac, avatar
+                    hp_frac, mp_frac, avatar, sp_frac
                 ).resize((unit_w, unit_h), Image.NEAREST)
                 base.paste(unit, (x, y), unit)
 

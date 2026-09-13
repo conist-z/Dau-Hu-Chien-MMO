@@ -352,6 +352,7 @@ def apply_chop(state: GameState,
     inventory,
     rng=None,
     now: Optional[float] = None,
+    tired: bool = False,
 ) -> ActionResult:
     """One swing at the node on the target tile.
 
@@ -438,7 +439,11 @@ def apply_chop(state: GameState,
 
     now = time.time() if now is None else now
     rng = rng if rng is not None else random
-    grid.progress[node.anchor] = grid.progress_at(node.anchor) + 1
+    # Out of stamina (user rule): still swings, HALF progress per hit —
+    # the node falls eventually, just twice as slow. Progress is a float;
+    # the tired bank re-syncs to whole numbers on the felling hit.
+    gain = 0.5 if tired else 1.0
+    grid.progress[node.anchor] = grid.progress_at(node.anchor) + gain
     # Durability regen: stamp the hit so the 5 s rewind clock restarts.
     grid.note_progress_hit(node.anchor, now)
     if grid.progress[node.anchor] < hits:

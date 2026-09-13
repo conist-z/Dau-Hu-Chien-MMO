@@ -130,6 +130,8 @@ export class Hud {
   private hpLabel = document.getElementById("bar-hp-label")!;
   private manaFill = document.getElementById("bar-mana-fill")!;
   private manaLabel = document.getElementById("bar-mana-label")!;
+  private staminaFill = document.getElementById("bar-stamina-fill")!;
+  private staminaLabel = document.getElementById("bar-stamina-label")!;
   private hotbarEl = document.getElementById("hud-hotbar")!;
   private chatLog = document.getElementById("chat-log")!;
   private chatForm = document.getElementById("chat-form") as HTMLFormElement;
@@ -1354,11 +1356,16 @@ export class Hud {
     this.weatherImg = null;
   }
 
-  setBars(hp: number, maxHp: number, mana: number, maxMana: number): void {
+  setBars(hp: number, maxHp: number, mana: number, maxMana: number,
+          stamina = 1, maxStamina = 0): void {
     this.hpFill.style.width = `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`;
     this.hpLabel.textContent = `${hp}/${maxHp}`;
     this.manaFill.style.width = `${maxMana > 0 ? (mana / maxMana) * 100 : 0}%`;
     this.manaLabel.textContent = `${mana}/${maxMana}`;
+    if (maxStamina > 0) {
+      this.staminaFill.style.width = `${(stamina / maxStamina) * 100}%`;
+      this.staminaLabel.textContent = `${Math.round(stamina)}/${maxStamina}`;
+    }
   }
 
   /** Death veil + respawn countdown (dead while hp == 0). */

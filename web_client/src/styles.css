@@ -116,6 +116,11 @@ html, body {
   transition: width 0.25s ease;
 }
 .bar-fill.mana { background: var(--mana); }
+/* Stamina: half the height of the HP/mana bars (user spec) — sits flush
+   under them in the same top-right stack. */
+.bar-stamina { height: 9px; border-radius: 5px; }
+.bar-stamina .bar-label { font-size: 8px; }
+.bar-fill.stamina { background: #3ddc74; }
 .bar-label {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
