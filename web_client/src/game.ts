@@ -1641,8 +1641,13 @@ export class WorldScene extends Phaser.Scene {
       WEST: { x: 0, y: 10 },
     };
     const off = dirOffsets[this.selfDir] ?? FRONT;
+    // Layer per facing: BACK views put the emitter BEHIND the player
+    // (depth 5, body overlaps crumbs); every other facing keeps the crumbs
+    // in front (depth 400).
+    const behind = this.selfDir === "NORTH" || this.selfDir === "NE" || this.selfDir === "NW";
     for (const e of this.chewEmitters.values()) {
       e.emitter.setPosition(self.x + off.x, self.y - 34 + off.y);
+      e.emitter.setDepth(behind ? 5 : 400);
     }
   }
 
