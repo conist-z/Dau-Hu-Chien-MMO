@@ -416,7 +416,7 @@ const net = new Net({
 // Consumable ids the right-click EAT applies to (server re-validates type
 // + stock; this set only routes the click so tools still place nothing).
 const EDIBLE_IDS = new Set([
-  "apple", "cooked_meat", "raw_meat", "potion_hp", "potion_mp",
+  "apple", "cooked_meat", "raw_meat", "rotten_flesh", "potion_hp", "potion_mp",
   "banana", "orange", "watermelon", "blueberry", "bread", "cheese", "carrot",
 ]);
 

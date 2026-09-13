@@ -37,7 +37,7 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "wood_pickaxe": ItemDef(
         "wood_pickaxe", "Cuốc gỗ", "⛏️", "material", {}, "Đập đá hiệu quả hơn (sắp dùng)"
     ),
-    "rotten_flesh": ItemDef("rotten_flesh", "Thịt thối", "🥩", "material", {}, "Đồ rơi từ zombie"),
+    "rotten_flesh": ItemDef("rotten_flesh", "Thịt thối", "🥩", "consumable", {"heal_hp": 5}, "Ăn được… nhưng chỉ hồi 5 HP"),
     "coin": ItemDef("coin", "Xu", "🪙", "material", {}, "Xu nhặt được từ zombie"),
     # Smelting chain (game/smelting.py): ores from mining, ingots/fuel/food
     # from the furnace, cooked meat is a real consumable.
@@ -45,7 +45,7 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "coal": ItemDef("coal", "Than đá", "⚫", "material", {}, "Nhiên liệu tốt nhất cho lò nung"),
     "iron_ingot": ItemDef("iron_ingot", "Thỏi sắt", "🥈", "material", {}, "Nguyên liệu tool sắt"),
     "charcoal": ItemDef("charcoal", "Than củi", "🌑", "material", {}, "Nhiên liệu nung gỗ trong lò"),
-    "raw_meat": ItemDef("raw_meat", "Thịt sống", "🍖", "material", {}, "Nấu chín ở lò mới ăn được"),
+    "raw_meat": ItemDef("raw_meat", "Thịt sống", "🍖", "consumable", {"heal_hp": 8}, "Ăn sống được, hồi 8 HP — nấu chín hồi nhiều hơn"),
     "cooked_meat": ItemDef(
         "cooked_meat", "Thịt nướng", "🍗", "consumable", {"heal_hp": 30}, "Hồi 30 HP"
     ),

@@ -27,6 +27,48 @@ ZOMBIE_PLAYER_ATTACK_DAMAGE = 20  # with a weapon (axe/sword)
 # variance callers may add). Weapons are meant to feel meaningfully better.
 BARE_HAND_ATTACK_DAMAGE = 6
 ZOMBIE_HP = 40
+# Night mob population: +15% over the original 3 (user 2026-09-14), the
+# extra spawns distributed across MOB_KINDS by spawn weight.
+NIGHT_MOB_COUNT_SCALE = 1.15
+# Precomputed default caps (+15%, ceil so 3.45 -> 4 and 30 -> 35).
+import math as _math
+
+NIGHT_MOB_MAX_COUNT = _math.ceil(ZOMBIE_MAX_COUNT * NIGHT_MOB_COUNT_SCALE)
+
+# ---- night mob kinds (Kaetram 02_mobs_stats + sprites.json) ---------------
+# Stats derived from the Kaetram mob stats relative to the zombie baseline
+# (zombie HP 40 / dmg 10 in our scale). Spawn weights DESCEND by rarity:
+# zombie (most common) -> rat (rarest), per the user's order.
+# speed = web tiles/s; cooldown = seconds between bites.
+MOB_KINDS: Dict[str, dict] = {
+    #        hp_mult dmg_mult speed  cd    weight (zombie highest, rat lowest)
+    "zombie":   dict(hp=40, dmg=10, speed=2.2, cooldown=1.8, weight=38),
+    "skeleton": dict(hp=56, dmg=11, speed=2.0, cooldown=2.2, weight=22),   # tanky, slow (lvl14/HP140)
+    "spider":   dict(hp=44, dmg=10, speed=2.2, cooldown=1.8, weight=16),   # lvl47/HP650 ~ zombie-ish
+    "slime":    dict(hp=50, dmg=9,  speed=2.2, cooldown=1.8, weight=12),   # lvl48/HP694 tanky
+    "bat":      dict(hp=20, dmg=6,  speed=2.8, cooldown=1.6, weight=8),    # lvl4/HP65 fast swarm
+    "rat":      dict(hp=12, dmg=4,  speed=2.6, cooldown=2.0, weight=4),    # lvl1/HP20 pest
+}
+MOB_SPAWN_WEIGHTS: List[Tuple[str, float]] = [
+    (kind, float(cfg["weight"])) for kind, cfg in MOB_KINDS.items()
+]
+
+
+def roll_mob_kind(rng: random.Random) -> str:
+    """Weighted kind roll — zombie most common, rat rarest."""
+    total = sum(w for _k, w in MOB_SPAWN_WEIGHTS)
+    r = rng.uniform(0.0, total)
+    acc = 0.0
+    for kind, w in MOB_SPAWN_WEIGHTS:
+        acc += w
+        if r <= acc:
+            return kind
+    return MOB_SPAWN_WEIGHTS[0][0]
+
+
+def mob_stats(kind: str) -> dict:
+    """Stat dict for a kind (falls back to the zombie row)."""
+    return MOB_KINDS.get(kind) or MOB_KINDS["zombie"]
 # Legacy alias kept for callers/tests; the manager uses the configurable world
 # tick so autonomous movement can feel responsive without rendering every tick.
 ZOMBIE_TICK_SECONDS = 4.0
@@ -48,6 +90,13 @@ WEB_ZOMBIE_BITE_COOLDOWN = 1.8
 # touch SHORTER than the bite cooldown so the pose un-freezes before the
 # next bite re-arms it.
 WEB_ZOMBIE_ATK_MS = 4 * 90
+# Recovery window AFTER a bite (seconds): the zombie stops lunging and takes
+# 1-2 shuffling steps away/sideways (anim=walk) before closing in again.
+# Total rhythm = atk swing (~0.36s) + recovery (~0.7s) between bites.
+WEB_ZOMBIE_RECOVER_S = 0.7
+# How far the recovery shuffle drifts (tiles/s, fractional so it looks like
+# hesitant small steps rather than a determined retreat).
+WEB_ZOMBIE_RECOVER_SPEED = 1.4
 # Spawn/despawn distances in float tiles (mirror the int constants).
 WEB_ZOMBIE_MIN_SPAWN_DIST = 8.0
 WEB_ZOMBIE_DESPAWN_DIST = 90.0
@@ -74,7 +123,7 @@ ZOMBIE_VISION_RADIUS = 6
 # Population scales with the darkness around each player: within this many
 # tiles of every player there may be at most ZOMBIE_AREA_MAX_COUNT zombies.
 ZOMBIE_AREA_RADIUS = 75
-ZOMBIE_AREA_MAX_COUNT = 30
+ZOMBIE_AREA_MAX_COUNT = 35  # +15% over 30 (NIGHT_MOB_COUNT_SCALE)
 # Chance a spawned zombie is a HUNTER: ignores vision (always knows where
 # players are) and relentlessly chases the nearest one.
 ZOMBIE_HUNTER_CHANCE = 0.005
@@ -88,6 +137,41 @@ ZOMBIE_DROP_TABLE = (
     ("coin", 0.35, 1),
     ("raw_meat", 0.5, 1),  # cook it in the furnace (game/smelting.py)
 )
+
+# Per-kind night-mob drop tables: (item_id, chance 0..1, qty).
+# Themed per Kaetram flavor; everything is cookable/spendable in existing
+# systems (smelting, purse) — no new item mechanics.
+MOB_DROP_TABLES: Dict[str, tuple] = {
+    "zombie": ZOMBIE_DROP_TABLE,
+    "skeleton": (
+        ("coin", 0.6, 1),          # adventurers' remains
+        ("coal", 0.45, 1),         # smelt fuel
+        ("stick", 0.35, 1),
+    ),
+    "spider": (
+        ("stick", 0.4, 1),         # stand-in until a "string" item exists
+        ("coin", 0.45, 1),
+        ("raw_meat", 0.35, 1),
+    ),
+    "slime": (
+        ("apple", 0.45, 1),        # jelly-ish treat
+        ("coin", 0.4, 1),
+        ("leaves", 0.3, 1),
+    ),
+    "bat": (
+        ("coin", 0.3, 1),
+        ("coal", 0.25, 1),         # cave dweller
+    ),
+    "rat": (
+        ("rotten_flesh", 0.4, 1),
+        ("coin", 0.2, 1),
+    ),
+}
+
+
+def mob_drop_table(kind: str) -> tuple:
+    """Drop table for a mob kind (falls back to the zombie one)."""
+    return MOB_DROP_TABLES.get(kind) or ZOMBIE_DROP_TABLE
 
 _DIRECTIONS: Tuple[Tuple[int, int], ...] = (
     (-1, -1), (0, -1), (1, -1),
@@ -104,7 +188,9 @@ class Zombie:
     hp: int = ZOMBIE_HP
     max_hp: int = ZOMBIE_HP
     damage: int = ZOMBIE_ATTACK_DAMAGE
-    kind: str = "walker"
+    # Mob kind: "zombie" | "skeleton" | "spider" | "slime" | "bat" | "rat".
+    # Drives stats (MOB_KINDS), drops, and the client's sprite sheet choice.
+    kind: str = "zombie"
     # time.monotonic() before which this zombie may not bite again (background
     # ticks). 0.0 = free to bite immediately (keeps player-triggered turns
     # exactly as responsive as before).
@@ -129,6 +215,17 @@ class Zombie:
     anim_t: float = 0.0  # monotonic() when the current anim started
     # monotonic() of the last landed bite (web cooldown — the "giật" fix).
     last_bite: float = 0.0
+    # Web pack attack rhythm: after ONE bite the zombie plays a short
+    # "recovery" window (shuffle back/strafe, anim=walk) before lunging again
+    # — no more vibrating in place on the lunge pose.
+    attack_recover_until: float = 0.0
+    # Per-kind web stats (filled by web_spawn_one from MOB_KINDS): chase
+    # speed (tiles/s) and bite cooldown (seconds).
+    web_speed: float = WEB_ZOMBIE_WALK_SPEED
+    web_cooldown: float = WEB_ZOMBIE_BITE_COOLDOWN
+    # Unit-vector of the recovery drift, picked once per bite.
+    recover_dx: float = 0.0
+    recover_dy: float = 0.0
 
     def sync_float_from_int(self) -> None:
         self.x_f = float(self.x) + 0.5
@@ -407,6 +504,10 @@ def spawn_one(state, collision, view_rects: Dict[int, tuple], rng: random.Random
     if position is None:
         return None
     zombie = Zombie(_next_id(state), position[0], position[1])
+    zombie.kind = roll_mob_kind(rng)
+    stats = mob_stats(zombie.kind)
+    zombie.hp = zombie.max_hp = stats["hp"]
+    zombie.damage = stats["dmg"]
     # 5% hunter roll, but NEVER more than ZOMBIE_MAX_HUNTERS alive at once —
     # a pack of relentless chasers must not be possible, only a stray one.
     zombie.hunter = (
@@ -456,7 +557,7 @@ def tick_zombies(
     view_rects: Dict[int, tuple],
     night: bool,
     rng: Optional[random.Random] = None,
-    max_count: int = ZOMBIE_MAX_COUNT,
+    max_count: int = NIGHT_MOB_MAX_COUNT,
     spawn_chance: float = ZOMBIE_SPAWN_CHANCE,
 ) -> ZombieTurnResult:
     """Advance autonomous zombies and maintain the night population.
@@ -585,7 +686,7 @@ def world_tick(
     view_rects: Dict[int, tuple],
     night: bool,
     rng: Optional[random.Random] = None,
-    max_count: int = ZOMBIE_MAX_COUNT,
+    max_count: int = NIGHT_MOB_MAX_COUNT,
     spawn_chance: float = ZOMBIE_SPAWN_CHANCE,
 ) -> ZombieTurnResult:
     """One background simulation beat: population upkeep + autonomous turns.
@@ -635,13 +736,6 @@ def _web_set_anim(z: Zombie, anim: str, now: float) -> None:
     if z.anim != anim:
         z.anim = anim
         z.anim_t = now
-        return
-    # Re-arm on a repeated BITE (not just on the first): the zombie keeps
-    # anim="atk" between successive bites, so without this the client would
-    # replay the swing frames only once and then freeze on the lunge pose
-    # ("đấm xong đơ") until the zombie moved again.
-    if anim == "atk":
-        z.anim_t = now
 
 
 def web_spawn_one(state, collision, players: List[object], rng: random.Random) -> Optional[Zombie]:
@@ -675,6 +769,13 @@ def web_spawn_one(state, collision, players: List[object], rng: random.Random) -
         if not walkable:
             continue
         z = Zombie(_next_web_id(state), tx, ty)
+        # Kind roll FIRST, then per-kind stats (hp/damage/speed/cooldown).
+        z.kind = roll_mob_kind(rng)
+        stats = mob_stats(z.kind)
+        z.hp = z.max_hp = stats["hp"]
+        z.damage = stats["dmg"]
+        z.web_speed = stats["speed"]
+        z.web_cooldown = stats["cooldown"]
         z.x_f = float(tx) + 0.5
         z.y_f = float(ty) + 0.5
         z.hunter = hunters < ZOMBIE_MAX_HUNTERS and rng.random() < ZOMBIE_HUNTER_CHANCE
@@ -692,7 +793,7 @@ def web_tick(
     night: bool,
     dt: float,
     rng: Optional[random.Random] = None,
-    max_count: int = ZOMBIE_MAX_COUNT,
+    max_count: int = NIGHT_MOB_MAX_COUNT,
     spawn_chance: float = ZOMBIE_SPAWN_CHANCE,
 ) -> ZombieTurnResult:
     """One 20 Hz realtime beat for the WEB pack (inside the web tick).
@@ -751,35 +852,61 @@ def web_tick(
         dy = target.y_f - z.y_f
         length = _math.hypot(dx, dy)
         if dist <= WEB_ZOMBIE_BITE_RANGE:
-            _web_set_anim(z, "atk", now_mono)
+            # Attack rhythm: lunge (~0.36 s, pose plays out) -> short recovery
+            # shuffle (small steps away/sideways) -> creep back toward the
+            # player until the bite cooldown expires -> bite again. Without
+            # this the zombie re-fired the lunge every tick and looked like it
+            # was vibrating in place.
+            since_bite = now_mono - (z.last_bite or 0.0)
+            if since_bite < WEB_ZOMBIE_ATK_MS / 1000.0:
+                continue  # let the lunge pose finish before anything moves
+            if since_bite < WEB_ZOMBIE_RECOVER_S:
+                _web_recovery_drift(z, collision, step, now_mono, result)
+                continue
+            if since_bite < z.web_cooldown:
+                _web_creep(z, dx, dy, length, collision, step, now_mono, result)
+                continue
             z.facing = _web_facing(dx, dy)
-            if now_mono - (z.last_bite or 0.0) >= WEB_ZOMBIE_BITE_COOLDOWN:
-                before = target.hp
-                target.hp = max(0, target.hp - z.damage)
-                if target.hp != before:
-                    # Out-of-combat regen clock: any HP loss re-arms the 5 s
-                    # wait (web pack — same rule as the Discord pack).
-                    target.last_damaged_at = now_mono
-                    target.regen_bank = 0.0
-                    result.changed = True
-                    result.damaged_player_ids.add(target.user_id)
-                    # Hitsplat feed: floating damage number on the victim.
-                    feed = getattr(state, "recent_damage", None)
-                    if feed is not None:
-                        feed.append((now_wall, target.user_id, z.damage, "zombie"))
-                        del feed[:-40]
-                    z.last_bite = now_mono
-                    if target.hp <= 0:
-                        target.visible = False
-                        target.dead_until = now_wall + 5.0
-                        target.death_reason = "bị zombie tấn công"
-                        result.died_player_ids.add(target.user_id)
+            _web_set_anim(z, "atk", now_mono)
+            z.last_bite = now_mono  # rhythm clock ticks even if damage is blocked
+            before = target.hp
+            target.hp = max(0, target.hp - z.damage)
+            if target.hp != before:
+                # Out-of-combat regen clock: any HP loss re-arms the 5 s
+                # wait (web pack — same rule as the Discord pack).
+                target.last_damaged_at = now_mono
+                target.regen_bank = 0.0
+                result.changed = True
+                result.damaged_player_ids.add(target.user_id)
+                # Hitsplat feed: floating damage number on the victim.
+                feed = getattr(state, "recent_damage", None)
+                if feed is not None:
+                    feed.append((now_wall, target.user_id, z.damage, "zombie"))
+                    del feed[:-40]
+                # Pick the recovery drift: mostly AWAY from the target with a
+                # random sideways component, so packs break apart instead of
+                # shuffling in lockstep.
+                rec_len = max(1e-6, length)
+                z.recover_dx = (-dx / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
+                z.recover_dy = (-dy / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
+                rl = _math.hypot(z.recover_dx, z.recover_dy)
+                if rl > 1e-6:
+                    z.recover_dx /= rl
+                    z.recover_dy /= rl
+                else:
+                    z.recover_dx, z.recover_dy = 0.0, 0.0
+                if target.hp <= 0:
+                    target.visible = False
+                    target.dead_until = now_wall + 5.0
+                    target.death_reason = "bị zombie tấn công"
+                    result.died_player_ids.add(target.user_id)
             continue
         sees = z.hunter or dist <= WEB_ZOMBIE_VISION_RADIUS
         if not sees or length <= 1e-6:
             _web_set_anim(z, "idle", now_mono)
             continue
-        speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else WEB_ZOMBIE_WALK_SPEED
+        # Hunters are always fast; regular kinds use their MOB_KINDS speed.
+        speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else z.web_speed
         ux, uy = dx / length, dy / length
         can_float = getattr(collision, "can_move_float", None)
         if callable(can_float):
@@ -809,3 +936,53 @@ def web_tick(
     if result.changed:
         result.visible_changed = True
     return result
+
+
+def _web_recovery_drift(
+    z: Zombie, collision, step: float, now_mono: float,
+    result: "ZombieTurnResult",
+) -> None:
+    """Post-bite recovery shuffle: 1-2 hesitant steps away/sideways."""
+    dx = z.recover_dx * WEB_ZOMBIE_RECOVER_SPEED * step
+    dy = z.recover_dy * WEB_ZOMBIE_RECOVER_SPEED * step
+    _web_slide(z, dx, dy, collision, now_mono, result)
+
+
+def _web_creep(
+    z: Zombie, dx: float, dy: float, length: float, collision,
+    step: float, now_mono: float, result: "ZombieTurnResult",
+) -> None:
+    """Cooldown remainder: creep slowly back toward the target (pacing) —
+    the zombie looks alive between bites instead of frozen at range."""
+    if length <= 1e-6:
+        _web_set_anim(z, "idle", now_mono)
+        return
+    speed = WEB_ZOMBIE_WALK_SPEED * 0.45
+    ux, uy = dx / length, dy / length
+    _web_slide(z, ux * speed * step, uy * speed * step, collision, now_mono, result)
+
+
+def _web_slide(
+    z: Zombie, dx: float, dy: float, collision,
+    now_mono: float, result: "ZombieTurnResult",
+) -> None:
+    """Move by (dx, dy) float offset with collision; walk anim on success,
+    idle breathe when blocked."""
+    can_float = getattr(collision, "can_move_float", None)
+    if callable(can_float):
+        try:
+            nx_f, ny_f = can_float(z.x_f, z.y_f, dx, dy)
+        except Exception:
+            nx_f, ny_f = z.x_f + dx, z.y_f + dy
+    else:
+        nx_f, ny_f = z.x_f + dx, z.y_f + dy
+    if (nx_f, ny_f) != (z.x_f, z.y_f):
+        z.x_f, z.y_f = nx_f, ny_f
+        z.sync_int_from_float()
+        z.facing = _web_facing(dx, dy)
+        _web_set_anim(z, "walk", now_mono)
+        result.changed = True
+    else:
+        # Blocked: just breathe on the idle frame instead of pressing into
+        # the wall/player.
+        _web_set_anim(z, "idle", now_mono)

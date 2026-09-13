@@ -1531,6 +1531,7 @@ export class WorldScene extends Phaser.Scene {
   private healSprite: Phaser.GameObjects.Sprite | null = null;
   private eatColors: Record<string, number> = {
     apple: 0xd83a3a, cooked_meat: 0xb5651d, raw_meat: 0xd96a6a,
+    rotten_flesh: 0x7a9b4e,
     potion_hp: 0xe04848, potion_mp: 0x4f6fe0, banana: 0xf0d060,
     watermelon: 0x3fae5a, orange: 0xf09030, blueberry: 0x5060c0,
     bread: 0xc89858, cheese: 0xf0c040, carrot: 0xe07020,
@@ -1583,8 +1584,24 @@ export class WorldScene extends Phaser.Scene {
   private updateChew(): void {
     const self = this.selfMarker;
     if (!self) return;
+    // Mouth offset per facing: front (SOUTH) is the tuned base (+4, +7 from
+    // head anchor); back (NORTH) hides the mouth so crumbs shift behind the
+    // head; side/diagonal interpolate between those extremes.
+    const FRONT = { x: 4, y: 7 };
+    const BACK = { x: -4, y: -10 };
+    const dirOffsets: Record<string, { x: number; y: number }> = {
+      SOUTH: FRONT,
+      SE: FRONT,
+      SW: FRONT,
+      NORTH: BACK,
+      NE: BACK,
+      NW: BACK,
+      EAST: { x: 10, y: 0 },
+      WEST: { x: -10, y: 0 },
+    };
+    const off = dirOffsets[this.selfDir] ?? FRONT;
     for (const e of this.chewEmitters.values()) {
-      e.emitter.setPosition(self.x, self.y - 34);
+      e.emitter.setPosition(self.x + off.x, self.y - 34 + off.y);
     }
   }
 
