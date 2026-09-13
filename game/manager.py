@@ -1006,15 +1006,39 @@ class GameManager:
         self._notify_inventory_change(channel_id, user_id)
         return {"ok": True, "reason": "ok", "item_id": out_id, "qty": out_qty}
 
-    async def craft_collect(self, channel_id: int, user_id: int) -> dict:
-        """Click the result slot: move the crafted output into the bag."""
+    async def craft_collect(self, channel_id: int, user_id: int,
+                            slot: Optional[int] = None) -> dict:
+        """Take the crafted output out of the result slot.
+
+        ``slot`` (web drag-to-slot) places the stack into that exact bag
+        cell — merging onto the same item kind, ``bad_slot`` otherwise.
+        ``slot=None`` (plain click) keeps the classic first-free-slot path.
+        """
         rt = self.get_runtime_for(channel_id, user_id)
         res = rt.craft_results.get(user_id)
         if not res:
             return {"ok": False, "reason": "empty_result"}
         inv = self.get_inventory(channel_id, user_id)
-        inv.add(res["id"], res["qty"])
-        rt.craft_results.pop(user_id, None)
+        if slot is not None:
+            if not 0 <= slot < len(inv.slots):
+                return {"ok": False, "reason": "bad_slot"}
+            target = inv.slots[slot]
+            if target and target[0] == res["id"]:
+                # Same kind: merge onto the stack.
+                inv.set_slot(slot, res["id"], target[1] + res["qty"])
+            elif target:
+                # DIFFERENT kind: plain SWAP (same as a bag-to-bag drag) —
+                # the result lands on the chosen cell and the displaced
+                # stack parks back on the result slot. The item is "free":
+                # the player decides where it goes, nothing is rejected.
+                inv.set_slot(slot, res["id"], res["qty"])
+                rt.craft_results[user_id] = {"id": target[0], "qty": target[1]}
+            else:
+                inv.set_slot(slot, res["id"], res["qty"])
+                rt.craft_results.pop(user_id, None)
+        else:
+            inv.add(res["id"], res["qty"])
+            rt.craft_results.pop(user_id, None)
         await self._persist_full_inventory(channel_id, user_id, inv)
         self._notify_inventory_change(channel_id, user_id)
         return {"ok": True, "reason": "ok", "item_id": res["id"], "qty": res["qty"]}
