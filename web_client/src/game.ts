@@ -93,6 +93,9 @@ export class WorldScene extends Phaser.Scene {
   private selfHand: Phaser.GameObjects.Arc | null = null;
   private selfToolIcon: Phaser.GameObjects.Text | Phaser.GameObjects.Image | null = null;
   private selfHeld: string | null = null;
+  // Latest server stamina (snapshot self payload). 0 = tired: prediction
+  // caps at walk speed, matching the server's run gate.
+  private selfStamina = 1.0;
   // Server-authoritative emoji map (welcome.item_emojis): item id -> emoji.
   // Set on buildWorld + kept fresh on every snapshot (welcome may re-fire).
   private itemEmojis: Record<string, string> = {};
@@ -973,7 +976,7 @@ export class WorldScene extends Phaser.Scene {
     // resets it — divergence while ACTIVELY moving is normal echo lag.
     if (this.seqReplayActive && this.inputLog.length === 0 && this.selfServerPos) {
       const d = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
-      this.driftIdleMs = d > 1.2 ? this.driftIdleMs + this.frameDtSec * 1000 : 0;
+      this.driftIdleMs = d > 0.75 ? this.driftIdleMs + this.frameDtSec * 1000 : 0;
     } else {
       this.driftIdleMs = 0;
     }
@@ -1262,7 +1265,10 @@ export class WorldScene extends Phaser.Scene {
       // prediction walk a different speed than the server, so drift grew
       // every second and the snap correction fired repeatedly (= giật).
       const s = this.welcome.self;
-      const speed = v.running
+      // Stamina gate: once stamina hits 0 the server caps us at WALK speed —
+      // mirror that locally so the prediction never diverges while tired.
+      const tired = this.selfStamina <= 0;
+      const speed = v.running && !tired
         ? (s?.run_speed ?? 6.0)
         : (s?.walk_speed ?? 4.0);
       const stepX = v.dx * speed * dt;
@@ -2189,6 +2195,10 @@ export class WorldScene extends Phaser.Scene {
     // Authoritative self position for reconciliation. Self is NOT in the
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
+    // Stamina: the tired gate reads this in stepSelf (prediction mirrors
+    // the server's run-at-walk-speed cap once it empties).
+    const st = (snap.self as { stamina?: number }).stamina;
+    if (typeof st === "number") this.selfStamina = st;
     const nowMs = performance.now();
     if (this.lastServerRecv > 0) {
       const gap = Math.min(2000, nowMs - this.lastServerRecv);
@@ -2235,18 +2245,24 @@ export class WorldScene extends Phaser.Scene {
               this.selfX += this.freeX(this.selfX, this.selfY, sx);
               this.selfY += this.freeY(this.selfX, this.selfY, sy);
             }
-          } else if (this.driftIdleMs > 3000) {
-            // DRIFT RECOVERY: no pending inputs yet our predicted position
-            // has sat >1.2 tiles from the server's for 3+ seconds — the
-            // classic "everything is out_of_range until F5" desync (server
-            // pushed us / packet burst / collision mismatch). Trust the
-            // server: glide home at 25%/snapshot; ~0.2s of pull beats a
-            // reload. driftIdleMs keeps accumulating until convergence.
-            this.selfX += (this.selfServerPos.x - this.selfX) * 0.25;
-            this.selfY += (this.selfServerPos.y - this.selfY) * 0.25;
           }
         }
       }
+    }
+    // DRIFT RECOVERY (every snapshot, not gated on ack progress): the old
+    // version lived inside the ack branch, so a stalled/frozen session —
+    // server stopped acking, socket half-dead — NEVER recovered and the
+    // player stayed as a ghost far from their true tile ("hồn ở đây xác ở
+    // kia"). If we are idle and far from authority, trust the server:
+    // glide home at 30%/snapshot (~0.15s for a 2-tile offset).
+    if (
+      this.seqReplayActive &&
+      !this.selfDead &&
+      this.inputLog.length === 0 &&
+      this.driftIdleMs > 1500
+    ) {
+      this.selfX += (this.selfServerPos.x - this.selfX) * 0.3;
+      this.selfY += (this.selfServerPos.y - this.selfY) * 0.3;
     }
     // Death state: on dead, HARD-snap the prediction to the authority (the
     // server teleported/hid us — any predicted position is fiction). stepSelf
