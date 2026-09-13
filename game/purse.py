@@ -47,7 +47,22 @@ def purse_add(manager, channel_id: int, user_id: int,
     take = min(int(qty), inv.count(item_id))
     if take <= 0:
         return False
-    inv.remove(item_id, take)
+    # Drain slot-by-slot in SLOT ORDER (first stack first) so the deposit
+    # consumes whole stacks top-down instead of Inventory.remove's
+    # later-slots-first drain, which would eat a different stack than the
+    # player deposited from and reshuffle the bag.
+    remaining = take
+    for i, s in enumerate(inv.slots):
+        if remaining <= 0:
+            break
+        if not s or s[0] != item_id:
+            continue
+        t = min(s[1], remaining)
+        left = s[1] - t
+        inv.slots[i] = (item_id, left) if left > 0 else None
+        remaining -= t
+    if remaining > 0:
+        return False  # defensive; count() above should prevent this
     field = _PURSE_FIELD[item_id]
     setattr(player, field, getattr(player, field) + take)
     return True
