@@ -383,3 +383,48 @@ def test_snapshot_echoes_last_seq():
     snap2 = build_snapshot(rt, 22, 0) if rt.state.get_player(22) else None
     if snap2 is not None:
         assert snap2["self"]["last_seq"] == -1
+
+
+def test_portal_travel_migrates_web_session():
+    """Regression: moving a web player to a side world MUST carry their
+    web_sessions entry. Leaving it behind froze the server-side position
+    while the client predicted forward — every click "Quá xa" until reload."""
+    from game.manager import GameManager
+    from game.travel import move_player_between_runtimes
+
+    gm = GameManager(ASSETS)
+    main_rt = gm.create_runtime(88, "test-map")
+    side_rt = gm.create_runtime(88, "test-map")
+    # create_runtime is keyed by channel: restore the main runtime mapping.
+    gm.runtimes[88] = main_rt
+    gm.side_runtimes[(88, "side")] = side_rt
+    assert gm.register_web_session(88, 33, "porter")
+    assert 33 in main_rt.web_sessions
+
+    move_player_between_runtimes(main_rt, side_rt, 33, (1, 1))
+    assert 33 not in main_rt.web_sessions
+    assert 33 in side_rt.web_sessions
+
+    # Input flows in the NEW world without needing a reconnect.
+    assert gm.web_input(88, 33, 1.0, 0.0, running=True)
+    assert side_rt.web_sessions[33].dx == 1.0
+
+
+def test_web_input_rebinds_orphaned_session():
+    """Self-heal: a session stranded in the wrong runtime (any path that
+    forgets migration) is re-bound to the world holding the player."""
+    from game.manager import GameManager
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(99, "test-map")
+    other_rt = gm.create_runtime(99, "test-map")
+    gm.runtimes[99] = rt
+    gm.side_runtimes[(99, "side")] = other_rt
+    assert gm.register_web_session(99, 44, "wanderer")
+    # Force the desync: player "travels" without their session.
+    other_rt.state.players[44] = rt.state.players.pop(44)
+    other_rt.state.players[44].x, other_rt.state.players[44].y = 2, 2
+
+    assert gm.web_input(99, 44, 0.0, 1.0)
+    assert 44 not in rt.web_sessions
+    assert 44 in other_rt.web_sessions

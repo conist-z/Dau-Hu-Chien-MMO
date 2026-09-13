@@ -1,7 +1,7 @@
 import logging
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import asyncio
 import random
@@ -248,6 +248,10 @@ class ScenarioRuntime:
     # Connected web clients (user_id -> WebSession). Runtime-only; a session
     # exists only while the web client's socket is up.
     web_sessions: Dict[int, "WebSession"] = field(default_factory=dict)
+    # Per-player craft material grid (server-authoritative "what the player
+    # took out of the bag onto the craft table") + parked craft result slot.
+    mat_grids: Dict[int, Dict[str, int]] = field(default_factory=dict)
+    craft_results: Dict[int, Dict[str, object]] = field(default_factory=dict)
     # Held hotbar slot per player (user_id -> slot 0..7). Runtime-only UI state
     # so every client can SEE what everyone else holds (the hand + tool icon).
     # Web sessions mirror here on select_slot; Discord players stay at slot 0
@@ -447,6 +451,10 @@ class GameManager:
             )
             player.x, player.y = rt.map_data.spawn
         player.is_web = True
+        # "Web wins": while a web session is attached it controls the shared
+        # body; the Discord side reads this flag to pause its own refresh +
+        # input (no continuous screen re-renders chasing the web player).
+        player.mode = "web"
         if player.float_moved:
             player.sync_int_from_float()
         else:
@@ -468,6 +476,9 @@ class GameManager:
         player = rt.state.get_player(user_id)
         if player is not None and player.is_web:
             player.is_web = False
+            # Control returns to the Discord client automatically — its
+            # refresh pacer un-pauses on the next beat (web_controlled gate).
+            player.mode = "chat"
             player.sync_int_from_float()
             self._schedule_save(rt, player)
         remaining = any(
@@ -479,13 +490,42 @@ class GameManager:
         # called from sync/test contexts), so just let the loop wind down.
         _ = remaining
 
+    @staticmethod
+    def web_controlled(rt, user_id: int) -> bool:
+        """True when the web session currently controls this player's body.
+
+        The Discord adapter checks this to pause its own refresh beat and
+        gate its D-pad input — the screen NEVER re-renders to chase the web
+        player (CPU), it simply sits out until the web session detaches,
+        after which the normal cadence revives it.
+        """
+        player = rt.state.get_player(user_id) if rt is not None else None
+        return player is not None and player.mode == "web"
+
+    def _web_rebind_session(self, rt, user_id: int):
+        """Self-heal a web session left behind in another runtime.
+
+        Portal travel moves the player between runtimes; if any path ever
+        forgets to migrate ``web_sessions`` (bug: frozen server-side position
+        while the client predicted forward, every click "Quá xa"), re-bind
+        the stale session to the runtime actually holding the player."""
+        if user_id in rt.web_sessions:
+            return rt.web_sessions[user_id]
+        for other in list(self.runtimes.values()) + list(self.side_runtimes.values()):
+            sess = other.web_sessions.pop(user_id, None)
+            if sess is not None:
+                sess.last_tick = 0.0  # fresh dt anchor in the new world
+                rt.web_sessions[user_id] = sess
+                return sess
+        return None
+
     def web_input(self, channel_id: int, user_id: int,
                   dx: float, dy: float, running: bool = False) -> bool:
         """Store one input vector (called from the WS handler)."""
         rt = self.runtime_of(channel_id, user_id) or self.runtimes.get(channel_id)
         if rt is None:
             return False
-        sess = rt.web_sessions.get(user_id)
+        sess = rt.web_sessions.get(user_id) or self._web_rebind_session(rt, user_id)
         if sess is None:
             return False
         sess.dx = max(-1.0, min(1.0, float(dx)))
@@ -632,6 +672,21 @@ class GameManager:
                         hurt = rt.state.get_player(uid)
                         if hurt is not None:
                             self._schedule_save(rt, hurt)
+
+                # Drop entities ("linh khí"): one physics + vortex beat per
+                # tick. Collect grants are persisted like any bag change.
+                from game.drops import tick_drops as _tick_drops
+
+                web_players = [
+                    p for p in rt.state.get_visible_players()
+                    if getattr(p, "is_web", False)
+                ]
+                collections, _pruned = _tick_drops(
+                    rt.state, web_players, 1.0 / max(1.0, WEB_TICK_HZ),
+                    collision=rt.collision, rng=self.zombie_rng,
+                )
+                if collections:
+                    await self._grant_drop_collections(rt, collections)
         if moved_any:
             self._touch_web_activity(rt)
         if zombie_touched:
@@ -764,16 +819,84 @@ class GameManager:
         if self.db is not None:
             await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
 
+    async def reorder_bag(self, channel_id: int, user_id: int,
+                          order: list) -> None:
+        """Replace the bag GRID wholesale (web drag & drop): ``order`` is
+        [(item_id, qty), ...] in slot order, one entry per pixel-grid slot
+        (index = slot, ``qty <= 0`` / None entries are empty slots).
+
+        Pure reorder: the multiset of (item_id, qty) is validated to equal
+        the current bag's before applying, so a dropped/stale client frame
+        can never create or destroy items. Empty slots are REAL — the client
+        decides where everything sits, no auto-compaction.
+        """
+        rt = self.get_runtime_for(channel_id, user_id)
+        inv = self.get_inventory(channel_id, user_id)
+        # Normalise the client order: one entry per slot, None/empty = free.
+        cells: List[Optional[Tuple[str, int]]] = []
+        for entry in order:
+            iid = qty = None
+            if isinstance(entry, dict):
+                iid = entry.get("id") or None
+                qty = entry.get("qty", 0)
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                iid, qty = entry[0], entry[1]
+            if iid and qty and int(qty) > 0:
+                cells.append((str(iid), int(qty)))
+            else:
+                cells.append(None)
+        if len(cells) > len(inv.slots):
+            cells = cells[: len(inv.slots)]
+        cells += [None] * (len(inv.slots) - len(cells))
+        # TOLERANT reorder: the multiset sent by the client may be stale
+        # (sent before a loot pickup / craft consumed something). NEVER raise
+        # — that surfaced as "bad_order" toasts mid-drag. Instead: apply the
+        # client's ORDER for the items it got right and keep the server's
+        # authoritative quantities for everything else (resync-on-mismatch).
+        want: Dict[str, int] = {}
+        for c in cells:
+            if c:
+                want[c[0]] = want.get(c[0], 0) + c[1]
+        current = inv.items
+        if want == current:
+            inv.slots = cells
+            inv.version += 1
+        else:
+            # Mismatch: rebuild a grid with the SERVER's totals placed in the
+            # client's slot positions (same item id -> client slot, extra
+            # server-only stacks -> first free slots).
+            rebuilt: List[Optional[Tuple[str, int]]] = [None] * len(inv.slots)
+            remaining = dict(current)
+            for c in cells:
+                if c and remaining.get(c[0], 0) > 0:
+                    take = min(remaining[c[0]], c[1])
+                    if take > 0:
+                        # First fit into free rebuilt slots.
+                        for i in range(len(rebuilt)):
+                            if rebuilt[i] is None:
+                                rebuilt[i] = (c[0], take)
+                                remaining[c[0]] -= take
+                                break
+            for iid, qty in list(remaining.items()):
+                if qty <= 0:
+                    continue
+                for i in range(len(rebuilt)):
+                    if rebuilt[i] is None:
+                        rebuilt[i] = (iid, qty)
+                        remaining[iid] = 0
+                        break
+            inv.slots = rebuilt
+            inv.version += 1
+        if self.db is not None:
+            await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
+
     async def load_inventories(self, rt: ScenarioRuntime) -> None:
         """Populate rt.inventories from the DB (call from async context)."""
         if self.db is None:
             return
         inv = await load_all_inventory(self.db, rt.channel_id)
         for uid, items in inv.items():
-            iv = Inventory()
-            for iid, qty in items.items():
-                iv.add(iid, qty)
-            rt.inventories[uid] = iv
+            rt.inventories[uid] = Inventory(items)
 
     def get_inventory(self, channel_id: int, user_id: int) -> Inventory:
         rt = self.get_runtime_for(channel_id, user_id)
@@ -782,6 +905,109 @@ class GameManager:
             inv = Inventory()
             rt.inventories[user_id] = inv
         return inv
+
+    # ----- craft material grid (server-side buffer, one per player) --------
+
+    @staticmethod
+    def _clean_grid(grid: list) -> Dict[str, int]:
+        out: Dict[str, int] = {}
+        for iid, qty in grid:
+            if iid and int(qty) > 0:
+                out[str(iid)] = out.get(str(iid), 0) + int(qty)
+        return out
+
+    def get_mat_grid(self, channel_id: int, user_id: int) -> Dict[str, int]:
+        rt = self.get_runtime_for(channel_id, user_id)
+        return rt.mat_grids.setdefault(user_id, {})
+
+    async def mat_sync(self, channel_id: int, user_id: int, grid: list) -> dict:
+        """Set the craft material grid = server truth for what the player
+        "took out of the bag".
+
+        The DELTA between the old and new grid is removed from / returned to
+        the bag here (server-authoritative — the client's local buffer is
+        just a preview). Returns the resulting (grid, bag) snapshot dict."""
+        rt = self.get_runtime_for(channel_id, user_id)
+        want = self._clean_grid(grid)
+        current = self.get_mat_grid(channel_id, user_id)
+        inv = self.get_inventory(channel_id, user_id)
+        # Items the player removed from the grid go back to the bag.
+        for iid, had in list(current.items()):
+            back = had - want.get(iid, 0)
+            if back > 0:
+                inv.add(iid, back)
+        # Items newly placed on the grid come out of the bag.
+        for iid, wanted in want.items():
+            extra = wanted - current.get(iid, 0)
+            if extra > 0:
+                if inv.count(iid) < extra:
+                    # Not enough in the bag: revert THIS item's placement.
+                    want[iid] = current.get(iid, 0)
+                    continue
+                inv.remove(iid, extra)
+        rt.mat_grids[user_id] = want
+        await self._persist_full_inventory(channel_id, user_id, inv)
+        self._notify_inventory_change(channel_id, user_id)
+        return {"mat_grid": want, "inventory": inv.items}
+
+    async def mat_move_slot(self, channel_id: int, user_id: int,
+                            src: int, dst: int) -> dict:
+        """Reorder WITHIN the material grid (client sends cell indexes)."""
+        rt = self.get_runtime_for(channel_id, user_id)
+        grid = self.get_mat_grid(channel_id, user_id)
+        entries = [(iid, q) for iid, q in grid.items() if q > 0]
+        i = src if 0 <= src < len(entries) else -1
+        j = dst if 0 <= dst < len(entries) else -1
+        if i >= 0 and j >= 0 and i != j:
+            entries[i], entries[j] = entries[j], entries[i]
+            rt.mat_grids[user_id] = dict(entries)
+        return {"mat_grid": self.get_mat_grid(channel_id, user_id)}
+
+    async def craft_from_grid(self, channel_id: int, user_id: int) -> dict:
+        """Craft from the SERVER-side material grid (the real recipe table).
+
+        Consumes exactly what sits in the grid, matches the multiset to a
+        recipe, and parks the output in ``rt.craft_results[user_id]`` — the
+        player clicks the result slot to collect it into the bag. On failure
+        nothing is consumed."""
+        from game import crafting
+
+        rt = self.get_runtime_for(channel_id, user_id)
+        player = rt.state.get_player(user_id)
+        if player is None:
+            return {"ok": False, "reason": "no_player"}
+        grid = self.get_mat_grid(channel_id, user_id)
+        if not grid:
+            return {"ok": False, "reason": "empty_grid"}
+        recipe = crafting.find_recipe_by_inputs(list(grid.items()))
+        if recipe is None:
+            return {"ok": False, "reason": "no_matching_recipe"}
+        near_table = crafting.nearest_station(rt.state.blocks, player)
+        inv = self.get_inventory(channel_id, user_id)
+        ok, reason = crafting.can_craft_table_free(recipe, grid, near_table)
+        if not ok:
+            return {"ok": False, "reason": reason}
+        out_id, out_qty = recipe.output
+        for iid, qty in recipe.inputs:
+            grid[iid] = grid.get(iid, 0) - qty
+            if grid[iid] <= 0:
+                grid.pop(iid)
+        rt.craft_results[user_id] = {"id": out_id, "qty": out_qty}
+        self._notify_inventory_change(channel_id, user_id)
+        return {"ok": True, "reason": "ok", "item_id": out_id, "qty": out_qty}
+
+    async def craft_collect(self, channel_id: int, user_id: int) -> dict:
+        """Click the result slot: move the crafted output into the bag."""
+        rt = self.get_runtime_for(channel_id, user_id)
+        res = rt.craft_results.get(user_id)
+        if not res:
+            return {"ok": False, "reason": "empty_result"}
+        inv = self.get_inventory(channel_id, user_id)
+        inv.add(res["id"], res["qty"])
+        rt.craft_results.pop(user_id, None)
+        await self._persist_full_inventory(channel_id, user_id, inv)
+        self._notify_inventory_change(channel_id, user_id)
+        return {"ok": True, "reason": "ok", "item_id": res["id"], "qty": res["qty"]}
 
     async def add_item(self, channel_id: int, user_id: int, item_id: str, qty: int = 1) -> None:
         inv = self.get_inventory(channel_id, user_id)
@@ -840,12 +1066,76 @@ class GameManager:
         self._notify_inventory_change(channel_id, user_id)
         return True, "ok", out_id, out_qty
 
+    async def craft_from_inputs(self, channel_id: int, user_id: int,
+                                inputs: list) -> dict:
+        """Web craft-grid craft: consume EXACTLY the materials the client's
+        material grid held ([(item_id, qty), ...]) from the REAL bag and
+        PARK the output in the result slot (never straight into the bag —
+        the player clicks the result slot to collect it).
+
+        Result-slot rule: same item stacks on top of what's parked; a
+        different item is rejected with ``result_slot_occupied`` until the
+        player collects.
+
+        Table-gated recipes additionally require standing near a crafting
+        table (re-checked here at craft time, rule 9).
+
+        Returns {ok, reason, item_id, qty}: on success the output was parked
+        in the result slot; on failure nothing was consumed.
+        """
+        from game import crafting
+
+        rt = self.get_runtime_for(channel_id, user_id)
+        player = rt.state.get_player(user_id)
+        if player is None:
+            return {"ok": False, "reason": "no_player", "item_id": None, "qty": 0}
+        cleaned = [(str(iid), int(qty)) for iid, qty in inputs if int(qty) > 0]
+        if not cleaned:
+            return {"ok": False, "reason": "empty_grid", "item_id": None, "qty": 0}
+        recipe = crafting.find_recipe_by_inputs(cleaned)
+        if recipe is None:
+            return {"ok": False, "reason": "no_matching_recipe", "item_id": None, "qty": 0}
+        near_table = crafting.nearest_station(rt.state.blocks, player)
+        inv = self.get_inventory(channel_id, user_id)
+        ok, reason = crafting.can_craft(recipe, inv, near_table)
+        if not ok:
+            return {"ok": False, "reason": reason, "item_id": None, "qty": 0}
+        out_id, out_qty = recipe.output
+        # Result-slot stacking rule (user spec): same item stacks, a
+        # different item must be collected first.
+        parked = rt.craft_results.get(user_id)
+        if parked and parked["id"] != out_id:
+            return {"ok": False, "reason": "result_slot_occupied",
+                    "item_id": None, "qty": 0}
+        # Consume the inputs from the REAL bag (remove() is total-aware).
+        for iid, qty in recipe.inputs:
+            inv.remove(iid, qty)
+        if parked:
+            parked["qty"] += out_qty
+        else:
+            rt.craft_results[user_id] = {"id": out_id, "qty": out_qty}
+        await self._persist_full_inventory(channel_id, user_id, inv)
+        await self._clear_depleted_hotbars(channel_id, user_id)
+        self._notify_inventory_change(channel_id, user_id)
+        return {"ok": True, "reason": "ok", "item_id": out_id, "qty": out_qty}
+
     async def _persist_inventory(self, channel_id: int, user_id: int, item_id: str, qty: int) -> None:
         if self.db is None:
             return
         from persistence.repositories import save_inventory_item
 
         await save_inventory_item(self.db, channel_id, user_id, item_id, qty)
+
+    async def _persist_full_inventory(self, channel_id: int, user_id: int,
+                                      inv: Inventory) -> None:
+        """Persist every stack position of a slot-grid bag (order included)."""
+        if self.db is None:
+            return
+        from persistence.repositories import save_inventory_item, save_inventory_order
+
+        for iid, qty in inv.items.items():
+            await save_inventory_item(self.db, channel_id, user_id, iid, qty)
+        await save_inventory_order(self.db, channel_id, user_id, list(inv.items))
 
     # ----- furnace (smelting) adapters: thin, all logic in game/smelting.py --
 
@@ -1452,6 +1742,23 @@ class GameManager:
                 damaged = rt.state.get_player(user_id)
                 if damaged is not None:
                     self._schedule_save(rt, damaged)
+
+    async def _grant_drop_collections(self, rt, collections) -> None:
+        """Persist bag changes from collected drop entities + notify hubs."""
+        by_user: dict = {}
+        for user_id, item_id, qty in collections:
+            inv = self.get_inventory(rt.channel_id, user_id)
+            inv.add(item_id, qty)
+            by_user.setdefault(user_id, True)
+            if self.db is not None:
+                from persistence.repositories import save_inventory_item
+
+                await save_inventory_item(
+                    self.db, rt.channel_id, user_id,
+                    item_id, inv.count(item_id),
+                )
+        for user_id in by_user:
+            self._notify_inventory_change(rt.channel_id, user_id)
 
     async def _grant_zombie_drops(self, rt, user_id: int, drops) -> None:
         inv = self.get_inventory(rt.channel_id, user_id)
