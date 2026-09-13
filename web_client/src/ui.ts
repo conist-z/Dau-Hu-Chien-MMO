@@ -238,6 +238,11 @@ export class Hud {
       this.pendingCraftSnapshot = null;
       const r = this.recipes.find((x) => x.output.id === itemId);
       this.toast(`Đã chế tạo ${r?.name ?? itemId} ×${qty}`);
+      // AUTO-COLLECT: the output lands in the bag immediately (optimistic;
+      // the server's collect op + inventory delta confirm it). No extra
+      // click on the result slot needed anymore.
+      this.parkedResult = { id: itemId!, qty };
+      this.resultToBag(null);
     } else {
       if (this.pendingCraftSnapshot) {
         this.matGrid = this.pendingCraftSnapshot;
@@ -518,12 +523,25 @@ export class Hud {
 
   /** Drop the parked result onto a bag slot: ONE collect frame tells the
    *  server WHERE to put it (merge onto the same kind, bad_slot otherwise).
-   *  The bag itself is NOT edited optimistically — the server's inventory
-   *  delta (same round-trip as click-collect) repaints the exact result. */
-  private resultToBag(slot: number): void {
+   *  OPTIMISTIC: the result clears and lands in the bag AT ONCE — the
+   *  server's inventory delta (same round-trip) reconciles via the
+   *  delta-merge in setInventory, so no visible jank either way. */
+  private resultToBag(slot: number | null): void {
     if (!this.parkedResult) return;
-    const target = this.inventory.bag[slot];
-    if (target && target.id !== this.parkedResult.id) return; // wrong kind
+    const res = { ...this.parkedResult };
+    this.parkedResult = null;
+    if (this.craftTab.classList.contains("active")) this.renderCraftPanel();
+    // Local landing: merge onto a same-kind stack, else the first free cell.
+    const same = this.inventory.bag.find((b) => b && b.id === res.id);
+    if (same) {
+      same.qty += res.qty;
+    } else {
+      const free = this.inventory.bag.findIndex((b) => !b);
+      if (free >= 0) this.inventory.bag[free] = res;
+    }
+    this.invVersion = -1; // force the next server delta to reconcile
+    this.renderHotbar();
+    if (this.inventoryOpen) this.renderInventory();
     this.onCollect?.(slot);
   }
 
@@ -683,6 +701,11 @@ export class Hud {
           this.fillMatGridFromBag(rec);
           this.renderInventory(); // bag cells that lost stacks repaint now
           this.renderCraftPanel();
+          // ONE-CLICK CRAFT: when the recipe is fully satisfied, CREATE
+          // fires immediately — no second press on the pixel button.
+          // (A failed craft restores the grid via craftResult, so this is
+          // safe to do optimistically.)
+          if (this.canCraftNow(rec)) this.pressCreate();
         });
       }
       this.invCraftWrap.appendChild(slot);
