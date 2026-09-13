@@ -190,18 +190,42 @@ export class Hud {
     this.craftTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=craft]")!;
     [this.itemsTab, this.craftTab].forEach((tab) => {
       tab.addEventListener("click", () => {
+        // Tab click while fully closed reopens BOTH panels (reset state).
+        if (this.invPanel.classList.contains("hidden")) {
+          this.invClosed = false;
+          this.craftClosed = false;
+          this.lastBagSig = "";
+          this.toggleInventory(true);
+        }
         document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
         const isCraft = tab.dataset.tab === "craft";
-        this.invItemsWrap.classList.toggle("hidden", isCraft);
-        this.invCraftWrap.classList.toggle("hidden", !isCraft);
-        // Craft tab ALSO shows the inventory panel below it (drag partner).
-        this.invItemsCraftWrap.classList.toggle("hidden", !isCraft);
+        // Re-apply the per-panel layout with the freshly active tab.
+        this.invItemsWrap.classList.add("hidden");
+        this.invCraftWrap.classList.add("hidden");
+        this.invItemsCraftWrap.classList.add("hidden");
+        if (isCraft) {
+          this.invCraftWrap.classList.toggle("hidden", this.craftClosed);
+          this.invItemsCraftWrap.classList.toggle("hidden", this.invClosed);
+        } else {
+          this.invItemsWrap.classList.toggle("hidden", this.invClosed);
+        }
         this.craftDetail.classList.toggle("hidden", true);
+        // Tab strip stays while either panel is open.
+        const tabsEl = this.craftTab.parentElement;
+        if (tabsEl) tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
         this.renderInventory();
       });
     });
+    // Legacy strip X (kept for DOM parity) closes the whole window.
     document.getElementById("inv-close")!.addEventListener("click", () => this.toggleInventory(false));
+    // Per-panel pixel X buttons (cover the X baked into each frame art).
+    document.querySelectorAll<HTMLButtonElement>(".panel-close").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.closePanel(btn.dataset.panel as "inv" | "craft");
+      });
+    });
     // Panel geometry once at boot (V5: integer scale, exact local bboxes).
     sizePanel(this.invItemsWrap, INVENTORY_PANEL);
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
@@ -352,19 +376,120 @@ export class Hud {
 
   // ----- inventory + craft panel -----
 
+  // Per-panel visibility (independent of the wrapping #inv-panel): the X on
+  // the inventory closes the bag while the craft tab stays; the X on the
+  // craft panel closes craft only. Reopening (B key / tab click) resets both.
+  private invClosed = false;
+  private craftClosed = false;
+  private hideTimer: number | null = null;
+
+  /** Play the pop-out animation then flip .hidden (140 ms exit). */
+  private animateHide(el: HTMLElement): void {
+    el.classList.remove("anim-show", "slide-up");
+    el.classList.add("anim-hide");
+    if (this.hideTimer !== null) window.clearTimeout(this.hideTimer);
+    this.hideTimer = window.setTimeout(() => {
+      el.classList.add("hidden");
+      el.classList.remove("anim-hide");
+      this.hideTimer = null;
+    }, 140);
+  }
+
+  /** Play the pop-in (or slide-up) animation on a freshly shown element. */
+  private animateShow(el: HTMLElement, slide = false): void {
+    if (this.hideTimer !== null) {
+      // Cancel a pending hide of the same element and show it immediately.
+      window.clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+      el.classList.remove("anim-hide");
+    }
+    el.classList.remove("hidden", "anim-hide", "slide-up");
+    if (slide) {
+      // Force a reflow so the slide-up keyframes replay from the offset.
+      void el.offsetWidth;
+      el.classList.add("slide-up");
+    } else {
+      el.classList.add("anim-show");
+    }
+  }
+
   toggleInventory(force?: boolean): void {
     const show = force ?? this.invPanel.classList.contains("hidden");
-    this.invPanel.classList.toggle("hidden", !show);
     if (show) {
-      // Opening must ALWAYS repaint (the guard would skip a same-sig open
-      // and show a stale grid after server-side changes while hidden).
-      this.lastBagSig = "";
+      // Opening resets the per-panel close state (fresh pair of panels).
+      this.invClosed = false;
+      this.craftClosed = false;
+      this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
+      this.applyTabLayout(false);
+      this.animateShow(this.invPanel);
       this.renderInventory();
+    } else {
+      this.animateHide(this.invPanel);
     }
   }
 
   get inventoryOpen(): boolean {
     return !this.invPanel.classList.contains("hidden");
+  }
+
+  /** Re-apply the CURRENT tab layout to the three panel wraps, honoring
+   *  the per-panel close flags, and sync the tab strip + drag-partner
+   *  visibility. Called on every tab click / X press. */
+  private applyTabLayout(slideInv = false): void {
+    const craftActive = this.craftTab.classList.contains("active");
+    // Tab strip: hide the tabs entirely only when BOTH panels are closed.
+    const tabsEl = this.craftTab.parentElement;
+    if (tabsEl) {
+      tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
+    }
+    if (craftActive) {
+      this.invCraftWrap.classList.toggle("hidden", this.craftClosed);
+      this.invItemsCraftWrap.classList.toggle("hidden", this.invClosed);
+      this.invItemsWrap.classList.add("hidden");
+    } else {
+      this.invItemsWrap.classList.toggle("hidden", this.invClosed);
+      this.invCraftWrap.classList.add("hidden");
+      this.invItemsCraftWrap.classList.add("hidden");
+    }
+    if (slideInv && !this.invClosed) {
+      // Craft closed while the inventory panel is visible: glide the bag
+      // up into the freed space (the tab strip "chế đồ" -> stays).
+      this.animateShow(this.invItemsCraftWrap, true);
+    }
+  }
+
+  /** A panel X was pressed: close THAT panel only (user rule), keep the
+   *  other one, and sync the tab strip highlight. */
+  private closePanel(which: "inv" | "craft"): void {
+    if (which === "inv") {
+      this.invClosed = true;
+      // On the items tab the inv panel is the only one: whole window goes.
+      if (!this.craftTab.classList.contains("active")) {
+        this.animateHide(this.invPanel);
+        return;
+      }
+      this.applyTabLayout();
+      this.renderInventory();
+    } else {
+      this.craftClosed = true;
+      // Craft X on the craft tab: craft hides, the bag slides up. The tab
+      // strip stays (the bag is still open) — tabs remain clickable.
+      this.applyTabLayout(true);
+      // Tab strip: craft is closed; highlight nothing (or items if the bag
+      // is what remains visible).
+      if (this.invClosed) {
+        // Both closed via craft X too: hide the whole window.
+        this.animateHide(this.invPanel);
+        return;
+      }
+    }
+  }
+
+  /** Reopen both panels from a fully-closed state (tab strip was hidden —
+   *  B key path): reset the close flags and re-show everything. */
+  reopenAfterFullClose(): void {
+    this.invClosed = false;
+    this.craftClosed = false;
   }
 
   private lastBagSig = "";

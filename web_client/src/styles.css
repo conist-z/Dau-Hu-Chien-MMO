@@ -205,6 +205,26 @@ html, body {
   left: 12px; top: 64px;
   display: flex; flex-direction: column; gap: 6px;
   max-height: calc(100vh - 140px);
+  /* Panel show/hide animation (pop-in / shrink-out). The .closing class
+     plays the exit keyframes before the JS flips .hidden after 140ms. */
+  transform-origin: 12px 8px;
+}
+#inv-panel.anim-show { animation: panel-pop-in 0.16s ease-out; }
+#inv-panel.anim-hide { animation: panel-pop-out 0.14s ease-in forwards; }
+@keyframes panel-pop-in {
+  from { opacity: 0; transform: scale(0.86) translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes panel-pop-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: scale(0.86) translateY(-6px); }
+}
+/* Slide-up: when the craft panel closes on the craft tab, the inventory
+   panel glides up into the freed space (class toggled per layout). */
+#inv-panel.slide-up { animation: panel-slide-up 0.22s ease-out; }
+@keyframes panel-slide-up {
+  from { transform: translateY(180px); opacity: 0.4; }
+  to { transform: none; opacity: 1; }
 }
 /* Global hide: one class to rule them all (gate panel, lobby, …). */
 .hidden { display: none !important; }
@@ -230,6 +250,27 @@ html, body {
   font-size: 14px; cursor: pointer; padding: 4px 8px;
 }
 .inv-close:hover { color: #fff; }
+
+/* Pixel close buttons (V5 kit 0090 9×9 component): cover the X painted
+   into each frame exactly, brighten on hover, sink on press. */
+.panel-close {
+  position: absolute;
+  width: 27px; height: 27px; /* 9×9 kit px × PIXEL_SCALE(3) */
+  background: url("/ui/v5/atoms/close_big.png") no-repeat;
+  background-size: 27px 27px;
+  image-rendering: pixelated;
+  border: none; padding: 0;
+  cursor: pointer;
+  z-index: 5;
+  transition: filter 0.08s ease-out, transform 0.08s ease-out;
+}
+.panel-close:hover {
+  filter: brightness(1.6) drop-shadow(0 0 4px rgba(255, 236, 150, 0.9));
+}
+.panel-close:active { transform: scale(0.88); }
+/* The inv X sits at kit (87,2); the craft X at (185,2). */
+#inv-items-wrap .panel-close { left: 261px; top: 6px; }
+#inv-craft-wrap .panel-close { left: 555px; top: 6px; }
 
 /* Pixel panel wrap: img fills wrap; slots are absolutely positioned INSIDE
    the wrap in SCALED px (slotXY × PIXEL_SCALE from pixel_ui.ts). */
