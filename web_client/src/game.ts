@@ -56,6 +56,9 @@ interface RemotePlayer {
 // self hand (not in a container) shares the exact same geometry.
 export const HAND_ORBIT = 20;
 export const HAND_RADIUS = 5;
+// Drop-entity icon (Kaetram PNG) displayed size in px — half a tile reads
+// as a ground pickup without covering the tile it sits on.
+export const DROP_ICON_PX = 16;
 // Hand icon (Kaetram PNG) displayed size in px — 1.5 tiles read as a held
 // tool at this scale; emoji Text fallback keeps its own 13px font size.
 export const HAND_ICON_PX = 24;
@@ -172,7 +175,9 @@ export class WorldScene extends Phaser.Scene {
   private drops = new Map<string, {
     container: Phaser.GameObjects.Container;
     glow: Phaser.GameObjects.Arc;
-    icon: Phaser.GameObjects.Text;
+    itemId: string;
+    icon: Phaser.GameObjects.Text | Phaser.GameObjects.Image;
+    label: Phaser.GameObjects.Text | null;
     tx: number; ty: number; // latest server tile-pos (px)
     z: number;              // latest server height (px)
     phase: string;
@@ -844,6 +849,7 @@ export class WorldScene extends Phaser.Scene {
   private applyHandIcon(
     icon: Phaser.GameObjects.Text | Phaser.GameObjects.Image,
     itemId: string | null,
+    sizePx: number = HAND_ICON_PX,
   ): Phaser.GameObjects.Text | Phaser.GameObjects.Image {
     const tex = this.iconTexFor(itemId);
     const isImage = icon.type === "Image";
@@ -859,7 +865,7 @@ export class WorldScene extends Phaser.Scene {
     const parent = icon.parentContainer;
     icon.destroy();
     const next: Phaser.GameObjects.Text | Phaser.GameObjects.Image = tex
-      ? this.add.image(x, y, tex).setOrigin(0.5).setDisplaySize(HAND_ICON_PX, HAND_ICON_PX)
+      ? this.add.image(x, y, tex).setOrigin(0.5).setDisplaySize(sizePx, sizePx)
       : this.add.text(x, y, this.emojiFor(itemId), { fontSize: "13px" }).setOrigin(0.5);
     next.setDepth(depth).setVisible(visible);
     if (parent) parent.add(next);
@@ -1042,16 +1048,30 @@ export class WorldScene extends Phaser.Scene {
         if (!this.dropLayer) this.dropLayer = this.add.layer();
         const container = this.add.container(x * 32, y * 32);
         const glow = this.add.circle(0, 0, 7, 0x8fd6ff, 0.35);
-        const label = qty > 1 ? `×${qty}` : "";
-        const icon = this.add.text(0, -4, (this.itemEmojis[itemId] ?? "❖") + label, {
-          fontSize: "13px",
-          stroke: "#0a0d12", strokeThickness: 3,
-        }).setOrigin(0.5);
-        container.add([glow, icon]);
+        // Icon: Kaetram pixel-art PNG (Image) when the texture is already
+        // registered, emoji Text otherwise — flipped later by onIconTexture.
+        const tex = this.iconTexFor(itemId);
+        const icon = tex
+          ? this.add.image(0, -4, tex).setOrigin(0.5).setDisplaySize(DROP_ICON_PX, DROP_ICON_PX)
+          : this.add.text(0, -4, this.emojiFor(itemId) || "❖", {
+              fontSize: "13px",
+              stroke: "#0a0d12", strokeThickness: 3,
+            }).setOrigin(0.5);
+        // Qty badge as a SEPARATE object so the icon can swap kind freely.
+        const label = qty > 1
+          ? this.add.text(6, 4, `×${qty}`, {
+              fontSize: "10px", color: "#ffe9a8",
+              stroke: "#0a0d12", strokeThickness: 3,
+            }).setOrigin(0.5)
+          : null;
+        const parts: Phaser.GameObjects.GameObject[] = label
+          ? [glow, icon, label]
+          : [glow, icon];
+        container.add(parts);
         container.setDepth(6);
         this.dropLayer.add(container);
         d = {
-          container, glow, icon,
+          container, glow, itemId, icon, label,
           tx: x * 32, ty: y * 32, z: z * 32,
           phase, bornT: now, collectedT: 0,
           bobSeed: Math.random() * Math.PI * 2,
@@ -1422,6 +1442,11 @@ export class WorldScene extends Phaser.Scene {
     if (this.selfToolIcon) this.selfToolIcon = this.applyHandIcon(this.selfToolIcon, this.selfHeld);
     for (const rp of this.players.values()) {
       if (rp.held === itemId) rp.toolIcon = this.applyHandIcon(rp.toolIcon, rp.held);
+    }
+    // Drop entities of this item: emoji glyph -> real pixel art (smaller
+    // than the hand icon — a ground pickup, not a held tool).
+    for (const d of this.drops.values()) {
+      if (d.itemId === itemId) d.icon = this.applyHandIcon(d.icon, itemId, DROP_ICON_PX);
     }
   }
 
