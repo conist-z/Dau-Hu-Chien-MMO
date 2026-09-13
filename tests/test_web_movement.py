@@ -138,7 +138,7 @@ def test_web_tick_moves_player_at_capped_speed():
         loop.close()
         asyncio.set_event_loop(None)
     moved = p.x_f - start[0]
-    assert 3.0 <= moved <= 4.0 + 1e-6  # walk speed 4 tiles/s, wall clamp may reduce
+    assert 1.5 <= moved <= 3.0 + 1e-6  # walk speed 2.5 tiles/s, wall clamp may reduce
     assert p.float_moved is True
     assert p.is_web is True
 

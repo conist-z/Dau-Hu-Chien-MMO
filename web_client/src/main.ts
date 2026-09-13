@@ -172,7 +172,9 @@ const net = new Net({
     scene.setSelfHeld(frame.held ?? null);
     net.selectSlot(hud.currentSlot);
     hud.setItemEmojis(frame.item_emojis ?? {});
-    hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
+    hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
+      (frame.self as { stamina?: number }).stamina ?? 1,
+      (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setClock(0);
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
@@ -183,12 +185,29 @@ const net = new Net({
   },
   onSnapshot: (frame) => {
     lastSnapshotAt = performance.now();
+    // Incoming-damage hitsplats: float the number over the VICTIM (dedupe
+    // by unix timestamp — the feed window overlaps across snapshots).
+    for (const [ts, uid, dmg] of frame.damage_feed ?? []) {
+      const key = `${ts}:${uid}:${dmg}`;
+      if (!seenDamageKeys.has(key)) {
+        seenDamageKeys.add(key);
+        scene.spawnSplatOnPlayer(uid, dmg);
+      }
+    }
+    if (seenDamageKeys.size > 200) {
+      // Trim: keep only recent keys (feed is 2s; a fixed cap suffices).
+      const keep = [...seenDamageKeys].slice(-100);
+      seenDamageKeys.clear();
+      keep.forEach((k) => seenDamageKeys.add(k));
+    }
     scene.applySnapshot(frame);
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
     weatherFx.setWeather(frame.weather);
     dayNightFx.setClock(frame.clock);
-    hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana);
+    hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
+      (frame.self as { stamina?: number }).stamina ?? 1,
+      (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setNearStation(!!frame.near_station);
     // Death veil: server ignores our inputs while dead; the scene freezes
     // prediction and this overlay explains why (5s respawn).
@@ -527,6 +546,8 @@ document.addEventListener("visibilitychange", () => {
 
 /** ms since the last snapshot arrived (Infinity before the first one). */
 let lastSnapshotAt = 0;
+/** Dedupe keys for the incoming-damage hitsplat feed. */
+const seenDamageKeys = new Set<string>();
 function lastSnapshotAgeMs(): number {
   return lastSnapshotAt === 0 ? Infinity : performance.now() - lastSnapshotAt;
 }

@@ -125,6 +125,8 @@ export interface SnapshotPayload {
   block_damage?: Record<string, [number, number]>;
   zombies: WebZombiePayload[];
   drops?: DropPayload[];
+  // Incoming damage hitsplats: [unix_ts, user_id, amount, source].
+  damage_feed?: [number, number, number, string][];
   self: {
     hp: number;
     max_hp: number;

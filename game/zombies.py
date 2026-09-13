@@ -559,6 +559,12 @@ def advance_visible_zombies(
                 result.changed = True
                 result.visible_changed = True
                 result.damaged_player_ids.add(target.user_id)
+                # Hitsplat feed (chat pack bites appear on web too).
+                feed = getattr(state, "recent_damage", None)
+                if feed is not None:
+                    import time as _t
+                    feed.append((_t.time(), target.user_id, zombie.damage, "zombie"))
+                    del feed[:-40]
                 zombie.attack_cooldown = now + ZOMBIE_ATTACK_COOLDOWN_SECONDS
                 if target.hp <= 0:
                     target.visible = False
@@ -757,6 +763,11 @@ def web_tick(
                     target.regen_bank = 0.0
                     result.changed = True
                     result.damaged_player_ids.add(target.user_id)
+                    # Hitsplat feed: floating damage number on the victim.
+                    feed = getattr(state, "recent_damage", None)
+                    if feed is not None:
+                        feed.append((now_wall, target.user_id, z.damage, "zombie"))
+                        del feed[:-40]
                     z.last_bite = now_mono
                     if target.hp <= 0:
                         target.visible = False

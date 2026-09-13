@@ -101,6 +101,18 @@ class Player:
     max_hp: int = 100
     mana: int = 50
     max_mana: int = 50
+    # Stamina: drain while SPRINTING or harvesting (chop/mine). Generous by
+    # design (user rule): enough for a long run, never blocks walking, and
+    # only SOFTENS harvesting (half speed) when empty — never a hard gate.
+    # Runtime-only: refills fast, not persisted.
+    stamina: float = 200.0
+    max_stamina: float = 200.0
+    # Fractional stamina bank for smooth 20 Hz drain/regen (same pattern as
+    # the HP regen bank).
+    stamina_bank: float = 0.0
+    # monotonic() of the last exertion (sprint tick / harvest hit) — regen
+    # waits STAMINA_REGEN_DELAY_S after it. Runtime-only.
+    last_exert_at: Optional[float] = None
     # Out-of-combat HP regen (user rule 13/09). Runtime-only (not persisted):
     # ``last_damaged_at`` = monotonic time of the last HP LOSS (zombie bite /
     # any damage — apply_regen heals only after REGEN_DELAY_S of quiet), and
@@ -201,6 +213,11 @@ class GameState:
         self.zombie_seq: int = 0
         self.web_zombies: Dict[str, object] = {}
         self.web_zombie_seq: int = 0
+        # Incoming damage feed (hitsplats ON players): (unix_ts, user_id,
+        # amount, source). Web snapshots replay entries newer than the
+        # client's last-seen cursor so bites show floating numbers exactly
+        # like player-dealt damage. Bounded ring — pruned on append.
+        self.recent_damage: List[Tuple[float, int, int, str]] = []
         self.previous_positions: Dict[int, Tuple[int, int]] = {}
         # Placed-block overlay per tile (sandbox). Ground = the map itself;
         # a block covers its tile, breaking it reveals the ground again.

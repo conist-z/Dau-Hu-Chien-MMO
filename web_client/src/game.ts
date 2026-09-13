@@ -1508,6 +1508,44 @@ export class WorldScene extends Phaser.Scene {
    * critical, "MISS" when the hit whiffed. Pure client-side presentation —
    * the server already resolved the damage (rule: deterministic state).
    */
+  /** Hitsplat over a PLAYER (victim of zombie bites etc.): resolves the
+   * player's current tile from the authoritative state. */
+  spawnSplatOnPlayer(userId: number, damage: number): void {
+    let tx: number | null = null;
+    let ty: number | null = null;
+    if (userId === this.welcome?.self.id) {
+      tx = Math.floor(this.selfServerPos.x);
+      ty = Math.floor(this.selfServerPos.y);
+    } else {
+      const rp = this.players.get(userId);
+      if (rp) {
+        tx = Math.floor(rp.container.x / 32);
+        ty = Math.floor(rp.container.y / 32);
+      }
+    }
+    // Purple-red to distinguish INCOMING damage from player-dealt red.
+    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "#ff5bd6", "#5a1048");
+  }
+
+  private spawnSplatAt(tx: number, ty: number, text: string, fill: string, stroke: string): void {
+    const txt = this.add.text(tx * 32 + 16, ty * 32 - 4, text, {
+      fontSize: "12px",
+      fontStyle: "bold",
+      color: fill,
+      stroke: stroke,
+      strokeThickness: 3,
+      fontFamily: "monospace",
+    }).setOrigin(0.5).setDepth(900);
+    this.tweens.add({
+      targets: txt,
+      y: txt.y - 22,
+      alpha: { from: 1, to: 0 },
+      duration: 900,
+      ease: "Cubic.Out",
+      onComplete: () => txt.destroy(),
+    });
+  }
+
   spawnSplat(tx: number | null, ty: number | null, damage: number, critical: boolean, missed: boolean): void {
     if (tx === null || ty === null) return;
     const text = missed || damage <= 0 ? "MISS" : String(damage);

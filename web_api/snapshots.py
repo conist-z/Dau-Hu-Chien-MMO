@@ -319,6 +319,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             "max_hp": player.max_hp if player else 100,
             "mana": player.mana if player else 0,
             "max_mana": player.max_mana if player else 50,
+            "stamina": int(player.stamina) if player else 0,
+            "max_stamina": int(player.max_stamina) if player else 200,
             "coins": player.coins if player else 0,
             "walk_speed": _walk_speed(),
             "run_speed": _run_speed(),
@@ -412,6 +414,13 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "players": _players_payload(rt, user_id),
         **_heavy_payloads(rt),
         "zombies": _zombies_payload(rt),
+        # Incoming damage hitsplats (zombie bites etc.) — client floats the
+        # number over the victim like player-dealt damage. Only the last 2s.
+        "damage_feed": [
+            [round(t, 2), uid, dmg, src]
+            for (t, uid, dmg, src) in rt.state.recent_damage
+            if _time.time() - t <= 2.0
+        ],
         # Drop entities ("linh khí") near the player — the vortex magnet
         # targets the collector from the server, the client only animates.
         "drops": drops_payload(
@@ -424,6 +433,8 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "max_hp": player.max_hp if player else 100,
             "mana": player.mana if player else 0,
             "max_mana": player.max_mana if player else 50,
+            "stamina": int(player.stamina) if player else 0,
+            "max_stamina": int(player.max_stamina) if player else 200,
             "coins": player.coins if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
