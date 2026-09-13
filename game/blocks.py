@@ -18,6 +18,10 @@ class BlockDef:
     color: Tuple[int, int, int]  # RGB fill used by the renderer
     solid: bool = True  # True = blocks movement
     placeable: bool = True  # False = world-only decoration
+    # Hits (with the RIGHT tool) needed to break. Bare hands / the wrong
+    # tool deal HALF damage (rounded down, min 1) — holding the correct
+    # tool is a real speed-up, and every block cracks progressively.
+    hardness: int = 1
     # Optional local light emitted by this object (radius is in tiles).
     light_radius: float = 0.0
     light_intensity: float = 0.0
@@ -26,25 +30,28 @@ class BlockDef:
 
 # Starter set. Replace/extend freely; the grid/collision/renderer never change.
 BLOCK_REGISTRY: Dict[str, BlockDef] = {
-    "stone": BlockDef("stone", "Đá", "🪨", (128, 128, 136), solid=True),
-    "wood": BlockDef("wood", "Gỗ", "🪵", (150, 104, 58), solid=True),
-    "leaves": BlockDef("leaves", "Lá", "🌿", (72, 150, 74), solid=True),
+# hardness: số hit (đúng tool) để đập vỡ — tay không/tool sai gây nửa damage
+# (min 1/hit) → bare-hand hits = hardness*2 cho gỗ (4 -> 8 phát tay không).
+# Tuned 13/09: toàn bộ khối được nâng độ bền (gỗ phải chịu 4 hit đúng tool).
+    "stone": BlockDef("stone", "Đá", "🪨", (128, 128, 136), solid=True, hardness=6),
+    "wood": BlockDef("wood", "Gỗ", "🪵", (150, 104, 58), solid=True, hardness=4),
+    "leaves": BlockDef("leaves", "Lá", "🌿", (72, 150, 74), solid=True, hardness=2),
     "torch": BlockDef(
-        "torch", "Đuốc", "🕯️", (255, 196, 84), solid=True,
+        "torch", "Đuốc", "🕯️", (255, 196, 84), solid=True, hardness=1,
         light_radius=4.0, light_intensity=0.95, light_color=(255, 168, 64),
     ),
     # Floor overlay — user rule: EVERY placed block blocks movement (no
     # walk-through), so the floor is solid like everything else now.
-    "floor": BlockDef("floor", "Sàn gỗ", "🟫", (176, 128, 80), solid=True),
+    "floor": BlockDef("floor", "Sàn gỗ", "🟫", (176, 128, 80), solid=True, hardness=4),
     # Crafting station: placed like any block; standing within STATION_RANGE
     # unlocks the table recipes in game/crafting.py (checked at craft time).
     "crafting_table": BlockDef(
-        "crafting_table", "Bàn chế tạo", "🛠️", (150, 110, 60), solid=True
+        "crafting_table", "Bàn chế tạo", "🛠️", (150, 110, 60), solid=True, hardness=5
     ),
     # Smelting station: crafted from the table (stone x8); placeable like any
     # block. Rendering/smelting UI hook up separately — the block exists so
     # the recipe output has a real placed form.
-    "furnace": BlockDef("furnace", "Lò nung", "🔥", (110, 110, 116), solid=True),
+    "furnace": BlockDef("furnace", "Lò nung", "🔥", (110, 110, 116), solid=True, hardness=6),
 }
 
 PLACEABLE_BLOCK_IDS: List[str] = [b.id for b in BLOCK_REGISTRY.values() if b.placeable]
@@ -76,6 +83,9 @@ class BlockGrid:
 
     def __init__(self):
         self._cells: Dict[Tuple[int, int], str] = {}
+        # Progressive break damage: (x, y) -> accumulated damage. A block
+        # breaks when damage >= its hardness; heal-to-full on regrow/reset.
+        self.damage: Dict[Tuple[int, int], int] = {}
 
     def __len__(self) -> int:
         return len(self._cells)
@@ -91,16 +101,37 @@ class BlockGrid:
         if (x, y) in self._cells:
             return False
         self._cells[(x, y)] = block_id
+        self.damage.pop((x, y), None)
         return True
 
     def remove(self, x: int, y: int) -> Optional[str]:
         """Break the block; the ground shows again. None if the tile is bare."""
+        self.damage.pop((x, y), None)
         return self._cells.pop((x, y), None)
+
+    def add_damage(self, x: int, y: int, amount: int) -> int:
+        """Accumulate break damage; returns the new total."""
+        if (x, y) not in self._cells:
+            return 0
+        self.damage[(x, y)] = self.damage.get((x, y), 0) + max(0, amount)
+        return self.damage[(x, y)]
+
+    def damage_of(self, x: int, y: int) -> int:
+        return self.damage.get((x, y), 0)
+
+    def hardness_of(self, x: int, y: int) -> int:
+        """Hardness of the block at (x, y); 0 when the tile is bare."""
+        bid = self._cells.get((x, y))
+        if bid is None:
+            return 0
+        bdef = BLOCK_REGISTRY.get(bid)
+        return bdef.hardness if bdef is not None else 1
 
     def clear(self) -> None:
         """Remove every placed block (map reset). Keeps identity for
         Collision/manager references."""
         self._cells.clear()
+        self.damage.clear()
 
     def solid_at(self, x: int, y: int) -> bool:
         bid = self._cells.get((x, y))
