@@ -144,6 +144,9 @@ class WebHub:
         if ftype == "guest_login":
             await self._handle_guest_login(cid, frame.get("guest_id", ""))
             return
+        if ftype == "resume_login":
+            await self._handle_resume_login(cid, frame.get("token", ""))
+            return
         if ftype == "asset_request":
             await self._handle_asset_request(cid, frame.get("name", ""))
             return
@@ -266,10 +269,36 @@ class WebHub:
                 "type": "login_result", "ok": False, "error": str(e),
             })
             return
-        sess = self.registry.create(
-            profile["user_id"], profile["display_name"], channel_id=0,
+        await self._establish_session(
+            cid,
+            profile["user_id"],
+            profile["display_name"],
+            str(profile.get("avatar_hash") or ""),
         )
-        sess.avatar_hash = str(profile.get("avatar_hash") or "")
+
+    async def _establish_session(
+        self, cid: int, user_id: int, display_name: str, avatar_hash: str = "",
+        token: str | None = None,
+    ) -> None:
+        """Create (or resume) a web session and answer login_result.
+        New OAuth logins persist the fresh token to SQLite so browser
+        refreshes and bot restarts can resume without re-running OAuth."""
+        from persistence.repositories import save_web_token
+        if token is None:
+            sess = self.registry.create(user_id, display_name, channel_id=0)
+            sess.avatar_hash = avatar_hash
+            if self.manager.db is not None:
+                try:
+                    await save_web_token(
+                        self.manager.db, sess.token, user_id, display_name, avatar_hash
+                    )
+                except Exception as e:  # noqa: BLE001 — persistence must not block login
+                    log.warning("[WEB] token persist failed: %s", e)
+        else:
+            sess = self.registry.create(
+                user_id, display_name, channel_id=0, token=token,
+            )
+            sess.avatar_hash = avatar_hash
         conn = self.connections.get(cid)
         if conn is not None:
             conn.session = sess
@@ -292,6 +321,40 @@ class WebHub:
             )
         return frame
 
+    async def _handle_resume_login(self, cid: int, token: str) -> None:
+        """Silent resume: the browser replays its persisted token after a
+        page load / bot restart. A live token (memory or SQLite) answers
+        login_result with NO OAuth roundtrip; anything else answers
+        login_failed and the client shows the login panel."""
+        raw = str(token or "")
+        if not raw:
+            await self.send_to_client(cid, {
+                "type": "login_result", "ok": False, "error": "bad_token",
+            })
+            return
+        sess = self.registry.get(raw)
+        if sess is None and self.manager.db is not None:
+            from persistence.repositories import load_web_token
+            try:
+                resumed = await load_web_token(self.manager.db, raw)
+            except Exception as e:  # noqa: BLE001
+                resumed, _ = None, e
+                log.warning("[WEB] token load failed: %s", e)
+            if resumed is not None:
+                await self._establish_session(
+                    cid, resumed[0], resumed[1], resumed[2], token=raw,
+                )
+                sess = self.registry.get(raw)
+        if sess is None:
+            await self.send_to_client(cid, {
+                "type": "login_result", "ok": False, "error": "bad_token",
+            })
+            return
+        conn = self.connections.get(cid)
+        if conn is not None:
+            conn.session = sess
+        await self.send_to_client(cid, self._login_result(sess))
+
     async def _handle_join(self, conn: ClientConnection, frame: dict) -> None:
         token = frame.get("token", "")
         raw_channel = frame.get("channel_id")
@@ -304,8 +367,26 @@ class WebHub:
             return
         sess = self.registry.get(token)
         if sess is None:
-            await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_token"})
-            return
+            # TOKEN RESUME: unknown in memory (bot restarted) — try the
+            # persistent registry before rejecting. A hit rebuilds the
+            # session so the browser never re-runs OAuth after a restart.
+            resumed = None
+            if self.manager.db is not None:
+                from persistence.repositories import load_web_token
+                try:
+                    resumed = await load_web_token(self.manager.db, token)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[WEB] token load failed: %s", e)
+            if resumed is None:
+                await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_token"})
+                return
+            await self._establish_session(
+                conn.cid, resumed[0], resumed[1], resumed[2], token=token,
+            )
+            sess = self.registry.get(token)
+            if sess is None:  # defensive: establish just created it
+                await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "bad_token"})
+                return
         sess.orphaned_at = 0.0  # reattached: clear the grace-window marker
         sess.channel_id = channel_id
         ok = self.manager.register_web_session(
@@ -530,6 +611,36 @@ class WebHub:
                     self.manager.db, cid, uid, list(inv.items))
         elif op == "use":
             await self.manager.use_item(cid, uid, frame.get("item_id", ""))
+        elif op == "throw":
+            # Drag-an-item-outside-the-panel + left click = toss it into the
+            # world as a drop entity at the player's feet. Server-authoritative
+            # removal (one full stack per throw, matching the drag model).
+            item_id = str(frame.get("item_id", ""))
+            qty = int(frame.get("qty", 1))
+            if not item_id or qty <= 0:
+                await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
+                return
+            inv = self.manager.get_inventory(cid, uid)
+            have = inv.count(item_id)
+            if have <= 0:
+                await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
+                return
+            take = min(qty, have)
+            inv.remove(item_id, take)
+            rt = self.manager.get_runtime_for(cid, uid)
+            if rt is not None:
+                from game.drops import spawn_drops
+                p = rt.state.get_player(uid)
+                spawn_drops(
+                    rt.state,
+                    p.x_f if p else 0.5,
+                    p.y_f if p else 0.5,
+                    [(item_id, take)],
+                )
+            if self.manager.db is not None:
+                from persistence.repositories import save_inventory_order
+                await save_inventory_order(self.manager.db, cid, uid, list(inv.items))
+            self._notify_inventory_change(cid, uid)
         else:
             await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
             return

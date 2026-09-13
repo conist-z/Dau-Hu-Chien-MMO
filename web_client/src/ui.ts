@@ -160,6 +160,12 @@ export class Hud {
   private selectedQuick: number | null = null; // quick-craft catalog index
   private nearTable = false; // updated from snapshots (server truth)
 
+  // ---- Quick-craft catalog SCROLL (mouse wheel over the LIGHT grid) ----
+  // The 3×5 grid shows a WINDOW into the recipe list; `craftScroll` is the
+  // index of the first visible recipe. Scroll bounds are derived from the
+  // grid geometry itself (rows) — never hard-coded.
+  private craftScroll = 0;
+
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
   // Server-driven emoji map (welcome.item_emojis): every item the player has
   // EVER received gets its proper icon; the static fallback below only
@@ -172,6 +178,24 @@ export class Hud {
   private matGrid: (Stack | null)[] = Array(9).fill(null);
   private parkedResult: { id: string; qty: number } | null = null;
   private drag: DragSrc | null = null;
+  /** The mousedown that ENDS the current drag (throw-to-world check). */
+  private dragEndPress: { x: number; y: number; button: number } | null = null;
+  /** Set by main.ts: throws a stack into the world (drop entity). */
+  onThrow: ((itemId: string, qty: number) => void) | null = null;
+  /** True when (x, y) is inside ANY open inventory/craft panel. */
+  private pointInPanels(x: number, y: number): boolean {
+    const inRect = (el: HTMLElement | null) => {
+      if (!el || el.classList.contains("hidden")) return false;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    return (
+      inRect(this.invItemsWrap) ||
+      inRect(this.invCraftWrap) ||
+      inRect(this.invItemsCraftWrap) ||
+      inRect(this.invPanel)
+    );
+  }
   private dragGhost: HTMLDivElement | null = null;
   private activeSlot = 0;
   private onCommand: ((text: string) => void) | null = null;
@@ -221,17 +245,25 @@ export class Hud {
     sizePanel(this.invItemsWrap, INVENTORY_PANEL);
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
     sizePanel(this.invItemsCraftWrap, INVENTORY_PANEL);
+    this.attachCraftScrollHandler();
     // Static kit layers — placed once, exact bboxes.
     this.invItemsWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invItemsCraftWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
     // Global drag ghost tracking (mouse-move + drop outside any slot).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
+    window.addEventListener("mousedown", (e) => {
+      // Track the press that ENDS a drag (mouseup alone can't distinguish
+      // the press that STARTED the drag from the one that throws it).
+      if (this.drag) this.dragEndPress = { x: e.clientX, y: e.clientY, button: e.button };
+    });
     window.addEventListener("mouseup", (e) => {
       // MAGNETIC DROP: resolve to the NEAREST droppable slot within a
       // generous snap radius instead of only the exact hovered slot —
       // near-misses snap in instead of springing back.
       if (!this.drag) return;
+      const press = this.dragEndPress;
+      this.dragEndPress = null;
       const t = this.nearestDropTarget(e.clientX, e.clientY);
       if (t) {
         if (t.from === "result") {
@@ -241,7 +273,24 @@ export class Hud {
           return;
         }
         this.dropOn(t.from as "bag" | "mat", t.index);
-      } else this.cancelDrag();
+        return;
+      }
+      // OUTSIDE the panel + left click on the press that ends the drag:
+      // THROW the stack into the world (server spawns a drop entity).
+      if (
+        press &&
+        press.button === 0 &&
+        Math.hypot(press.x - e.clientX, press.y - e.clientY) < 6 &&
+        this.drag &&
+        !this.pointInPanels(e.clientX, e.clientY) &&
+        this.onThrow
+      ) {
+        const stack = this.drag.stack;
+        this.onThrow(stack.id, stack.qty);
+        this.endDrag();
+        return;
+      }
+      this.cancelDrag();
     });
   }
 
@@ -542,6 +591,19 @@ export class Hud {
     document.body.appendChild(ghost);
     this.dragGhost = ghost;
     this.updateDragGhost(e.clientX, e.clientY);
+    // Cute wobble: gentle pendulum swing + bob (transform-only, GPU cheap,
+    // pauses never — a 2.4s loop at ±6° reads as "the item is alive" without
+    // stealing attention from the game).
+    ghost.animate(
+      [
+        { transform: "rotate(-6deg) translateY(0px)" },
+        { transform: "rotate(5deg) translateY(-2px)" },
+        { transform: "rotate(-4deg) translateY(0px)" },
+        { transform: "rotate(6deg) translateY(-1px)" },
+        { transform: "rotate(-6deg) translateY(0px)" },
+      ],
+      { duration: 2400, iterations: Infinity, easing: "ease-in-out" },
+    );
   }
 
   private updateDragGhost(x: number, y: number): void {
@@ -1486,7 +1548,60 @@ export class Hud {
   }
 
   setRecipes(recipes: RecipePayload[]): void {
+    const changed = recipes.length !== this.recipes.length;
     this.recipes = recipes;
+    // New recipe set: keep the scroll window valid (also handles shrinking).
+    this.clampCraftScroll();
+    if (changed && this.inventoryOpen && this.craftTab.classList.contains("active")) {
+      this.renderInventory();
+    }
+  }
+
+  // ----- Quick-craft catalog scrolling -----
+
+  /** Highest valid scroll offset = index of the LAST possible window start.
+   *  With more recipes than grid cells the window slides 0..(N - cells);
+   *  when everything fits, the only valid offset is 0. */
+  private get craftScrollMax(): number {
+    const cells = CRAFT_QUICK_GRID.cols * CRAFT_QUICK_GRID.rows;
+    return Math.max(0, this.recipes.length - cells);
+  }
+
+  /** Keep the scroll window inside [0, max] (list size can change any time). */
+  private clampCraftScroll(): void {
+    this.craftScroll = Math.max(0, Math.min(this.craftScroll, this.craftScrollMax));
+  }
+
+  /** Mouse wheel over the quick-craft grid: scroll the catalog window.
+   *  The wheel handler is attached to the CRAFT WRAP (not the window) and
+   *  ignores everything outside the grid's pixel bbox — the panel, the bag
+   *  and the material grid must NOT scroll or steal wheel input. */
+  private attachCraftScrollHandler(): void {
+    this.invCraftWrap.addEventListener("wheel", (e) => {
+      const g = CRAFT_QUICK_GRID;
+      const SC = PIXEL_SCALE;
+      // Wheel must be INSIDE the quick-grid bbox (scroll region top/bottom
+      // = top of the first slot row / bottom of the last slot row).
+      const top = g.firstY * SC;
+      const bottom = (g.firstY + (g.rows - 1) * g.stepY + g.slotH) * SC;
+      const left = g.firstX * SC;
+      const right = (g.firstX + (g.cols - 1) * g.stepX + g.slotW) * SC;
+      if (
+        e.offsetY < top || e.offsetY > bottom ||
+        e.offsetX < left || e.offsetX > right
+      ) return;
+      const cells = g.cols * g.rows;
+      if (this.recipes.length <= cells) return; // nothing to scroll
+      e.preventDefault();
+      e.stopPropagation();
+      // 1 wheel notch = 1 row of recipes — a predictable, pixel-grid feel.
+      const dir = e.deltaY > 0 ? g.cols : -g.cols;
+      const max = this.craftScrollMax;
+      const next = Math.max(0, Math.min(this.craftScroll + dir, max));
+      if (next === this.craftScroll) return;
+      this.craftScroll = next;
+      this.renderCraftPanel();
+    }, { passive: false });
   }
 
   setNearStation(near: boolean): void {

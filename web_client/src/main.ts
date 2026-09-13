@@ -400,6 +400,12 @@ const net = new Net({
   },
 });
 
+// Drag item outside panel + left click = toss it into the world.
+hud.onThrow = (itemId, qty) => {
+  net.inventoryOp("throw", { item_id: itemId, qty });
+  hud.toast(`Đã vứt ${itemId}×${qty}`);
+};
+
 hud.setHooks(
   (itemId) => net.inventoryOp("use", { item_id: itemId }),
   (text) => {
