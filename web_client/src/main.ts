@@ -227,8 +227,20 @@ const net = new Net({
   },
   onPush: (message) => hud.toast(message),
   onError: (code) => {
-    // Any auth/session error before joining: wipe the stale token and fall
-    // back to quick-play so the user is never stuck on a dead-end gate.
+    // SESSION DESYNC RECOVERY: the client thinks it is joined but the
+    // server disagrees (bot restarted, registry dropped, relay re-hub).
+    // Symptom was "everything says Quá xa until F5". Soft path first:
+    // force-reconnect + re-join the last channel with the same token (the
+    // server orphans tokens for a grace window). Only if the token is truly
+    // gone (bad_token) do we fall back to the login panel.
+    if (code === "not_joined" && net.isJoined) {
+      const lastMap = localStorage.getItem("last_channel");
+      if (lastMap) {
+        hud.toast("⟳ Đồng bộ lại phiên với server…");
+        net.forceReconnect(); // reconnect() replays lastChannel's join
+        return;
+      }
+    }
     const stale =
       code === "bad_token" ||
       (code === "not_joined" && !net.isJoined);
