@@ -98,7 +98,7 @@ interface Stack { id: string; qty: number }
 
 /** Drag payload: which grid a drag started from + the stack. */
 interface DragSrc {
-  from: "bag" | "mat";
+  from: "bag" | "mat" | "result";
   index: number;
   stack: Stack;
 }
@@ -154,7 +154,7 @@ export class Hud {
   private onCommand: ((text: string) => void) | null = null;
   private onCraftGrid: ((inputs: { id: string; qty: number }[]) => void) | null = null;
   private onSplit: ((slot: number) => void) | null = null;
-  private onCollect: (() => void) | null = null;
+  private onCollect: ((slot: number | null) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
   constructor() {
     this.chatForm.addEventListener("submit", (e) => {
@@ -292,8 +292,9 @@ export class Hud {
     }
   }
 
-  /** Register the result-slot collect callback. */
-  onCollectResult(cb: () => void): void {
+  /** Register the result-slot collect callback (target slot optional:
+   *  set when the output was DRAGGED onto a specific bag slot). */
+  onCollectResult(cb: (slot: number | null) => void): void {
     this.onCollect = cb;
   }
 
@@ -388,9 +389,13 @@ export class Hud {
       this.moveMat(d.index, index);
     } else if (d.from === "bag" && target === "mat") {
       this.bagToMat(d.index, index);
-    } else {
+    } else if (d.from === "mat" && target === "bag") {
       this.matToBag(d.index, index);
+    } else if (d.from === "result" && target === "bag") {
+      this.resultToBag(index);
     }
+    // result → mat stays deliberately unsupported: the output is server
+    // truth and belongs in the bag (or back on the result slot).
   }
 
   private endDrag(): void {
@@ -511,6 +516,17 @@ export class Hud {
       .map((s) => ({ id: s.id, qty: s.qty }));
   }
 
+  /** Drop the parked result onto a bag slot: ONE collect frame tells the
+   *  server WHERE to put it (merge onto the same kind, bad_slot otherwise).
+   *  The bag itself is NOT edited optimistically — the server's inventory
+   *  delta (same round-trip as click-collect) repaints the exact result. */
+  private resultToBag(slot: number): void {
+    if (!this.parkedResult) return;
+    const target = this.inventory.bag[slot];
+    if (target && target.id !== this.parkedResult.id) return; // wrong kind
+    this.onCollect?.(slot);
+  }
+
   // Wire with bindMoveTo() — kept optional so a half-wired build never
   // blocks compilation with TS6133 (session WIP guard).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -538,31 +554,94 @@ export class Hud {
 
   // ===== RENDER: bag tab =====
 
-  /** Túi đồ: fixed 5×4 pixel grid (V5 origin [10,17] pitch 16, slot 14×14). */
+  /** Túi đồ: fixed 5×4 pixel grid (V5 origin [10,17] pitch 16, slot 14×14).
+   *  IN-PLACE refresh: existing slot elements only get their CONTENT swapped
+   *  (icon/qty class flips) — the DOM is never rebuilt, so hover brackets
+   *  stay stable and drags never "blink" (the root cause of the jitter). */
   private renderBagGrid(wrap: HTMLElement): void {
-    wrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
     const g = INVENTORY_GRID;
     const total = g.cols * g.rows;
+    const existing = new Map<string, HTMLElement>();
+    wrap.querySelectorAll<HTMLElement>(".slot-pix").forEach((n) => {
+      const k = n.dataset.slot ?? "";
+      if (k !== "") existing.set(k, n);
+    });
     for (let i = 0; i < total; i++) {
       const [x, y] = slotXY(g, i);
       const stack = this.inventory.bag[i];
-      const slot = makeSlot(g.slotW, x, y, INV_SLOT, {
-        iconUrl: stack ? itemIconUrl(stack.id) : undefined,
-        emoji: stack ? iconFor(stack.id, this.itemEmojis) : "",
-        qty: stack ? String(stack.qty) : "",
-        title: stack ? stack.id : undefined,
-      });
-      slot.dataset.slot = String(i);
-      if (stack) {
+      let slot = existing.get(String(i));
+      if (!slot) {
+        slot = makeSlot(g.slotW, x, y, INV_SLOT, {});
+        slot.dataset.slot = String(i);
         slot.addEventListener("mousedown", (e) => {
-          if (e.button === 2) { this.splitBag(i); return; }
-          this.startDrag({ from: "bag", index: i, stack: { ...stack } }, e);
+          const idx = Number((e.currentTarget as HTMLElement).dataset.slot);
+          const st = this.inventory.bag[idx];
+          if (!st) return;
+          if (e.button === 2) { this.splitBag(idx); return; }
+          this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
         });
+        slot.addEventListener("mouseup", () =>
+          this.dropOn("bag", Number(slot!.dataset.slot)));
+        slot.addEventListener("contextmenu", (e) => e.preventDefault());
+        wrap.appendChild(slot);
       }
-      slot.addEventListener("mouseup", () => this.dropOn("bag", i));
-      slot.addEventListener("contextmenu", (e) => e.preventDefault());
-      wrap.appendChild(slot);
+      this.refreshSlotContent(slot, stack, g.slotW);
     }
+  }
+
+  /** Swap one slot element's content in place (icon, qty, cursor class). */
+  private refreshSlotContent(slot: HTMLElement, stack: Stack | null, slotPx: number): void {
+    const icon = slot.querySelector<HTMLElement>(".icon-img, .icon");
+    const qtyEl = slot.querySelector<HTMLElement>(".qty");
+    if (stack) {
+      const url = itemIconUrl(stack.id);
+      if (url) {
+        if (icon && icon.classList.contains("icon-img")) {
+          const im = icon as HTMLImageElement;
+          if (im.dataset.item !== stack.id) {
+            im.src = url;
+            im.dataset.item = stack.id;
+          }
+          im.style.display = "";
+        } else {
+          if (icon) icon.remove();
+          const im = document.createElement("img");
+          im.className = "icon-img";
+          im.src = url;
+          im.draggable = false;
+          im.dataset.item = stack.id;
+          slot.appendChild(im);
+        }
+      } else {
+        const glyph = iconFor(stack.id, this.itemEmojis);
+        if (icon && icon.classList.contains("icon")) {
+          icon.textContent = glyph;
+          icon.style.display = "";
+        } else {
+          if (icon) icon.remove();
+          const sp = document.createElement("span");
+          sp.className = "icon";
+          sp.textContent = glyph;
+          slot.appendChild(sp);
+        }
+      }
+      if (qtyEl) qtyEl.textContent = String(stack.qty);
+      else {
+        const q = document.createElement("span");
+        q.className = "qty";
+        q.textContent = String(stack.qty);
+        slot.appendChild(q);
+      }
+      slot.title = stack.id;
+      slot.classList.add("has-item");
+    } else {
+      if (icon) (icon as HTMLElement).style.display = "none";
+      if (qtyEl) qtyEl.textContent = "";
+      slot.title = "";
+      slot.classList.remove("has-item");
+    }
+    slot.style.width = `${slotPx * PIXEL_SCALE}px`;
+    slot.style.height = `${slotPx * PIXEL_SCALE}px`;
   }
 
   // ===== RENDER: craft tab =====
@@ -641,7 +720,16 @@ export class Hud {
     outSlot.classList.add("result");
     if (this.parkedResult) {
       outSlot.classList.add("craftable");
-      outSlot.addEventListener("click", () => this.onCollect?.());
+      outSlot.addEventListener("click", () => this.onCollect?.(null));
+      // DRAG the output straight into any bag slot (server places it there
+      // — merge onto the same kind, bad_slot otherwise).
+      outSlot.addEventListener("mousedown", (e) => {
+        if (e.button !== 0 || !this.parkedResult) return;
+        e.stopPropagation();
+        e.preventDefault();
+        this.startDrag(
+          { from: "result", index: 0, stack: { ...this.parkedResult } }, e);
+      });
     }
     this.invCraftWrap.appendChild(outSlot);
 
@@ -1018,29 +1106,100 @@ export class Hud {
     // skipped: rebuilding the grid mid-drag is the inventory "jitter".
     if (version !== undefined && version === this.invVersion) return;
     this.invVersion = version ?? this.invVersion;
-    // MERGE with local craft takeout: the server's bag doesn't know about
-    // stacks sitting on the material grid (local buffer until CREATE).
-    // If the server bag has the taken quantities, subtract them so the bag
-    // view stays consistent with what the player sees on the grid; when a
-    // craft consumes them the server bag simply no longer has them.
+    // DELTA-MERGE (MMO standard): reconcile the SERVER's totals ONTO the
+    // bag layout we are currently SHOWING instead of replacing it wholesale.
+    // A wholesale replace is what reshuffled the grid after every
+    // craft/pickup/collect (server slot order != the order the player had
+    // arranged by dragging), and it fought the local drag preview.
     const placed = this.compactMatGrid();
-    if (placed.length > 0) {
-      const bag = inv.bag.map((s) => (s ? { ...s } : null));
+    if (this.inventory.bag.length === 0) {
+      // Bootstrap (welcome / fresh session): take the server layout as-is.
+      this.inventory = inv;
+      this.renderHotbar();
+      if (this.inventoryOpen) this.renderInventory();
+      return;
+    }
+    // 1) Totals currently on screen: visible bag + what sits on the local
+    //    craft grid (the server doesn't know about the grid until CREATE).
+    const shown: Record<string, number> = {};
+    for (const s of this.inventory.bag) {
+      if (s) shown[s.id] = (shown[s.id] ?? 0) + s.qty;
+    }
+    for (const p of placed) shown[p.id] = (shown[p.id] ?? 0) + p.qty;
+    // 2) Server truth.
+    const server: Record<string, number> = {};
+    for (const s of inv.bag) {
+      if (s) server[s.id] = (server[s.id] ?? 0) + s.qty;
+    }
+    // 3) Per-item delta. Everything unchanged keeps its slot untouched.
+    const bag = this.inventory.bag.map((s) => (s ? { ...s } : null));
+    const changed: string[] = [];
+    const allIds = new Set([...Object.keys(shown), ...Object.keys(server)]);
+    for (const id of allIds) {
+      const d = (server[id] ?? 0) - (shown[id] ?? 0);
+      if (d === 0) continue;
+      changed.push(id);
+      if (d > 0) {
+        // Gained (pickup / collect / craft output): top up an existing stack
+        // of the same kind, else fill the first empty slot, else append.
+        let need = d;
+        for (const b of bag) {
+          if (need <= 0) break;
+          if (b && b.id === id) {
+            b.qty += need;
+            need = 0;
+          }
+        }
+        while (need > 0) {
+          const free = bag.findIndex((b) => !b);
+          if (free < 0) break; // bag full — overflow stays server-side
+          const take = Math.min(need, 64);
+          bag[free] = { id, qty: take };
+          need -= take;
+        }
+      } else {
+        // Lost (craft consumed / placed block / used): drain from the LAST
+        // stacks of that kind (mirrors the server's later-slots-first),
+        // clearing cells as they empty — no reshuffle of the rest.
+        let need = -d;
+        for (let i = bag.length - 1; i >= 0 && need > 0; i--) {
+          const b = bag[i];
+          if (!b || b.id !== id) continue;
+          const take = Math.min(b.qty, need);
+          b.qty -= take;
+          need -= take;
+          if (b.qty <= 0) bag[i] = null;
+        }
+      }
+    }
+    // If a stack grew past a display cap or drifted, the totals check below
+    // falls back to a wholesale resync (rare; still never mid-drag).
+    const gotTotals: Record<string, number> = {};
+    for (const s of bag) if (s) gotTotals[s.id] = (gotTotals[s.id] ?? 0) + s.qty;
+    for (const p of placed) gotTotals[p.id] = (gotTotals[p.id] ?? 0) + p.qty;
+    const ids = new Set([...Object.keys(gotTotals), ...Object.keys(server)]);
+    let totalsMatch = true;
+    for (const id of ids) {
+      if ((gotTotals[id] ?? 0) !== (server[id] ?? 0)) { totalsMatch = false; break; }
+    }
+    if (totalsMatch) {
+      this.inventory = { bag, hotbar: inv.hotbar };
+    } else {
+      // Fallback: server layout, minus local craft-grid takeout (old path).
+      const fb = inv.bag.map((s) => (s ? { ...s } : null));
       for (const p of placed) {
         let need = p.qty;
-        for (const b of bag) {
+        for (const b of fb) {
           if (need <= 0) break;
           if (b && b.id === p.id) {
             const take = Math.min(b.qty, need);
             b.qty -= take;
             need -= take;
-            if (b.qty <= 0) bag[bag.indexOf(b)] = null;
+            if (b.qty <= 0) fb[fb.indexOf(b)] = null;
           }
         }
       }
-      this.inventory = { bag, hotbar: inv.hotbar };
-    } else {
-      this.inventory = inv;
+      this.inventory = { bag: fb, hotbar: inv.hotbar };
     }
     this.renderHotbar();
     if (this.inventoryOpen) this.renderInventory();
@@ -1069,8 +1228,16 @@ export class Hud {
 
   private renderHotbar(): void {
     this.hotbarEl.innerHTML = "";
-    const slots = this.inventory.hotbar;
-    slots.forEach((itemId, idx) => {
+    // LOCAL PROJECTION: the hotbar mirrors the first N occupied bag slots
+    // (same rule as the server) — computed from the bag the client already
+    // holds, so every local edit (drag/split/take-out) echoes INSTANTLY
+    // without waiting for the server's inventory delta.
+    const occupied = this.inventory.bag
+      .filter((s): s is { id: string; qty: number } => !!s)
+      .map((s) => s.id);
+    const slotCount = Math.max(this.inventory.hotbar.length, 6);
+    for (let idx = 0; idx < slotCount; idx++) {
+      const itemId = occupied[idx] ?? null;
       const div = document.createElement("div");
       div.className = "slot" + (idx === this.activeSlot ? " active" : "");
       const qty = itemId
@@ -1082,7 +1249,7 @@ export class Hud {
         this.selectSlot(idx);
       });
       this.hotbarEl.appendChild(div);
-    });
+    }
   }
 
   // ----- chat + toasts -----
