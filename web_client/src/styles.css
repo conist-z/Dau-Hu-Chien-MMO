@@ -206,6 +206,8 @@ html, body {
   display: flex; flex-direction: column; gap: 6px;
   max-height: calc(100vh - 140px);
 }
+/* Global hide: one class to rule them all (gate panel, lobby, …). */
+.hidden { display: none !important; }
 #inv-panel.hidden { display: none; }
 /* Tab isolation: the hidden wrap must truly leave the layout. */
 .panel-wrap.hidden { display: none; }
