@@ -151,14 +151,6 @@ export class Hud {
   private lobbyPaneSettings = document.getElementById("lobby-pane-settings") as HTMLElement;
   private lobbyStatus = document.getElementById("lobby-status")!;
   private gatePanel = document.querySelector(".gate-panel") as HTMLDivElement;
-  // Referenced in renderDashboard (WIP dashboard thread); the TS6133 guard
-  // below is satisfied by this touch.
-  get _dashWired(): boolean {
-    return [
-      this.dashPanel, this.dashAvatar, this.dashName,
-      this.dashSub, this.dashLogout, this.gatePanel,
-    ].every(Boolean);
-  }
   private invPanel = document.getElementById("inv-panel")!;
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;

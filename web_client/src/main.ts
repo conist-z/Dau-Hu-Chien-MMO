@@ -614,4 +614,36 @@ hud.onQuickClick(() => {
   }, 10000);
 });
 
+// ----- lobby (main menu) wiring -----
+
+hud.onLobbyPlay(() => {
+  hud.showLobbyView("servers");
+  hud.setLobbyStatus("Đang lấy danh sách server…");
+  net.requestScenarioList();
+});
+
+hud.onLobbyEvents(() => hud.showLobbyView("events"));
+hud.onLobbySettings(() => hud.showLobbyView("settings"));
+
+hud.onLobbyBack(() => {
+  hud.showLobbyView("menu");
+  hud.setLobbyStatus(null);
+});
+
+hud.onLobbyLogout(() => {
+  localStorage.removeItem("web_token");
+  localStorage.removeItem("web_avatar");
+  location.reload();
+});
+
+// scenario_list arrived: paint the server list inside the lobby view.
+const _paintScenarioList = hud.showScenarioList.bind(hud);
+hud.showScenarioList = (items, onPick) => {
+  if (hud.gateVisible) {
+    hud.showLobbyView("servers");
+    hud.setLobbyStatus(null);
+  }
+  _paintScenarioList(items, onPick);
+};
+
 void boot();
