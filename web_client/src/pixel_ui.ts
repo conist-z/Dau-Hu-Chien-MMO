@@ -91,32 +91,33 @@ export const CRAFT_BTN = { normal: "ui/v5/atoms/create_btn.png" };
 export const CRAFT_DESC = { x: 133, y: 21, w: 54, h: 87 };
 // ---- Top category tabs (Craft.json, z20, local bboxes PER VARIANT) ----
 // The kit ships three frame variants; each variant shows the trio with a
-// DIFFERENT tab lit — the lit tab swaps to green art AND lifts 6 kit px
+// DIFFERENT tab lit — the lit tab swaps to GREEN art AND lifts 6 kit px
 // (y 18 -> 12) while the resting tabs sit in the y=18 row (brown art).
-// Per-tab lit bboxes: tool [11,12] (frame3), decor [28,12] (frame2),
-// usable [43,12] (frame1); rest row y=18 for all three.
+// Per-icon-column art: one brown (rest) + one green (lit) file each, cut
+// from the kit's own variants. Verified: rest = dominant brown (96,57,40),
+// lit = dominant green family (44,70,69)/(80,169,120).
 export const CRAFT_TABS: {
   group: "tool" | "decor" | "usable";
   x: number; w: number; h: number;
-  yRest: number;    // resting row (dim, brown art)
-  yActive: number;  // lifted row (bright green art) — the lit tab
+  yRest: number;    // resting row (brown art)
+  yActive: number;  // lifted row (green art) — the lit tab
   rest: string;     // brown art
   lit: string;      // green art (cut from this tab's own variant)
 }[] = [
   {
     group: "tool", x: 11, w: 12, h: 13, yRest: 18, yActive: 12,
-    rest: "ui/v5/layers/craft_tab_tool_off.png",
-    lit: "ui/v5/layers/craft_tab_tool_active.png",
+    rest: "ui/v5/layers/craft_tab_tool_rest.png",
+    lit: "ui/v5/layers/craft_tab_tool_lit.png",
   },
   {
     group: "decor", x: 28, w: 10, h: 13, yRest: 18, yActive: 12,
-    rest: "ui/v5/layers/craft_tab_decor_off.png",
-    lit: "ui/v5/layers/craft_tab_decor_active.png",
+    rest: "ui/v5/layers/craft_tab_decor_rest.png",
+    lit: "ui/v5/layers/craft_tab_decor_lit.png",
   },
   {
     group: "usable", x: 43, w: 11, h: 13, yRest: 18, yActive: 12,
-    rest: "ui/v5/layers/craft_tab_usable_off.png",
-    lit: "ui/v5/layers/craft_tab_usable_active.png",
+    rest: "ui/v5/layers/craft_tab_usable_rest.png",
+    lit: "ui/v5/layers/craft_tab_usable_lit.png",
   },
 ];
 // Slot surfaces: LIGHT cell for quick-craft, DARK cell for materials.
