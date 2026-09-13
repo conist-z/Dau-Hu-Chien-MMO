@@ -195,7 +195,7 @@ export type ServerFrame =
   | SnapshotPayload
   | { type: "login_result"; ok: boolean; token?: string; user_id?: number; display_name?: string; error?: string }
   | { type: "scenario_list"; items: ScenarioItem[] }
-  | { type: "inventory_delta"; inventory: InventoryPayload }
+  | { type: "inventory_delta"; inventory: InventoryPayload; inv_version?: number }
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }

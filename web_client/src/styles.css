@@ -437,7 +437,7 @@ html, body {
   z-index: 6;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.08s ease;
+  /* No transition: a repaint while hovering must not blink the brackets. */
   --c: rgba(255, 235, 170, 0.95);
   --t: 3px; /* arm thickness */
   --l: 8px; /* arm length */

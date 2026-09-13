@@ -60,7 +60,9 @@ const STYLES: Record<string, WeatherStyle> = {
     sheet: "snow", speedPx: 80, tint: "rgba(185,214,255,0.06)",
   },
   wind: {
-    sheet: "wind", speedPx: 600, tint: "rgba(238,245,255,0.04)", horizontal: true,
+    // Discord parity: the 1024px master wraps across 6 GIF frames of 160ms
+    // (divmod in _scroll_overlays) → ~1067 px/s, not the old web guess of 600.
+    sheet: "wind", speedPx: 1067, tint: "rgba(238,245,255,0.04)", horizontal: true,
   },
   fog: {
     // Web-only nicety: soft procedural mist (no sheet in the Discord pack).
@@ -89,7 +91,7 @@ const SHEET_FILES: Record<string, string[]> = {
 };
 
 interface Sheet {
-  img: HTMLImageElement;
+  img: HTMLImageElement | HTMLCanvasElement;
   w: number;
   h: number;
 }
@@ -112,6 +114,69 @@ function loadSheet(dir: string, file: string): Promise<Sheet | null> {
 
 function rand(a: number, b: number): number {
   return a + Math.random() * (b - a);
+}
+
+// ---------------------------------------------------------------- wind masters
+
+// The web port originally tiled the raw CraftPix wind sheets (wind_00..03.png)
+// across the screen — those are dense texture frames, so the effect read as an
+// ugly, chaotic smear. The DISCORD client never does that: rendering/weather_fx.py
+// _get_masters paints its own sparse seeded dash field onto a 1024x256 master
+// (near 10 dashes, far 4, alpha 52-100/255, lengths 16-44, faint left tails)
+// and scrolls THAT. Port the exact same generator here so wind looks identical.
+
+/** Deterministic PRNG (same role as random.Random(seed) in the renderer). */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// _STYLES["wind"] in rendering/weather_fx.py, verbatim.
+const WIND_MASTER = { w: 1024, h: 256, near: 10, far: 4, seed: 106 };
+const WIND_COLORS = ["rgb(248,252,255)", "rgb(232,240,252)", "rgb(212,230,250)"];
+
+function buildWindMaster(layer: 0 | 1): Sheet {
+  const { w: mw, h: mh, near, far, seed } = WIND_MASTER;
+  const count = layer === 0 ? near : far;
+  const rng = mulberry32(seed * 10 + layer);
+  const cv = document.createElement("canvas");
+  cv.width = mw;
+  cv.height = mh;
+  const ctx = cv.getContext("2d")!;
+  for (let i = 0; i < count; i++) {
+    const x = rng() * mw;
+    const y = rng() * mh;
+    const len = 16 + Math.floor(rng() * 29);   // style.length (16, 44)
+    const wd = 1 + Math.floor(rng() * 2);      // style.width (1, 2)
+    const alpha = Math.round(52 + rng() * 48); // style.alpha (52, 100)
+    const color = WIND_COLORS[Math.floor(rng() * WIND_COLORS.length)];
+    // Wrap-around: stamp 4 copies so the master tiles seamlessly (same trick
+    // as _draw_particle).
+    for (const ox of [0, -mw]) {
+      for (const oy of [0, -mh]) {
+        ctx.globalAlpha = alpha / 255;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = wd;
+        ctx.beginPath();
+        ctx.moveTo(x + ox, y + oy);
+        ctx.lineTo(x + ox + len, y + oy);
+        ctx.stroke();
+        // Fainter tail trailing LEFT (gusts drift right — motion cue).
+        ctx.globalAlpha = Math.max(12, Math.round(alpha / 3)) / 255;
+        ctx.beginPath();
+        ctx.moveTo(x + ox - len / 2, y + oy);
+        ctx.lineTo(x + ox, y + oy);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  return { img: cv, w: mw, h: mh };
 }
 
 // ---------------------------------------------------------------- fallback particles
@@ -174,7 +239,7 @@ function makeParticle(
 // ---------------------------------------------------------------- bolts
 
 interface Bolt {
-  img: HTMLImageElement;
+  img: HTMLImageElement | HTMLCanvasElement;
   x: number;
   y: number;
   w: number;
@@ -199,7 +264,7 @@ export class WeatherFx {
   // Sheet state (loaded once per key switch).
   private near: Sheet | null = null;
   private far: Sheet | null = null;
-  private bolts: HTMLImageElement[] = [];
+  private bolts: (HTMLImageElement | HTMLCanvasElement)[] = [];
 
   // Storm lightning events.
   private nextBoltAt = 0;
@@ -262,6 +327,17 @@ export class WeatherFx {
     if (style.fog) {
       this.proceduralKind = FALLBACK_CFG.fog.kind;
       this.seedProcedural(key);
+      this.start();
+      return;
+    }
+    // WIND parity fix: the raw CraftPix wind sheets tile as a dense chaotic
+    // smear. The Discord client scrolls its own sparse seeded dash field
+    // instead (_get_masters), so build the same masters here — synchronously,
+    // no network, and with no procedural-fallback warm-up phase needed.
+    if (key === "wind") {
+      this.proceduralKind = null;
+      this.near = buildWindMaster(0);
+      this.far = buildWindMaster(1);
       this.start();
       return;
     }
@@ -383,8 +459,8 @@ export class WeatherFx {
     // Same 0.55-1.2 scale band as the Discord _add_bolt, grown a little for
     // full-screen viewports.
     const scale = rand(0.55, 1.2) * Math.max(1, this.h / 480);
-    const w = img.naturalWidth * scale;
-    const h = img.naturalHeight * scale;
+    const w = img.width * scale;
+    const h = img.height * scale;
     const x = rand(0, Math.max(1, this.w - w));
     const y = rand(0, Math.max(1, this.h * 0.22));
     const duration = rand(260, 420);
@@ -465,7 +541,10 @@ export class WeatherFx {
 
     if (style.horizontal) {
       const ox = dist;
-      drawLayer(this.far!, FAR_ALPHA, ox * 0.6 + 512, 96 % Math.max(1, this.h));
+      // Far layer drifts slower (0.6x parallax) phase-shifted 512px — same
+      // numbers as the Discord _scroll_overlays wind branch. Both layers tile
+      // the full viewport; the 96px far offset just de-correlates the rows.
+      drawLayer(this.far!, FAR_ALPHA, ox * 0.6 + 512, 96);
       drawLayer(this.near!, NEAR_ALPHA, ox, 0);
     } else {
       // Falling particles scroll DOWN (the paste origin grows with the

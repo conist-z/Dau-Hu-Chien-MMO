@@ -187,10 +187,43 @@ export class Hud {
     this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
     // Global drag ghost tracking (mouse-move + drop outside any slot).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
-    window.addEventListener("mouseup", () => {
-      // Dropping outside any slot returns the stack to its source grid.
-      if (this.drag) this.cancelDrag();
+    window.addEventListener("mouseup", (e) => {
+      // MAGNETIC DROP: resolve to the NEAREST droppable slot within a
+      // generous snap radius instead of only the exact hovered slot —
+      // near-misses snap in instead of springing back.
+      if (!this.drag) return;
+      const t = this.nearestDropTarget(e.clientX, e.clientY);
+      if (t) this.dropOn(t.from, t.index);
+      else this.cancelDrag();
     });
+  }
+
+  /** The nearest droppable slot (same-panel partner grids) within radius. */
+  private nearestDropTarget(x: number, y: number): { from: "bag" | "mat"; index: number } | null {
+    const RADIUS = 26; // px — generous snap (slot is 42px at scale 3)
+    const hits: { from: "bag" | "mat"; index: number; d: number }[] = [];
+    const scan = (wrap: HTMLElement, from: "bag" | "mat") => {
+      wrap.querySelectorAll<HTMLElement>(".slot-pix").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const dx = x - (r.left + r.width / 2);
+        const dy = y - (r.top + r.height / 2);
+        const d = Math.hypot(dx, dy);
+        const idx = el.dataset.slot;
+        if (d <= RADIUS && idx !== undefined) {
+          hits.push({ from, index: Number(idx), d });
+        }
+      });
+    };
+    const craftActive = this.craftTab.classList.contains("active");
+    if (craftActive) {
+      scan(this.invCraftWrap, "mat");
+      scan(this.invItemsCraftWrap, "bag");
+    } else {
+      scan(this.invItemsWrap, "bag");
+    }
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => a.d - b.d);
+    return { from: hits[0]!.from, index: hits[0]!.index };
   }
 
 
@@ -255,19 +288,34 @@ export class Hud {
   toggleInventory(force?: boolean): void {
     const show = force ?? this.invPanel.classList.contains("hidden");
     this.invPanel.classList.toggle("hidden", !show);
-    if (show) this.renderInventory();
+    if (show) {
+      // Opening must ALWAYS repaint (the guard would skip a same-sig open
+      // and show a stale grid after server-side changes while hidden).
+      this.lastBagSig = "";
+      this.renderInventory();
+    }
   }
 
   get inventoryOpen(): boolean {
     return !this.invPanel.classList.contains("hidden");
   }
 
+  private lastBagSig = "";
+
   private renderInventory(): void {
-    if (this.itemsTab.classList.contains("active")) {
-      this.renderBagGrid(this.invItemsWrap);
-    } else {
+    // Repaint guard: identical bag + same tab = nothing to do. This keeps
+    // hover brackets stable (no DOM rebuild under the cursor) and kills the
+    // residual jitter from out-of-band setInventory calls.
+    const bagSig = JSON.stringify(this.inventory.bag);
+    const craftActive = this.craftTab.classList.contains("active");
+    const sig = bagSig + "|" + (craftActive ? "craft" : "items");
+    if (sig === this.lastBagSig && this.drag === null) return;
+    this.lastBagSig = sig;
+    if (craftActive) {
       this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
       this.renderCraftPanel();
+    } else {
+      this.renderBagGrid(this.invItemsWrap);
     }
   }
 
@@ -452,6 +500,7 @@ export class Hud {
         qty: stack ? String(stack.qty) : "",
         title: stack ? stack.id : undefined,
       });
+      slot.dataset.slot = String(i);
       if (stack) {
         slot.addEventListener("mousedown", (e) => {
           if (e.button === 2) { this.splitBag(i); return; }
@@ -513,6 +562,7 @@ export class Hud {
         qty: st ? String(st.qty) : "",
         title: st ? st.id : undefined,
       });
+      slot.dataset.slot = String(i);
       if (st) {
         slot.addEventListener("mousedown", (e) => {
           if (e.button === 2) return;
