@@ -153,6 +153,16 @@ html, body {
   position: absolute; left: 4px; top: 2px;
   font-size: 9px; opacity: 0.6;
 }
+/* Hotbar item icon (PNG): clamp to ~70% of the slot regardless of the
+   source PNG's natural size (rotten_flesh/dirt ship as 72x72 Twemoji and
+   rendered gigantic without this). */
+.slot .icon-img {
+  width: 36px; height: 36px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.6));
+  pointer-events: none;
+}
 .slot.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.4); }
 
 /* Bottom-right: chat */
