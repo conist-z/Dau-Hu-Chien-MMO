@@ -32,6 +32,12 @@ const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: "game-root",
   backgroundColor: "#20303c",
+  // Pixel-art rendering: nearest-neighbour sampling + rounded pixels. The
+  // camera zoom (2.0) times the doll's non-integer manifest scale (1.6043)
+  // gave a 3.2x draw — WITH antialiasing that bilinear-blurs the player
+  // while the zombie (1.5 * 2 = integer 3x) stayed crisp. pixelArt kills
+  // the smoothing for every sprite and snaps texels to the pixel grid.
+  pixelArt: true,
   scale: {
     mode: Phaser.Scale.RESIZE,
     width: window.innerWidth,
