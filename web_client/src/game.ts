@@ -1544,7 +1544,16 @@ export class WorldScene extends Phaser.Scene {
     const existing = this.chewEmitters.get(selfId);
     if (eating && !existing && itemId) {
       const color = this.eatColors[itemId] ?? 0xc09050;
-      const emitter = this.add.particles(0, 0, undefined, {
+      // Texture-less emitters render NOTHING in Phaser 3.90 — paint a tiny
+      // white square once and feed it to every crumb emitter.
+      if (!this.textures.exists("fx-crum")) {
+        const g = this.make.graphics({ x: 0, y: 0 }, false);
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(0, 0, 4, 4);
+        g.generateTexture("fx-crum", 4, 4);
+        g.destroy();
+      }
+      const emitter = this.add.particles(0, 0, "fx-crum", {
         speed: { min: 30, max: 70 },
         angle: { min: 200, max: 340 }, // upward arc from the mouth
         gravityY: 140, // crumbs fall back down — the "chew" feel

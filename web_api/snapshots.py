@@ -326,8 +326,9 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             "eating": bool(player and player.eating_until > _time.monotonic()),
             "eating_item": player.eating_item if player else None,
             "heal_eat": (
-                {"item": iid, "at": round(at, 2)}
-                if player and player.last_heal_eat else None
+                # last_heal_eat is (item_id, monotonic) — unpack it.
+                {"item": heal_eat[0], "at": round(heal_eat[1], 2)}
+                if player and (heal_eat := player.last_heal_eat) else None
             ),
             "coins": player.coins if player else 0,
             "crystals": getattr(player, "crystals", 0) if player else 0,
@@ -448,6 +449,16 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "crystals": getattr(player, "crystals", 0) if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
+            # Eating state (chew particles + half speed on the client) + the
+            # finished-eat announcement for the heal burst. These live on the
+            # 20 Hz snapshot — the welcome fires once, so a welcome-only
+            # payload meant the client NEVER saw the eating flag at all.
+            "eating": bool(player and player.eating_until > _time.monotonic()),
+            "eating_item": player.eating_item if player else None,
+            "heal_eat": (
+                {"item": heal_eat[0], "at": round(heal_eat[1], 2)}
+                if player and (heal_eat := player.last_heal_eat) else None
+            ),
             # Dead flag + respawn countdown: the web client freezes its own
             # prediction and shows a death overlay instead of letting the
             # predicted marker keep walking (the server ignores dead inputs,
