@@ -953,6 +953,16 @@ class GameManager:
         # — that surfaced as "bad_order" toasts mid-drag. Instead: apply the
         # client's ORDER for the items it got right and keep the server's
         # authoritative quantities for everything else (resync-on-mismatch).
+        # PURSE DEPOSIT: currency the client deliberately dragged INTO the
+        # grid is banked into the purse (withdrawing one unit per drag out).
+        from game.purse import is_currency, purse_add
+        for c in cells:
+            if c and is_currency(c[0]):
+                if purse_add(self, channel_id, user_id, c[0], c[1]):
+                    player = rt.state.get_player(user_id)
+                    if player is not None:
+                        self._schedule_save(rt, player)
+        cells = [None if (c and is_currency(c[0])) else c for c in cells]
         want: Dict[str, int] = {}
         for c in cells:
             if c:
@@ -1009,16 +1019,8 @@ class GameManager:
                 if cell:
                     inv.slots[i] = cell
             rt.inventories[uid] = inv
-            # PURSE MIGRATION: coin/crystal stacks saved in the bag before
-            # the purse existed get auto-converted into the counters here —
-            # the bag is never the source of truth for currency.
-            for item_id in ("coin", "crystal"):
-                have = inv.count(item_id)
-                if is_currency(item_id) and have > 0 and purse_add(
-                        self, rt.channel_id, uid, item_id, have):
-                    player = rt.state.get_player(uid)
-                    if player is not None:
-                        self._schedule_save(rt, player)
+            # Currency in a saved bag is a FREE item now (deposit = explicit
+            # drag onto the purse icons) — no auto-migration.
 
     def get_inventory(self, channel_id: int, user_id: int) -> Inventory:
         rt = self.get_runtime_for(channel_id, user_id)
@@ -1160,15 +1162,11 @@ class GameManager:
         return {"ok": True, "reason": "ok", "item_id": res["id"], "qty": res["qty"]}
 
     async def add_item(self, channel_id: int, user_id: int, item_id: str, qty: int = 1) -> None:
-        from game.purse import is_currency, purse_add
+        # NOTE: currency is a FREE item in the bag (the player drags it
+        # anywhere; depositing is an explicit drag onto the purse/icons).
+        # No auto-convert here.
         inv = self.get_inventory(channel_id, user_id)
         inv.add(item_id, qty)
-        # CURRENCY PURSE: coin/crystal never stays in the bag.
-        if is_currency(item_id) and purse_add(self, channel_id, user_id,
-                                              item_id, qty):
-            rt = self.get_runtime_for(channel_id, user_id)
-            if rt is not None:
-                self._schedule_save(rt, rt.state.get_player(user_id))
         # FULL persist (not single-item): the new stack's slot position must
         # survive a restart or the positional load re-compacts the layout.
         await self._persist_full_inventory(channel_id, user_id, inv)
@@ -1844,20 +1842,6 @@ class GameManager:
                 return None, None
         # Any dispatched action counts as session activity (watchdog reset).
         self.touch_session(channel_id, action.user_id)
-        # PURSE SWEEP (once per dispatch, cheap): any coin/crystal sitting in
-        # the bag (saved pre-purse, thrown back, legacy path) converts into
-        # the counters before the action reads the bag. Deliberately NOT in
-        # get_inventory — purse_add calls get_inventory internally, so a
-        # sweep there recursed infinitely (live RecursionError storm).
-        from game.purse import is_currency as _is_cur, purse_add as _p_add
-        _inv0 = self.get_inventory(channel_id, action.user_id)
-        for _iid in ("coin", "crystal"):
-            _have = _inv0.count(_iid)
-            if _have > 0 and _is_cur(_iid) and _p_add(
-                    self, channel_id, action.user_id, _iid, _have):
-                _p = rt.state.get_player(action.user_id)
-                if _p is not None:
-                    self._schedule_save(rt, _p)
         zombie_result = None
         import time as _time
 
@@ -2054,16 +2038,13 @@ class GameManager:
 
     async def _grant_drop_collections(self, rt, collections) -> None:
         """Persist bag changes from collected drop entities + notify hubs."""
-        from game.purse import is_currency, purse_add
         by_user: dict = {}
         for user_id, item_id, qty in collections:
             inv = self.get_inventory(rt.channel_id, user_id)
+            # Currency lands as a FREE bag stack (deposit = drag it onto the
+            # purse icons); the next dispatch sweep does NOT touch it (the
+            # sweep only fires for the acting user, on their own actions).
             inv.add(item_id, qty)
-            # CURRENCY PURSE: coin/crystal never sit in the bag — auto-
-            # converted into the player's counters (v5 panel bottom row).
-            if is_currency(item_id) and purse_add(
-                    self, rt.channel_id, user_id, item_id, qty):
-                self._schedule_save(rt, rt.state.get_player(user_id))
             by_user.setdefault(user_id, True)
             if self.db is not None:
                 from persistence.repositories import save_inventory_item
@@ -2076,14 +2057,10 @@ class GameManager:
             self._notify_inventory_change(rt.channel_id, user_id)
 
     async def _grant_zombie_drops(self, rt, user_id: int, drops) -> None:
-        from game.purse import is_currency, purse_add
         inv = self.get_inventory(rt.channel_id, user_id)
         changed = False
         for item_id, qty in drops:
-            inv.add(item_id, qty)
-            if is_currency(item_id) and purse_add(
-                    self, rt.channel_id, user_id, item_id, qty):
-                self._schedule_save(rt, rt.state.get_player(user_id))
+            inv.add(item_id, qty)  # currency = free bag stack (see add_item)
             changed = True
             if self.db is not None:
                 from persistence.repositories import save_inventory_item

@@ -280,7 +280,7 @@ export class Net {
     this.send({ type: "action", name: "turn", dir });
   }
 
-  inventoryOp(op: "move_to" | "use" | "split" | "reorder" | "throw" | "purse_withdraw",
+  inventoryOp(op: "move_to" | "use" | "split" | "reorder" | "throw" | "purse_withdraw" | "purse_deposit",
               payload: { item_id?: string; slot?: number; qty?: number; order?: { id: string; qty: number }[]; direction?: string }): void {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }

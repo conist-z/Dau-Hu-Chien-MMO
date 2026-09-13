@@ -156,3 +156,22 @@ def test_withdraw_rejected_on_different_item_slot() -> None:
     assert not ok
     assert inv.slots[0] == ("wood", 9)   # untouched
     assert p.coins == 3                   # purse untouched
+
+
+def test_currency_is_free_item_in_bag() -> None:
+    """Currency picked up / crafted stays a FREE bag stack — nothing auto-
+    converts it into the purse (deposit is an explicit drag)."""
+    from game.inventory import Inventory
+
+    class TinyManager(FakeManager):
+        def get_inventory(self, _cid, uid):
+            return self.rt.inventories[uid]
+
+    m = TinyManager()
+    inv = m.get_inventory(1, 7)
+    inv.add("coin", 7)
+    assert inv.count("coin") == 7          # stays in the bag
+    # reorder with NO currency in the grid (player didn't drag it there):
+    # the stack must survive untouched.
+    inv2 = m.get_inventory(1, 7)
+    assert inv2.count("coin") == 7

@@ -611,6 +611,32 @@ class WebHub:
                     self.manager.db, cid, uid, list(inv.items))
         elif op == "use":
             await self.manager.use_item(cid, uid, frame.get("item_id", ""))
+        elif op == "purse_deposit":
+            # Drag a currency stack INTO the bag grid = bank it into the
+            # purse (explicit deposit; the client's local preview already
+            # removed the stack, the server confirms via inv_delta).
+            from game.purse import is_currency, purse_add
+            item_id = str(frame.get("item_id", ""))
+            try:
+                qty = int(frame.get("qty", 0))
+            except (TypeError, ValueError):
+                qty = 0
+            if not is_currency(item_id) or qty <= 0:
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR, "code": "bad_op"})
+                return
+            inv = self.manager.get_inventory(cid, uid)
+            have = inv.count(item_id)
+            take = min(qty, have)
+            if take > 0 and purse_add(self.manager, cid, uid, item_id, take):
+                rt = self.manager.get_runtime_for(cid, uid)
+                if rt is not None:
+                    p = rt.state.get_player(uid)
+                    if p is not None:
+                        self.manager._schedule_save(rt, p)
+                await self.manager._persist_full_inventory(
+                    cid, uid, self.manager.get_inventory(cid, uid))
+                self.manager._notify_inventory_change(cid, uid)
         elif op == "purse_withdraw":
             # Drag the coin/crystal icon OUT of the panel = pull exactly ONE
             # unit from the purse into the bag. Fails silently (client

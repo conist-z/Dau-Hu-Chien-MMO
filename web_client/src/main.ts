@@ -423,6 +423,13 @@ hud.onPurseWithdraw = (itemId, slot) => {
     slot === undefined ? { item_id: itemId } : { item_id: itemId, slot });
 };
 
+// Purse deposit: dragging a currency stack into the bag grid banks it —
+// sent as a reorder (the server's reorder path converts currency to the
+// purse counters server-side).
+hud.onPurseDeposit = (itemId, qty) => {
+  net.inventoryOp("purse_deposit", { item_id: itemId, qty });
+};
+
 hud.onThrow = (itemId, qty) => {
   // The stack visibly flies where the player faces (server spawns the drop
   // with a directional launch; the scene's 8-way selfDir is the label).
