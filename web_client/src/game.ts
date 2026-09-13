@@ -26,7 +26,11 @@ const DIR_VECTORS: Record<string, [number, number]> = {
 
 interface RemotePlayer {
   container: Phaser.GameObjects.Container;
-  body: Phaser.GameObjects.Rectangle;
+  // Square (web players → paperdoll) or circle ("chat" mode players —
+  // the round avatar token). Both are Phaser Shapes.
+  body: Phaser.GameObjects.Shape;
+  // Controlling client mode of this body ("chat" | "web").
+  mode: "chat" | "web";
   label: Phaser.GameObjects.Text;
   webBadge: Phaser.GameObjects.Arc | null;
   // Plan A hand: small circle same colour as the body, orbiting with facing.
@@ -69,7 +73,6 @@ export class WorldScene extends Phaser.Scene {
   // next updateBlocks redraws them with the sprite.
   private blockTextures = new Set<string>();
   private pendingFetch: ((id: string) => void) | null = null;
-  private selfId = 0;
   // --- plan A "tay cầm tool": self hand = small circle same colour as the
   // body (0x5865f2) + tool emoji from the HELD hotbar slot. Mirrors the
   // remote hand geometry (HAND_ORBIT/HAND_RADIUS) but lives in world space
@@ -249,7 +252,6 @@ export class WorldScene extends Phaser.Scene {
     this.pendingDt = 0;
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     this.welcome = welcome;
-    this.selfId = welcome.self.id;
     // Paperdoll: stash manifest, fetch base + every mapped weapon sheet
     // once through the same relay pipe as blocks/mobs (license-safe).
     if (welcome.players_manifest && !this.paperdollAsked) {
@@ -714,8 +716,14 @@ export class WorldScene extends Phaser.Scene {
     const now = performance.now();
     if (!rp) {
       const container = this.add.container(p.x * 32, p.y * 32);
-      const color = p.id === this.selfId ? 0x5865f2 : p.web ? 0x2f9e63 : 0xd97706;
-      const body = this.add.rectangle(0, 0, PLAYER_SIZE, PLAYER_SIZE, color);
+      // Chat-client players render as ROUND avatar tokens (the Discord
+      // avatar circle); web players keep the square + paperdoll body.
+      const isChat = p.mode === "chat";
+      const color = isChat ? 0xd97706 : 0x2f9e63;
+      const body = isChat
+        ? this.add.circle(0, 0, PLAYER_SIZE / 2, color)
+        : this.add.rectangle(0, 0, PLAYER_SIZE, PLAYER_SIZE, color);
+      body.setStrokeStyle(2, 0xffffff, 0.9);
       const label = this.add.text(0, 22, p.name, {
         fontSize: "10px", color: "#ffffff",
         stroke: "#000000", strokeThickness: 3,
@@ -729,12 +737,22 @@ export class WorldScene extends Phaser.Scene {
       container.add(hand);
       container.add(toolIcon);
       container.add(label);
-      rp = { container, body, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
+      rp = { container, body, mode: p.mode, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
       container.setData("pid", p.id);
       this.players.set(p.id, rp);
       // Paperdoll texture already live? Swap immediately (square stays as
-      // invisible fallback geometry otherwise).
-      if (this.paperdollReady) this.spawnRemoteDoll(p.id, rp);
+      // invisible fallback geometry otherwise). Chat players never get a
+      // doll — their round token IS the agreed cross-client look.
+      if (this.paperdollReady && !isChat) this.spawnRemoteDoll(p.id, rp);
+    } else if (rp.mode !== p.mode) {
+      // Mode switched while alive (web session attached/detached): the
+      // cheapest correct redraw is destroy + respawn on the next snapshot.
+      rp.container.destroy();
+      this.remoteDolls.get(p.id)?.destroy();
+      this.remoteDolls.delete(p.id);
+      this.players.delete(p.id);
+      this.upsertPlayer(p);
+      return;
     }
     rp.buf.push([now, p.x * 32, p.y * 32]);
     if (rp.buf.length > 12) rp.buf.shift();

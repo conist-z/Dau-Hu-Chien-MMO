@@ -141,6 +141,9 @@ export interface SnapshotPayload {
   // Present only when the bag changed since our last ack.
   inventory?: InventoryPayload;
   inv_version?: number;
+  // Craft panel fragments (server-side material grid + parked result).
+  mat_grid?: [string, number][];
+  craft_result?: { id: string; qty: number } | null;
   // Station proximity for the craft button gate (server truth per snapshot).
   near_station?: boolean;
   resources: [number, number, number][];
@@ -159,6 +162,9 @@ export interface PlayerPayload {
   dir: string;
   sprite: string;
   web: boolean;
+  // Which client mode controls this body: "chat" (Discord client — render
+  // as a round avatar token) or "web" (paperdoll like self).
+  mode: "chat" | "web";
   // Item id currently held (hotbar slot -> item). Null = empty hand.
   held: string | null;
 }
@@ -171,6 +177,13 @@ export interface InventoryPayload {
   // Sparse bag slots: null = empty slot (index = the pixel grid position).
   bag: ({ id: string; qty: number } | null)[];
   hotbar: (string | null)[];
+}
+
+// Craft panel fragments: the server-side material grid (server truth of what
+// the player took off the bag onto the craft table) + the parked craft result.
+export interface CraftPartPayload {
+  mat_grid: [string, number][];
+  craft_result: { id: string; qty: number } | null;
 }
 
 export interface RecipePayload {
@@ -195,7 +208,7 @@ export type ServerFrame =
   | SnapshotPayload
   | { type: "login_result"; ok: boolean; token?: string; user_id?: number; display_name?: string; error?: string }
   | { type: "scenario_list"; items: ScenarioItem[] }
-  | { type: "inventory_delta"; inventory: InventoryPayload; inv_version?: number }
+  | { type: "inventory_delta"; inventory: InventoryPayload; inv_version?: number; mat_grid?: [string, number][]; craft_result?: { id: string; qty: number } | null }
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
