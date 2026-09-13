@@ -1025,12 +1025,13 @@ class WebHub:
         })
 
     async def _cmd_spawnmob(self, sess: WebSession, args: List[str]) -> None:
-        """Admin /spawnmob: force-spawn night mobs near the player for testing.
+        """Admin /spawnmob: force-spawn night mobs NEXT TO the calling player
+        for testing.
 
         Usage: /spawnmob [kind] [qty]. kind ∈ zombie|skeleton|spider|slime|
-        bat|rat (default zombie); qty 1-10 (default 1). Spawns land in the
-        normal ring around the player (8-18 tiles, walkable), regardless of
-        the night gate or the population cap.
+        bat|rat (default zombie); qty 1-10 (default 1). Spawns land on a
+        walkable tile within 2-4 tiles of the caller (visible on screen),
+        regardless of the night gate or the population cap.
         """
         if not await self._is_web_admin(sess):
             await self.send_to_client_conn(sess, {
@@ -1054,19 +1055,66 @@ class WebHub:
         if rt is None:
             return
         async with rt.lock:
+            import math as _math
             import random as _random
 
-            from game.zombies import web_spawn_one as _spawn
-
             rng = _random.Random()
+            player = rt.state.get_player(sess.user_id)
+            if player is None:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH, "message": "Bạn chưa vào map.",
+                })
+                return
+            # WEB players keep their authoritative position in the float
+            # fields; int (x, y) mirrors them. Use x_f/y_f when they exist,
+            # falling back to int coords (int-only players).
+            px = getattr(player, "x_f", None)
+            py = getattr(player, "y_f", None)
+            if px is None or py is None:
+                px, py = float(player.x) + 0.5, float(player.y) + 0.5
+            collision = rt.collision
+            w = getattr(getattr(collision, "map_data", None), "width", 0) or 0
+            h = getattr(getattr(collision, "map_data", None), "height", 0) or 0
             spawned = 0
-            players = [
-                p for p in rt.state.get_visible_players()
-                if getattr(p, "alive", True) and getattr(p, "is_web", False)
-            ]
+            # Ring 2-4 tiles around the CALLER: close enough to see clearly,
+            # far enough not to pop in on top of them.
+            from game.zombies import MOB_KINDS as _kinds, Zombie as _Z, _next_web_id as _nid, _add_web_zombie as _add
+
+            import time as _time
+
+            kind_cfg = _kinds[kind]
             for _ in range(qty):
-                if _spawn(rt.state, rt.collision, players, rng) is not None:
+                placed = False
+                for _attempt in range(40):
+                    ang = rng.uniform(0, 2 * _math.pi)
+                    dist = rng.uniform(2.0, 4.0)
+                    tx = int(_math.floor(px + _math.cos(ang) * dist))
+                    ty = int(_math.floor(py + _math.sin(ang) * dist))
+                    if tx < 0 or ty < 0 or tx >= w or ty >= h:
+                        continue
+                    try:
+                        walkable = collision.is_walkable(tx, ty)
+                    except Exception:
+                        walkable = True
+                    if not walkable:
+                        continue
+                    z = _Z(_nid(rt.state), tx, ty)
+                    z.kind = kind
+                    z.hp = z.max_hp = kind_cfg["hp"]
+                    z.damage = kind_cfg["dmg"]
+                    z.web_speed = kind_cfg["speed"]
+                    z.web_cooldown = kind_cfg["cooldown"]
+                    z.x_f = float(tx) + 0.5
+                    z.y_f = float(ty) + 0.5
+                    z.facing = "S"
+                    z.anim = "walk"
+                    z.anim_t = _time.monotonic()
+                    _add(rt.state, z)
+                    placed = True
                     spawned += 1
+                    break
+                if not placed:
+                    break
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH,
             "message": f"Đã gọi {spawned}/{qty} quái ({kind}). Đi đêm hoặc /time 22:00 để chúng hoạt động.",
