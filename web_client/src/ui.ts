@@ -949,10 +949,11 @@ export class Hud {
       const lit = this.craftCategory === tab.group;
       const el = document.createElement("div");
       el.className = "craft-tab" + (lit ? " lit" : "");
-      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE): the
-      // container box is 18 kit px wide at the column origin; the lit box
-      // lifts to y=10 (15px tall), resting/flat sits at y=11 (14px tall).
-      const boxY = lit ? 10 : 11;
+      // EXACT kit bboxes (Craft.json z20, local px × PIXEL_SCALE), nudged
+      // +1px down (user calib): the container box is 18 kit px wide at the
+      // column origin; the lit box sits at y=11 (15px tall), resting/flat
+      // at y=12 (14px tall).
+      const boxY = lit ? 11 : 12;
       const boxH = lit ? 15 : 14;
       const iconY = lit ? tab.yActive : tab.yRest;
       el.style.cssText =
