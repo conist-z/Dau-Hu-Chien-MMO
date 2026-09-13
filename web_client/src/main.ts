@@ -294,7 +294,11 @@ const net = new Net({
     void token;
   },
   onLoginFail: (error) => {
-    hud.setLoginButton(true);
+    // A failed RESUME just means the token died (revoked by a newer login,
+    // server wipe): clean it and show the fresh login panel. A failed
+    // explicit login also lands here — same panel.
+    localStorage.removeItem("web_token");
+    hud.setLoginButton(true, "🔑 Đăng nhập Discord");
     hud.setQuickButton(true, "⚡ Vào nhanh (tắt)", false);
     hud.showGate(`Đăng nhập thất bại: ${error}`);
   },
@@ -562,10 +566,17 @@ async function boot(): Promise<void> {
     return;
   }
   const saved = localStorage.getItem("web_token");
-  // Quick login is DISABLED (check-the-flow request 14/09): only the Discord
-  // path remains. F5 never auto-logins — the panel is always the first stop.
+  // TOKEN RESUME: replay the persisted token against the fresh socket. A
+  // live token answers login_result silently — NO Discord OAuth, no
+  // buttons, straight to the lobby. Only an unknown token (never logged
+  // in / logged out / token revoked by a newer login) shows the panel.
+  if (saved) {
+    hud.showGate("Đang khôi phục phiên…");
+    net.resumeLogin(saved);
+    return;
+  }
   hud.setQuickButton(true, "⚡ Vào nhanh (tắt)", false);
-  hud.setLoginButton(true, saved ? "🔑 Tiếp: " + (localStorage.getItem("web_name") ?? "phiên cũ") : "🔑 Đăng nhập Discord");
+  hud.setLoginButton(true, "🔑 Đăng nhập Discord");
   hud.showGate("Chọn cách vào game:");
 }
 

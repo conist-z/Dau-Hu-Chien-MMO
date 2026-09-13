@@ -221,6 +221,13 @@ export class Net {
     this.send({ type: "guest_login", guest_id: guestId });
   }
 
+  /** Silent session resume: replay a persisted token — the server answers
+   * login_result (no OAuth) if the token is still live anywhere (memory
+   * or the persistent SQLite registry). */
+  resumeLogin(token: string): void {
+    this.send({ type: "resume_login", token });
+  }
+
   /** Tell the server which hotbar slot is held (tools resolve from it). */
   selectSlot(slot: number): void {
     this.send({ type: "select_slot", slot });
