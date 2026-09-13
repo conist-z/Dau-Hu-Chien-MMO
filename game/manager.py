@@ -1026,17 +1026,10 @@ class GameManager:
         if inv is None:
             inv = Inventory()
             rt.inventories[user_id] = inv
-        # PURSE SWEEP: any coin/crystal that somehow reached the bag (saved
-        # pre-purse, legacy session resurrect, edge path) converts into the
-        # counters the moment the bag is touched. Cheap: two count() scans.
-        from game.purse import is_currency, purse_add
-        for item_id in ("coin", "crystal"):
-            have = inv.count(item_id)
-            if have > 0 and purse_add(self, channel_id, user_id,
-                                      item_id, have):
-                player = rt.state.get_player(user_id)
-                if player is not None:
-                    self._schedule_save(rt, player)
+        # NOTE: deliberately NO purse sweep here — purse_add internally calls
+        # get_inventory, so a sweep in here recurses infinitely (seen live as
+        # a RecursionError storm on every action). Conversion happens at the
+        # mutation entry points (add_item, _grant_*, load_inventories).
         return inv
 
     # ----- craft material grid (server-side buffer, one per player) --------
@@ -1851,6 +1844,20 @@ class GameManager:
                 return None, None
         # Any dispatched action counts as session activity (watchdog reset).
         self.touch_session(channel_id, action.user_id)
+        # PURSE SWEEP (once per dispatch, cheap): any coin/crystal sitting in
+        # the bag (saved pre-purse, thrown back, legacy path) converts into
+        # the counters before the action reads the bag. Deliberately NOT in
+        # get_inventory — purse_add calls get_inventory internally, so a
+        # sweep there recursed infinitely (live RecursionError storm).
+        from game.purse import is_currency as _is_cur, purse_add as _p_add
+        _inv0 = self.get_inventory(channel_id, action.user_id)
+        for _iid in ("coin", "crystal"):
+            _have = _inv0.count(_iid)
+            if _have > 0 and _is_cur(_iid) and _p_add(
+                    self, channel_id, action.user_id, _iid, _have):
+                _p = rt.state.get_player(action.user_id)
+                if _p is not None:
+                    self._schedule_save(rt, _p)
         zombie_result = None
         import time as _time
 
