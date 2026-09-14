@@ -623,6 +623,8 @@ const input = new KeyboardInput({
 // receives events (clicks dead, browser context menu leaked through).
 game.events.once("ready", () => {
   input.bindCanvas(game.canvas);
+  // Station interact pipeline: scene punch + explosion -> HUD panel.
+  scene.onStationInteract = () => hud.openCraftPanel();
 });
 
 // Tab-return hygiene: rAF paused while hidden — clear stuck movement keys
