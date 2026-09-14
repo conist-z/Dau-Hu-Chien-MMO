@@ -309,7 +309,11 @@ const net = new Net({
     // Purse withdraw refused (empty counter or full bag): silent — the
     // ghost already sprang back; a toast per drag-out would be noisy.
     if (code === "purse_empty" || code === "bad_op") {
-      return;
+      // A refused purse op must UNDO its local optimistic preview — a
+      // failed withdraw that stays on screen is the ghost coin (a stack
+      // the server never owned; throwing it loses the item forever).
+      if (code === "purse_empty") hud.revertPurseRefusal("coin");
+      if (code === "purse_empty") hud.revertPurseRefusal("crystal");return;
     }
     // EAT refusals: the server has a real reason — show it (the eat
     // right-click used to fail silently, looking like a dead button).

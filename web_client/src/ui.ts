@@ -198,6 +198,23 @@ export class Hud {
   onPurseWithdraw: ((itemId: string, slot?: number) => void) | null = null;
   /** Set by main.ts: deposit a currency stack into the purse. */
   onPurseDeposit: ((itemId: string, qty: number, fromIndex: number) => void) | null = null;
+
+  /** Currency ids with UNACKED optimistic purse deltas (+n / -n). While a
+   *  currency has a pending delta, the setInventory delta-merge leaves that
+   *  id alone — guessing where to apply the server's diff mid-flight is what
+   *  created phantom stacks ("ghost coin") and shuffled coins between
+   *  stacks (the flicker-reorder). Cleared when a snapshot reconciles that
+   *  id's total with the screen's, or after 2s TTL. */
+  private pursePending: Record<string, number> = {};
+  private pursePendingAt = 0;
+  /** Last purse op (revert + reconcile routing when the server refuses). */
+  private lastPurseOp: {
+    kind: "deposit" | "withdraw";
+    itemId: string;
+    slot: number | null | undefined;
+    qty: number;
+    at: number;
+  } | null = null;
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
@@ -618,6 +635,9 @@ export class Hud {
   private renderInventory(): void {
     // Repaint guard: identical bag + same tab + same craft context + same
     // purse = skip. (Purse in the sig: counters repaint on balance change.)
+    // If the table state CHANGED, force a repaint even when the bag is
+    // identical — the material grid switches between 2x2 and 3x3.
+    const tableFlipped = this.nearTable !== this.lastNearTable;
     const bagSig = JSON.stringify(this.inventory.bag);
     const craftActive = this.craftTab.classList.contains("active");
     const purseSig = `${this.purseCoins}:${this.purseCrystals}`;
@@ -625,8 +645,9 @@ export class Hud {
       "|" + (this.nearTable ? 1 : 0) +
       "|" + (this.parkedResult ? this.parkedResult.id + this.parkedResult.qty : "-") +
       "|" + purseSig;
-    if (sig === this.lastBagSig && this.drag === null) return;
+    if (sig === this.lastBagSig && this.drag === null && !tableFlipped) return;
     this.lastBagSig = sig;
+    this.lastNearTable = this.nearTable;
     this.renderPurse(craftActive);
     if (craftActive) {
       this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
@@ -635,6 +656,8 @@ export class Hud {
       this.renderBagGrid(this.invItemsWrap);
     }
   }
+
+  private lastNearTable = false;
 
   // ===== DRAG & DROP core =====
 
@@ -698,11 +721,76 @@ export class Hud {
     this.inventory.bag[fromIndex] = null;
     if (itemId === "coin") this.purseCoins += qty;
     else this.purseCrystals += qty;
+    this.trackPursePending(itemId, -qty);
+    this.lastPurseOp = { kind: "deposit", itemId, slot: fromIndex, qty, at: Date.now() };
     this.invVersion = -1; // next server delta reconciles totals
     this.renderHotbar();
     this.renderInventory();
     this.toast(`Đã nạp ${qty} ${itemId === "coin" ? "xu" : "tinh thể"} vào ví`);
     if (this.onPurseDeposit) this.onPurseDeposit(itemId, qty, fromIndex);
+  }
+
+  /** Record an optimistic purse delta for an item id. */
+  private trackPursePending(itemId: string, delta: number): void {
+    this.pursePending[itemId] = (this.pursePending[itemId] ?? 0) + delta;
+    this.pursePendingAt = Date.now();
+  }
+
+  /** Revert the local optimistic preview of a REFUSED purse op — otherwise
+   *  a failed withdraw leaves a phantom coin on screen that the server
+   *  never owned (the "ghost" — throwing it loses the item forever). */
+  revertPurseRefusal(itemId: string): void {
+    const op = this.lastPurseOp;
+    if (!op || op.itemId !== itemId || Date.now() - op.at > 3000) return;
+    this.lastPurseOp = null;
+    const bag = this.inventory.bag.map((s) => (s ? { ...s } : null));
+    if (op.kind === "withdraw") {
+      const slot = op.slot;
+      if (slot !== null && slot !== undefined && slot >= 0 && slot < bag.length) {
+        const cell = bag[slot];
+        if (cell && cell.id === itemId) {
+          cell.qty -= 1;
+          if (cell.qty <= 0) bag[slot] = null;
+        } else {
+          // Optimistic landing didn't stick; clear the phantom we added —
+          // it's the LAST coin stack created by the op.
+          for (let i = bag.length - 1; i >= 0; i--) {
+            const b = bag[i];
+            if (b && b.id === itemId) {
+              b.qty -= 1;
+              if (b.qty <= 0) bag[i] = null;
+              break;
+            }
+          }
+        }
+      } else {
+        // No-slot withdraw: the optimistic unit went to the first free
+        // cell — clear the LAST coin stack (findIndex-compatible loop).
+        let ph = -1;
+        for (let i = bag.length - 1; i >= 0; i--) {
+          if (bag[i] && bag[i]!.id === itemId) { ph = i; break; }
+        }
+        if (ph >= 0) {
+          bag[ph]!.qty -= 1;
+          if (bag[ph]!.qty <= 0) bag[ph] = null;
+        }
+      }
+      if (itemId === "coin") this.purseCoins += 1;
+      else this.purseCrystals += 1;
+    } else {
+      // Refused deposit: put the stack back into the source cell.
+      const slot = op.slot;
+      const idx = slot !== null && slot !== undefined && slot >= 0 && slot < bag.length
+        ? slot
+        : bag.findIndex((b) => !b);
+      if (idx >= 0) bag[idx] = { id: itemId, qty: op.qty };
+      if (itemId === "coin") this.purseCoins = Math.max(0, this.purseCoins - op.qty);
+      else this.purseCrystals = Math.max(0, this.purseCrystals - op.qty);
+    }
+    this.inventory = { bag, hotbar: this.inventory.hotbar };
+    this.invVersion = -1;
+    this.renderHotbar();
+    this.renderInventory();
   }
 
   /** Drop the currently dragged currency stack onto a purse icon. */
@@ -1744,6 +1832,8 @@ export class Hud {
       }
       if (itemId === "coin") this.purseCoins = Math.max(0, this.purseCoins - 1);
       else this.purseCrystals = Math.max(0, this.purseCrystals - 1);
+      this.trackPursePending(itemId, +1);
+      this.lastPurseOp = { kind: "withdraw", itemId, slot, qty: 1, at: Date.now() };
       this.invVersion = -1; // next server delta reconciles totals
       this.renderHotbar();
       this.renderInventory();
@@ -1807,12 +1897,36 @@ export class Hud {
       if (s) server[s.id] = (server[s.id] ?? 0) + s.qty;
     }
     // 3) Per-item delta. Everything unchanged keeps its slot untouched.
+    // PURSE-GUARD: while a currency id has an UNACKED optimistic purse
+    // delta, skip guessing where its server diff lands — mid-flight merges
+    // are what minted phantom stacks (ghost coins) and shuffled coin
+    // stacks around (the flicker-reorder). The next snapshot after the
+    // op lands (or the 2s TTL) releases the guard.
+    if (this.pursePendingAt && Date.now() - this.pursePendingAt > 2000) {
+      this.pursePending = {};
+      this.pursePendingAt = 0;
+    }
+    // Release the guard for ids whose server total now matches the screen
+    // (the op landed and the optimistic preview was already correct).
+    for (const pid of Object.keys(this.pursePending)) {
+      const shownTotal = (shown[pid] ?? 0) + (placed.reduce(
+        (acc, p) => acc + (p.id === pid ? p.qty : 0), 0));
+      if ((server[pid] ?? 0) === shownTotal) delete this.pursePending[pid];
+    }
     const bag = this.inventory.bag.map((s) => (s ? { ...s } : null));
     const changed: string[] = [];
     const allIds = new Set([...Object.keys(shown), ...Object.keys(server)]);
     for (const id of allIds) {
       const d = (server[id] ?? 0) - (shown[id] ?? 0);
       if (d === 0) continue;
+      if (this.pursePending[id]) {
+        // Unacked purse delta: wait for the server to catch up rather than
+        // mis-applying. Drop the pending marker once the totals agree.
+        if (d !== 0) {
+          // Still divergent: keep waiting (bounded by the TTL above).
+          continue;
+        }
+      }
       changed.push(id);
       if (d > 0) {
         // Gained (pickup / collect / craft output): top up an existing stack
@@ -1951,7 +2065,26 @@ export class Hud {
   setNearStation(near: boolean): void {
     if (near === this.nearTable) return;
     this.nearTable = near;
+    if (near === false) this.overflowMatToBag(); // 3x3 -> 2x2: cells 4..8 go home
     if (this.inventoryOpen) this.renderInventory();
+  }
+
+  /** Return any stacks sitting BEYOND the visible material grid (cells 4..8
+   *  when the 2x2 grid is active) back into the bag view. Without this,
+   *  stacks parked on hidden cells would silently vanish from view (and
+   *  CREATE would still consume them — a phantom craft). */
+  private overflowMatToBag(): void {
+    for (let i = 4; i < this.matGrid.length; i++) {
+      const st = this.matGrid[i];
+      if (!st) continue;
+      const slot = this.inventory.bag.findIndex((b) => b?.id === st.id);
+      if (slot >= 0) this.inventory.bag[slot]!.qty += st.qty;
+      else {
+        const free = this.inventory.bag.findIndex((b) => !b);
+        if (free >= 0) this.inventory.bag[free] = st;
+      }
+      this.matGrid[i] = null;
+    }
   }
 
   /** Authoritative id->emoji map from the server's item registries. */
