@@ -969,22 +969,32 @@ export class WeatherFx {
     const ctx = this.ctx;
     const kind = slot.proceduralKind!;
     // WORLD-SPACE for snow/rain flakes + streaks (fog stays screen-space —
-    // it's atmosphere): each particle's screen position = world position −
-    // camera scroll × zoom × layer parallax, so the field anchors to the map
-    // exactly like the tiled sheets. Particles carry their own world offset
-    // (p.wOffset) added to the shared parallax offset.
+    // it's atmosphere): particle x/y are SCREEN-BAND coordinates (the wrap
+    // window below); the camera offset shifts the WINDOW, not each particle,
+    // and is itself wrapped by the window size — so the field never drains
+    // off-screen (the "snow biến mất" bug) yet still slides with the map
+    // exactly like the tiled sheets.
     const worldSpace = kind === "flake" || kind === "streak";
     const z = this.camScroll.zoom;
+    const wrapW = this.w + 160;
+    const wrapH = this.h + 160;
+    const mod = (v: number, m: number): number => ((v % m) + m) % m;
+    // Near layer: scroll × zoom × parallax, wrapped so the visible band
+    // always stays populated.
     const worldOff = worldSpace
-      ? { x: this.camScroll.x * z * NEAR_CAM_PARALLAX, y: this.camScroll.y * z * NEAR_CAM_PARALLAX }
+      ? { x: mod(this.camScroll.x * z * NEAR_CAM_PARALLAX, wrapW),
+          y: mod(this.camScroll.y * z * NEAR_CAM_PARALLAX, wrapH) }
       : { x: 0, y: 0 };
     const farWorldOff = worldSpace
-      ? { x: this.camScroll.x * z * FAR_CAM_PARALLAX, y: this.camScroll.y * z * FAR_CAM_PARALLAX }
+      ? { x: mod(this.camScroll.x * z * FAR_CAM_PARALLAX, wrapW),
+          y: mod(this.camScroll.y * z * FAR_CAM_PARALLAX, wrapH) }
       : { x: 0, y: 0 };
     const drawLayer = (layer: Particle[], off: { x: number; y: number }): void => {
       for (const p of layer) {
-        const px = p.x - off.x;
-        const py = p.y - off.y;
+        // Screen pos = band pos − offset, re-wrapped into the viewport (the
+        // band is viewport+160 wide, offset is pre-modded — always on screen).
+        const px = mod(p.x - off.x, wrapW) - 80;
+        const py = mod(p.y - off.y, wrapH) - 80;
         ctx.globalAlpha = p.alpha * intensity;
         if (kind === "streak") {
           const vlen = Math.hypot(p.vx, p.vy) || 1;
