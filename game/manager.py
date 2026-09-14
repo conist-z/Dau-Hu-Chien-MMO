@@ -762,7 +762,15 @@ class GameManager:
                     # once the heartbeat made report_at perpetually fresh).
                     if (sess.report_at > 0.0
                             and 0.0 < (now - sess.report_at) < 1.0):
-                        self._converge_to_report(rt, player, sess, now)
+                        if self._converge_to_report(rt, player, sess, now):
+                            # The idle body moved: sync the int tile + save,
+                            # exactly like the moving path does — actions
+                            # (place/chop/attack offsets) derive from player.x
+                            # and would act on a STALE tile otherwise (the
+                            # "block nhảy vào trong" bug at range).
+                            player.sync_int_from_float()
+                            player.float_moved = True
+                            self._schedule_save(rt, player)
                     continue
                 self._regen_player_beat(rt, player, now)
                 self._stamina_regen_beat(rt, player, now)
