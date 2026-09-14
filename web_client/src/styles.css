@@ -836,7 +836,7 @@ html, body {
   cursor: grabbing;
 }
 
-/* ===== Player profile popup (click another player) — ekonia palette ===== */
+/* ===== Player profile popup — V5 pixel kit (same as inventory panel) ===== */
 #profile-popup {
   position: absolute;
   inset: 0;
@@ -844,59 +844,104 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(5, 6, 10, 0.45); /* dim veil; clicks close */
+  /* NO full-screen veil: clicks pass through everything except the card,
+     so the browser never shows its tab/window UI. */
+  pointer-events: none;
 }
 #profile-popup.hidden { display: none; }
 .pp-card {
-  width: 340px;
-  background: rgba(27, 29, 34, 0.94);
-  border: 1px solid rgba(168, 245, 154, 0.95);
-  border-radius: 5px;
-  padding: 12px 14px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  position: relative;
+  width: 294px; /* inv_frame 98px x PIXEL_SCALE 3 */
+  pointer-events: auto;
+  image-rendering: pixelated;
   font-size: 12px;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
 }
-.pp-head { display: flex; align-items: center; gap: 10px; }
+.pp-frame {
+  display: block;
+  width: 294px; height: 303px; /* 98x101 x 3 */
+  image-rendering: pixelated;
+  pointer-events: none;
+  user-select: none;
+}
+.pp-title {
+  position: absolute;
+  top: 9px; left: 50%;
+  transform: translateX(-50%);
+  color: #ffe9a8;
+  font-weight: 700; font-size: 12px;
+  text-shadow: 1px 1px 0 #000;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pp-close-btn {
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 15px; height: 15px;
+  background: url("/ui/v5/atoms/close_big.png") no-repeat center / contain;
+  image-rendering: pixelated;
+  border: none; cursor: pointer;
+  padding: 0;
+}
+.pp-close-btn:hover { filter: brightness(1.5); }
+.pp-body {
+  position: absolute;
+  top: 34px; left: 16px; right: 16px;
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: none;
+}
 .pp-avatar {
-  width: 44px; height: 44px; flex: 0 0 44px;
-  border-radius: 6px;
+  width: 42px; height: 42px; flex: 0 0 42px;
+  border-radius: 4px;
   background: rgba(10, 12, 17, 0.7);
   border: 1px solid rgba(122, 158, 92, 0.6);
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
-.pp-avatar img { width: 38px; height: 38px; image-rendering: pixelated; }
+.pp-avatar img { width: 36px; height: 36px; image-rendering: pixelated; }
 .pp-id { flex: 1; min-width: 0; }
-.pp-name { color: #fff; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pp-sub { color: #8cd9f2; font-size: 11px; margin-top: 2px; }
-.pp-close {
-  background: none; border: none; color: #8b92a3; font-size: 14px;
-  cursor: pointer; padding: 4px 6px; border-radius: 4px;
-}
-.pp-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.pp-name { color: #fff; font-weight: 700; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-shadow: 1px 1px 0 #000; }
+.pp-sub { color: #8cd9f2; font-size: 10px; margin-top: 2px;
+  text-shadow: 1px 1px 0 #000; }
 .pp-stats {
-  margin-top: 10px;
-  background: rgba(10, 12, 17, 0.6);
-  border: 1px solid rgba(122, 158, 92, 0.6);
-  border-radius: 5px;
+  position: absolute;
+  top: 88px; left: 16px; right: 16px;
+  background: rgba(10, 12, 17, 0.55);
+  border: 1px solid rgba(122, 158, 92, 0.55);
+  border-radius: 4px;
   padding: 8px 10px;
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px;
+  pointer-events: none;
 }
-.pp-stat { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.pp-label { color: #8b92a3; }
-.pp-val { color: #dde1ea; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-stat { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.pp-label { color: #9aa0af; }
+.pp-val { color: #dde1ea; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-shadow: 1px 1px 0 #000; }
 .pp-val.red { color: #e66a6a; }
 .pp-val.cyan { color: #8cd9f2; }
-.pp-actions { display: flex; gap: 8px; margin-top: 10px; }
+.pp-actions {
+  position: absolute;
+  left: 16px; right: 16px; bottom: 14px;
+  display: flex; gap: 8px;
+}
 .pp-btn {
   flex: 1;
-  background: rgba(168, 245, 154, 0.9);
-  color: #16210f;
-  border: none; border-radius: 4px;
-  padding: 7px 0;
-  font-weight: 600; font-size: 12px;
+  height: 30px;
+  background: url("/ui/v5/atoms/btn_normal.png") no-repeat center / 100% 100%;
+  image-rendering: pixelated;
+  color: #ffe9a8;
+  border: none;
+  font-weight: 700; font-size: 11px;
   cursor: pointer;
+  text-shadow: 1px 1px 0 #000;
+  padding: 0;
 }
-.pp-btn:hover { background: rgba(184, 255, 170, 1); }
-.pp-btn.dim { background: rgba(122, 158, 92, 0.35); color: #cfe6c2; cursor: default; }
-.pp-btn.dim small { font-weight: 400; opacity: 0.75; }
+.pp-btn:hover { background-image: url("/ui/v5/atoms/btn_hover.png"); color: #fff; }
+.pp-btn:active { background-image: url("/ui/v5/atoms/btn_pressed.png"); }
+.pp-btn.dim {
+  background-image: url("/ui/v5/atoms/btn_disabled.png");
+  color: #8b92a3; cursor: default;
+}

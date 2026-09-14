@@ -60,13 +60,11 @@ function showProfilePopup(p: {
   profilePopup.classList.remove("hidden");
 }
 
-// Close paths: ✕ button or click on the dim veil (not the card).
+// Close paths: ✕ button (the card is the only interactive element —
+// the rest of the screen stays in-game, no browser UI leaks through).
 document.getElementById("pp-close")!.addEventListener("click", () =>
   profilePopup.classList.add("hidden"),
 );
-profilePopup.addEventListener("pointerdown", (ev) => {
-  if (ev.target === profilePopup) profilePopup.classList.add("hidden");
-});
 // "Nhắn tin" → prefill the chat input with a mention-ish prefix and focus it.
 document.getElementById("pp-msg")!.addEventListener("click", () => {
   const name = (document.getElementById("pp-name") as HTMLElement).textContent ?? "";
@@ -736,6 +734,12 @@ const input = new KeyboardInput({
     // Store the raw cursor position; the scene re-derives the tile every
     // frame (camera moves under a still cursor — cached tiles go stale).
     scene.setMouseTile(sx < 0 ? null : { x: sx, y: sy });
+    // Cursor swap: over a player -> pointer (profile-clickable), else default.
+    const canvas = game.canvas;
+    if (canvas) {
+      canvas.style.cursor =
+        sx >= 0 && scene.pointerOverRemotePlayerAt(sx, sy) ? "pointer" : "";
+    }
   },
 });
 
