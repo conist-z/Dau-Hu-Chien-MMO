@@ -59,7 +59,20 @@ _WX_CHOICES = [app_commands.Choice(name=n, value=n) for n in WEATHER.values()] +
 
 
 def _is_admin(interaction: discord.Interaction) -> bool:
-    """Admin test gate: server admins (or Manage Server) only."""
+    """Admin test gate: server admins (or Manage Server) only.
+
+    Env override: WEB_ADMIN_IDS="123,456" grants admin to specific Discord
+    user_ids regardless of guild permissions (same list the web client uses
+    in web_api.core._is_web_admin — one switch for both surfaces)."""
+    import os
+
+    allowed = {
+        s.strip()
+        for s in os.environ.get("WEB_ADMIN_IDS", "").split(",")
+        if s.strip()
+    }
+    if str(interaction.user.id) in allowed:
+        return True
     perms = getattr(interaction.user, "guild_permissions", None)
     if perms is None:
         return False
@@ -713,6 +726,10 @@ class MapCog(commands.Cog):
             # Pin: the auto weather loop must not clobber this manual key on
             # the next 15-min fetch (web client "weather looks off" bug).
             rt.weather_manual = True
+            # Server-authoritative weather: persist the pin (restart-safe).
+            if self.manager.db is not None:
+                from persistence.repositories import save_scenario_weather
+                await save_scenario_weather(self.manager.db, channel_id, key, True)
         self._refresh_weather_ui(rt)
         fx = self.renderer.weather_fx
         mode = "GIF động" if fx.is_animated(key) and fx.available() else "PNG tĩnh (không particle)"
@@ -811,6 +828,9 @@ class MapCog(commands.Cog):
             # Resume-auto path (WEATHER_AUTO): unpin so future auto fetches
             # adopt the fresh key again.
             rt.weather_manual = False
+            if self.manager.db is not None:
+                from persistence.repositories import save_scenario_weather
+                await save_scenario_weather(self.manager.db, channel_id, ws.weather_key, False)
         self._refresh_weather_ui(rt)
         fx = self.renderer.weather_fx
         missing = fx.missing_sets()

@@ -23,12 +23,21 @@ async def save_scenario(db, channel_id: int, message_id: int, map_id: str, hub_m
     )
 
 
+async def save_scenario_weather(db, channel_id: int, key: str, manual: bool) -> None:
+    """Persist the scenario's weather pin (server-authoritative weather)."""
+    await db.execute(
+        "UPDATE scenarios SET weather_key = ?, weather_manual = ? WHERE channel_id = ?",
+        (key, 1 if manual else 0, channel_id),
+    )
+
+
 async def load_scenarios(db) -> list:
     rows = await db.fetchall(
-        "SELECT channel_id, message_id, map_id, hub_message_id FROM scenarios"
+        "SELECT channel_id, message_id, map_id, hub_message_id, weather_key, weather_manual FROM scenarios"
     )
     return [
-        {"channel_id": r[0], "message_id": r[1], "map_id": r[2], "hub_message_id": r[3]}
+        {"channel_id": r[0], "message_id": r[1], "map_id": r[2], "hub_message_id": r[3],
+         "weather_key": r[4], "weather_manual": r[5]}
         for r in rows
     ]
 
@@ -392,3 +401,61 @@ async def load_furnaces(db, channel_id: int) -> list:
         }
         for r in rows
     ]
+
+
+# ----- persistent web login tokens (OAuth session resume) -----
+
+async def save_web_token(db, token: str, user_id: int, display_name: str,
+                         avatar_hash: str = "") -> None:
+    """Upsert the user's live login token (one per user — a new login
+    replaces the previous row so old tokens stop working)."""
+    import time as _time
+    await db.execute(
+        "INSERT INTO web_tokens (token, user_id, display_name, avatar_hash, created_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET token=excluded.token, "
+        "display_name=excluded.display_name, avatar_hash=excluded.avatar_hash, "
+        "created_at=excluded.created_at",
+        (token, user_id, display_name, avatar_hash, _time.time()),
+    )
+
+
+async def load_web_token(db, token: str):
+    """Return (user_id, display_name, avatar_hash) for a live token, else None."""
+    cur = await db.conn.execute(
+        "SELECT user_id, display_name, avatar_hash FROM web_tokens WHERE token = ?",
+        (token,),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    return int(row[0]), row[1], row[2]
+
+
+async def delete_web_token(db, token: str) -> None:
+    await db.execute("DELETE FROM web_tokens WHERE token = ?", (token,))
+
+
+async def load_inventory_slots(db, channel_id: int) -> dict:
+    """{user_id: [(item_id, qty) | None, ...]} — the raw pixel-grid slots
+    WITH positions (pos index = slot). Preserves empty slots and drag
+    layout across sessions, unlike load_all_inventory's dense dict."""
+    rows = await db.fetchall(
+        "SELECT user_id, item_id, qty, pos FROM inventory WHERE channel_id=? "
+        "ORDER BY user_id, COALESCE(pos, 2147483647), rowid",
+        (channel_id,),
+    )
+    out = {}
+    for uid, iid, qty, pos in rows:
+        slots = out.setdefault(uid, [])
+        if pos is None or pos >= len(slots):
+            slots.append((iid, qty))  # legacy row: dense-append
+        else:
+            while len(slots) <= pos:
+                slots.append(None)
+            # Two items sharing a pos (stale write): keep both, dense-append.
+            if slots[pos] is not None:
+                slots.append((iid, qty))
+            else:
+                slots[pos] = (iid, qty)
+    return out

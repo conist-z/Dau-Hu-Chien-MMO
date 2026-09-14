@@ -2162,12 +2162,25 @@ class GameManager:
 
     async def _grant_drop_collections(self, rt, collections) -> None:
         """Persist bag changes from collected drop entities + notify hubs."""
+        from game.purse import is_currency
         by_user: dict = {}
         for user_id, item_id, qty in collections:
+            # Currency picked up from a drop AUTO-BANKS into the purse —
+            # the user's rule: nhặt xu từ map thì vào ví luôn, không nằm
+            # trong túi. Direct purse credit (the coin never touches the
+            # bag, so purse_add's bag-drain is not the right primitive).
+            if is_currency(item_id):
+                p = rt.state.get_player(user_id)
+                if p is not None:
+                    field = "coins" if item_id == "coin" else "crystals"
+                    setattr(p, field, getattr(p, field, 0) + qty)
+                    self._schedule_save(rt, p)
+                    by_user.setdefault(user_id, True)
+                continue
             inv = self.get_inventory(rt.channel_id, user_id)
-            # Currency lands as a FREE bag stack (deposit = drag it onto the
-            # purse icons); the next dispatch sweep does NOT touch it (the
-            # sweep only fires for the acting user, on their own actions).
+            # Non-currency lands as a FREE bag stack (deposit = drag it onto
+            # the purse icons); the next dispatch sweep does NOT touch it
+            # (the sweep only fires for the acting user, on their actions).
             inv.add(item_id, qty)
             by_user.setdefault(user_id, True)
             if self.db is not None:
@@ -2450,6 +2463,12 @@ class GameManager:
                         # NOT manually pinned by an admin override.
                         if not getattr(rt, "weather_manual", False):
                             rt.weather_key = ws.weather_key
+                            # Persist the adopted key so a rejoin sees the
+                            # same sky the rest of the server is under.
+                            if self.db is not None:
+                                from persistence.repositories import save_scenario_weather
+                                await save_scenario_weather(
+                                    self.db, rt.channel_id, ws.weather_key, False)
                     if hub is not None:
                         hub.schedule(rt.channel_id, {"type": "weather"})
             except asyncio.CancelledError:

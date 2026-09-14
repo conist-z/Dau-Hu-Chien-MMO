@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS travel_return (
     PRIMARY KEY (channel_id, user_id)
 );
 
+-- Persistent web login tokens (Discord OAuth sessions): survive bot
+-- restarts so a browser refresh NEVER needs the OAuth dance again —
+-- the client replays its token and the server rebuilds the session.
+-- One live token per user (new login replaces the old row).
+CREATE TABLE IF NOT EXISTS web_tokens (
+    token        TEXT PRIMARY KEY,
+    user_id      INTEGER NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    avatar_hash  TEXT NOT NULL DEFAULT '',
+    created_at   REAL NOT NULL
+);
+
 -- Per-tile furnace state (game/smelting.py): input/fuel/output slots + the
 -- smelt deadline (unix seconds) so a restart never loses smelting progress
 -- nor gives free fuel. One row per furnace block tile.
@@ -122,6 +134,10 @@ INVENTORY_COLUMNS = [
 
 SCENARIO_COLUMNS = [
     ("hub_message_id", "INTEGER"),
+    # Server-authoritative weather (survives restarts + rejoins): the pinned
+    # key + whether it was manually set. NULL manual = follow live weather.
+    ("weather_key", "TEXT"),
+    ("weather_manual", "INTEGER"),
 ]
 
 

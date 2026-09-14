@@ -167,6 +167,11 @@ async def setup_hook():
 
     for sc in await load_scenarios(db):
         rt = manager.create_runtime(sc["channel_id"], sc["map_id"], sc["message_id"], sc["hub_message_id"])
+        # Server-authoritative weather: restore the persisted key so a pinned
+        # /setweather survives restarts and rejoins (no "vừa vào là hết mưa").
+        if sc.get("weather_key"):
+            rt.weather_key = sc["weather_key"]
+            rt.weather_manual = bool(sc.get("weather_manual"))
         await manager.load_inventories(rt)
         await manager.load_blocks(rt)
         await manager.load_resources(rt)

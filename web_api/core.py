@@ -1035,6 +1035,11 @@ class WebHub:
             # Pin manual key (same as the Discord /setweather path): the auto
             # weather loop only refreshes weather_state while pinned.
             rt.weather_manual = True
+            # Server-authoritative weather: persist the pin so it survives
+            # restarts + rejoins.
+            if self.manager.db is not None:
+                from persistence.repositories import save_scenario_weather
+                await save_scenario_weather(self.manager.db, sess.channel_id, rt.weather_key, True)
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"Đã đổi thời tiết: {args[0]}",
         })
