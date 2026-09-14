@@ -1410,11 +1410,14 @@ class GameManager:
         return True, "ok", out_id, out_qty
 
     async def craft_from_inputs(self, channel_id: int, user_id: int,
-                                inputs: list) -> dict:
+                                inputs: list,
+                                layout: list | None = None) -> dict:
         """Web craft-grid craft: consume EXACTLY the materials the client's
         material grid held ([(item_id, qty), ...]) from the REAL bag and
         PARK the output in the result slot (never straight into the bag —
-        the player clicks the result slot to collect it).
+        the player clicks the result slot to collect it). ``layout`` is the
+        optional exact 3x3 placement [(item_id, col, row)] — when present
+        the recipe must match the arrangement (mirror allowed).
 
         Result-slot rule: same item stacks on top of what's parked; a
         different item is rejected with ``result_slot_occupied`` until the
@@ -1456,11 +1459,10 @@ class GameManager:
         # Layout-aware match: the client may send the exact 3x3 placement
         # [(item_id, col, row), ...]. With a layout, the recipe must match
         # the ARRANGEMENT (mirror allowed) — not just the multiset.
-        raw_layout = frame.get("layout")
-        layout = None
-        if isinstance(raw_layout, list):
-            layout = []
-            for entry in raw_layout:
+        layout_norm = None
+        if isinstance(layout, list):
+            layout_norm = []
+            for entry in layout:
                 if isinstance(entry, dict):
                     iid = entry.get("id")
                     col, row = entry.get("col"), entry.get("row")
@@ -1469,10 +1471,10 @@ class GameManager:
                 else:
                     continue
                 try:
-                    layout.append((str(iid), int(col), int(row)))
+                    layout_norm.append((str(iid), int(col), int(row)))
                 except (TypeError, ValueError):
                     continue
-        recipe = crafting.find_recipe_by_inputs(cleaned, pattern=layout)
+        recipe = crafting.find_recipe_by_inputs(cleaned, pattern=layout_norm)
         if recipe is None:
             return {"ok": False, "reason": "no_matching_recipe", "item_id": None, "qty": 0}
         near_table = crafting.nearest_station(rt.state.blocks, player)

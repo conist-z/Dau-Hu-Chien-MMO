@@ -786,7 +786,8 @@ class WebHub:
             # back to the server-side grid buffer (older clients).
             inputs = frame.get("inputs")
             if inputs:
-                res = await self.manager.craft_from_inputs(cid, uid, inputs)
+                res = await self.manager.craft_from_inputs(
+                    cid, uid, inputs, layout=frame.get("layout"))
             else:
                 res = await self.manager.craft_from_grid(cid, uid)
             print(f"[CRAFT] verdict={res}", flush=True)
