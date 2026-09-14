@@ -640,6 +640,44 @@ class GameManager:
             elapsed = asyncio.get_running_loop().time() - started
             await asyncio.sleep(max(0.001, interval - elapsed))
 
+    def _converge_to_report(self, rt: ScenarioRuntime, player, sess, now: float) -> bool:
+        """Pull the server body toward the client's reported predicted position
+        (speed-capped + swept-collision-checked). Shared by the MOVING path
+        and the IDLE path — both must converge, or a standing player's server
+        body silently drifts from the on-screen avatar (the "hitbox bên kia"
+        ghost). Returns True when the body moved.
+
+        One report = one application: report_at is consumed here. The time
+        budget is the gap since the report stamp (capped at 0.5 s, floored at
+        one tick) so per-report movement can never exceed the legal rate.
+        """
+        step_budget = min(
+            0.5, max(0.0, now - max(sess.report_at, sess.last_converge))
+        )
+        sess.last_converge = now
+        sess.report_at = 0.0  # consume: a report is applied once
+        tgt_x = max(0.0, float(sess.report_x))
+        tgt_y = max(0.0, float(sess.report_y))
+        step_total = math.hypot(tgt_x - player.x_f, tgt_y - player.y_f)
+        max_speed = WEB_RUN_SPEED
+        if player.eating_until > now:
+            max_speed *= EAT_SPEED_MULT
+        max_step = max_speed * max(step_budget, 1.0 / WEB_TICK_HZ)
+        moved_any = False
+        if step_total > 1e-6:
+            moved = min(step_total, max_step)
+            ux = (tgt_x - player.x_f) / step_total
+            uy = (tgt_y - player.y_f) / step_total
+            nx_f, ny_f = rt.collision.can_move_float(
+                player.x_f, player.y_f, ux * moved, uy * moved,
+            )
+            if (nx_f, ny_f) != (player.x_f, player.y_f):
+                player.x_f, player.y_f = nx_f, ny_f
+                moved_any = True
+        if (sess.dx or sess.dy):
+            player.direction = _web_direction(sess.dx, sess.dy)
+        return moved_any
+
     async def _web_tick_runtime(self, rt: ScenarioRuntime,
                                 sessions: Dict[int, WebSession], now: float) -> None:
         moved_any = False
@@ -712,6 +750,15 @@ class GameManager:
                     sess.last_tick = now
                     self._regen_player_beat(rt, player, now)
                     self._stamina_regen_beat(rt, player, now)
+                    # IDLE CONVERGE (the heartbeat's other half): the client's
+                    # idle heartbeat still carries its predicted position —
+                    # apply it HERE instead of `continue`, or the server body
+                    # silently drifts while the player stands still (the
+                    # "đứng yên mà hitbox ở chỗ khác" ghost, worse than ever
+                    # once the heartbeat made report_at perpetually fresh).
+                    if (sess.report_at > 0.0
+                            and 0.0 < (now - sess.report_at) < 1.0):
+                        self._converge_to_report(rt, player, sess, now)
                     continue
                 self._regen_player_beat(rt, player, now)
                 self._stamina_regen_beat(rt, player, now)
@@ -734,33 +781,8 @@ class GameManager:
                     and 0.0 < (now - sess.report_at) < 1.0  # fresh report
                 )
                 if have_report:
-                    # Converge time budget = time since the last applied
-                    # report (capped by raw_dt's 0.5s ceiling). One report =
-                    # one application: never re-applied on later ticks.
-                    step_budget = min(
-                        0.5, max(0.0, now - max(sess.report_at, sess.last_converge))
-                    )
-                    sess.last_converge = now
-                    sess.report_at = 0.0  # consume: a report is applied once
-                    tgt_x = max(0.0, float(sess.report_x))
-                    tgt_y = max(0.0, float(sess.report_y))
-                    step_total = math.hypot(tgt_x - player.x_f, tgt_y - player.y_f)
-                    max_speed = WEB_RUN_SPEED
-                    if player.eating_until > now:
-                        max_speed *= EAT_SPEED_MULT
-                    max_step = max_speed * max(step_budget, 1.0 / WEB_TICK_HZ)
-                    if step_total > 1e-6:
-                        moved = min(step_total, max_step)
-                        ux = (tgt_x - player.x_f) / step_total
-                        uy = (tgt_y - player.y_f) / step_total
-                        nx_f, ny_f = rt.collision.can_move_float(
-                            player.x_f, player.y_f, ux * moved, uy * moved,
-                        )
-                        if (nx_f, ny_f) != (player.x_f, player.y_f):
-                            player.x_f, player.y_f = nx_f, ny_f
-                            moved_any = True
-                    if (sess.dx or sess.dy):
-                        player.direction = _web_direction(sess.dx, sess.dy)
+                    if self._converge_to_report(rt, player, sess, now):
+                        moved_any = True
                 else:
                     # LEGACY fallback (old client / expired report): the
                     # original time integration, still dt-capped.
