@@ -159,5 +159,9 @@ export class KeyboardInput {
     });
     canvas.addEventListener("mouseleave", () => this.hooks.onCanvasHover?.(-1, -1));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // The whole game root too: right-clicking a DOM overlay (profile popup
+    // etc.) sat OUTSIDE the canvas listener and opened Chrome's devtools
+    // context menu mid-game.
+    document.getElementById("game-root")?.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 }
