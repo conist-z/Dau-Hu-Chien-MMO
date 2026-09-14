@@ -75,6 +75,10 @@ interface WeatherStyle {
 // at the 160ms map-GIF frame duration: rain 32/0.16=200, heavy_rain/storm
 // 48/0.16=300, snow 16/0.2=80, wind ~600 (matches the old web gust speed).
 const STYLES: Record<string, WeatherStyle> = {
+  // Admin test key (/clouds N): ONLY the shadow blobs — no rain, no tint.
+  cloud_shadow: {
+    sheet: "", speedPx: 0, tint: "rgba(0,0,0,0)", cloudShadow: true,
+  },
   rain: {
     // Visibility boost (user rule 14/09: "mưa yếu phải lòi mắt"): the pack
     // sheets are faint streaks — the boost brightens + thickens them without
@@ -194,6 +198,7 @@ function rand(a: number, b: number): number {
 // with a 0->1->0 fade, alpha ~0.16 dark tint, big scale. Renders in WORLD
 // space via the same camera-parallax offset as the rain sheets.
 const CLOUD_SHADOW = {
+  // NOT readonly: the admin /clouds N test command writes the live count.
   count: 4,               // ekonia: amount 3 (we use 4 to cover wider screens)
   lifeMs: 28000,          // ekonia: lifetime 28.0
   windPx: 9,              // ekonia: wind 8 px/s (constant, never accelerates)
@@ -438,8 +443,9 @@ export class WeatherFx {
    * 14/09). The outgoing slot keeps rendering (fading out) while the
    * incoming one loads and fades in; a cloud veil + gust burst bridge them.
    * Repeated same-key calls (every snapshot) are no-ops.
+   * cloudCount (admin /clouds N) overrides the blob count while forced.
    */
-  setWeather(key: string | null | undefined): void {
+  setWeather(key: string | null | undefined, cloudCount = 0): void {
     const next = key && ANIMATED_WEATHER_KEYS.has(key) ? key : null;
     if (next === (this.current?.key ?? null)) return;
     // Collapse any in-flight transition: the previous incoming layer becomes
@@ -449,6 +455,12 @@ export class WeatherFx {
     this.transitionT0 = performance.now();
     if (next) {
       this.current = makeSlot(next);
+      if (cloudCount > 0 && this.current.style?.cloudShadow) {
+        // Admin override: seed with the requested blob count instead of the
+        // style default (re-seeding on every snapshot keeps it authoritative).
+        CLOUD_SHADOW.count = Math.min(8, cloudCount);
+        this.seedClouds(this.current);
+      }
       void this.loadFor(this.current);
     } else {
       this.current = null;

@@ -120,6 +120,9 @@ export interface SnapshotPayload {
   map_id: string;
   clock: number;
   weather: string;
+  // Admin /clouds N flag: >0 forces the cloud-shadow overlay (qty = blob
+  // count cap), 0 = weather-driven only. Test hook — no gameplay effect.
+  clouds_override?: number;
   players: PlayerPayload[];
   blocks: [number, number, string][];
   // "x,y" -> [damage, needed(hardness)] — only DAMAGED blocks appear, so it

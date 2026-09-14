@@ -417,13 +417,17 @@ def _web_weather_key(rt) -> str:
     """The weather key the WEB client should render — with the night guard:
     a day-only key (sunny/sun_clouds) observed during in-game night is
     remapped to cloudy. Covers every path that can set the key (auto fetch
-    already guards, but an admin /setweather pin does not)."""
+    already guards, but an admin /setweather pin does not). The admin test
+    key cloud_shadow passes through untouched (rain-without-rain visual)."""
     key = getattr(rt, "weather_key", "") or "sun_clouds"
+    if key == "cloud_shadow":
+        return key
     if key in _DAY_ONLY_WEATHER:
         sec = ingame_seconds() % 86400
         if sec < 6 * 3600 or sec >= 21 * 3600:
             return "cloudy"
     return key
+
 
 
 def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
@@ -442,6 +446,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "map_id": rt.map_data.map_id,
         "clock": ingame_seconds() % 86400,
         "weather": _web_weather_key(rt),
+        "clouds_override": getattr(rt, "clouds_override", 0),
         "players": _players_payload(rt, user_id),
         **_heavy_payloads(rt),
         "zombies": _zombies_payload(rt),

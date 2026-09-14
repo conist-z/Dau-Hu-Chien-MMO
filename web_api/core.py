@@ -59,7 +59,7 @@ log = logging.getLogger("WEB")
 WEATHER_KEYS = (
     "sun_clouds", "sunny", "cloudy", "heavy_clouds",
     "rain", "heavy_rain", "storm", "snow", "cold", "wind",
-    "fog", "sun", "clouds",
+    "fog", "sun", "clouds", "cloud_shadow",
 )
 
 
@@ -646,10 +646,19 @@ class WebHub:
                 await self.send_to_client_conn(
                     sess, {"type": MSG_ERROR, "code": "bad_op"})
                 return
+            # The client clears the exact cell it dragged FROM, optimistically.
+            # Passing that slot through makes the server drain the SAME cell —
+            # a first-stack-in-order drain could hit a different coin stack
+            # (two layouts can differ briefly), leaving a ghost on screen.
+            raw_slot = frame.get("slot")
+            slot = (int(raw_slot)
+                    if isinstance(raw_slot, (int, str))
+                    and str(raw_slot).lstrip("-").isdigit() else None)
             inv = self.manager.get_inventory(cid, uid)
             have = inv.count(item_id)
             take = min(qty, have)
-            if take > 0 and purse_add(self.manager, cid, uid, item_id, take):
+            if take > 0 and purse_add(self.manager, cid, uid, item_id, take,
+                                      slot=slot):
                 rt = self.manager.get_runtime_for(cid, uid)
                 if rt is not None:
                     p = rt.state.get_player(uid)
@@ -855,6 +864,8 @@ class WebHub:
             })
         elif cmd == "setweather":
             await self._cmd_setweather(sess, args)
+        elif cmd == "clouds":
+            await self._cmd_clouds(sess, args)
         elif cmd == "time":
             await self._cmd_time(sess, args)
         elif cmd == "give":
@@ -1027,6 +1038,27 @@ class WebHub:
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"Đã đổi thời tiết: {args[0]}",
         })
+
+    async def _cmd_clouds(self, sess: WebSession, args: List[str]) -> None:
+        """Admin /clouds [qty]: force the cloud-shadow overlay for quick
+        testing WITHOUT touching the weather key (rain stays rain, sunny
+        stays sunny). qty 0 = clear the clouds back off. Sets a transient
+        runtime flag the snapshot reads; survives until changed again."""
+        if not await self._is_web_admin(sess):
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Chỉ admin mới được dùng /clouds.",
+            })
+            return
+        rt = self.manager.get_runtime(sess.channel_id)
+        if rt is None:
+            return
+        qty = int(args[0]) if args and args[0].lstrip("-").isdigit() else 1
+        async with rt.lock:
+            setattr(rt, "clouds_override", max(0, min(qty, 8)))
+        n = getattr(rt, "clouds_override", 0)
+        msg = (f"Đã tắt bóng mây (n={n})." if n == 0
+               else f"Đã bật bóng mây (n={n}) — không đổi thời tiết.")
+        await self.send_to_client_conn(sess, {"type": MSG_PUSH, "message": msg})
 
     async def _cmd_spawnmob(self, sess: WebSession, args: List[str]) -> None:
         """Admin /spawnmob: force-spawn night mobs NEXT TO the calling player

@@ -226,7 +226,11 @@ const net = new Net({
     scene.applySnapshot(frame);
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
-    weatherFx.setWeather(frame.weather);
+    // Admin /clouds N: >0 = force the cloud-shadow overlay on top of any
+    // weather (test hook); 0/undefined = weather-driven only.
+    const cloudsOverride = (frame as { clouds_override?: number }).clouds_override ?? 0;
+    const weatherKey = cloudsOverride > 0 ? "cloud_shadow" : frame.weather;
+    weatherFx.setWeather(weatherKey, cloudsOverride);
     dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
