@@ -116,6 +116,7 @@ def _resolve_tilesets(tilesets, assets_dir: Path,
                     "firstgid": ts.get("firstgid", 1),
                     "columns": ts.get("columns", 1),
                     "tilewidth": ts.get("tilewidth", 32),
+                    "tilecount": ts.get("tilecount"),
                 }
             )
             continue
@@ -125,6 +126,7 @@ def _resolve_tilesets(tilesets, assets_dir: Path,
                 "firstgid": ts.get("firstgid", 1),
                 "columns": ts.get("columns", 1),
                 "tilewidth": ts.get("tilewidth", 32),
+                "tilecount": ts.get("tilecount"),
             }
         )
     return resolved
