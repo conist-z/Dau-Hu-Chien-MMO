@@ -124,6 +124,9 @@ const FAR_ALPHA = 0.34;
 // far layer moving identically to the near one.
 const NEAR_CAM_PARALLAX = 0.72;
 const FAR_CAM_PARALLAX = 0.5;
+// The game camera's zoom (game.ts setZoom(2.0)) — converts world-px camera
+// scroll into the screen-px offset this overlay canvas draws with.
+const CAM_ZOOM = 2.0;
 
 // ---- transition tuning (user rule 14/09) -----------------------------------
 const TRANSITION_MS = 3200;   // full staged transition duration
@@ -401,6 +404,8 @@ export class WeatherFx {
   private camScroll = { x: 0, y: 0 };
   // cloud.png sprite (lazy-loaded once; null until ready, retry each slot).
   private cloudImg: HTMLImageElement | null = null;
+  // Pre-tinted DARK copy (built once from cloudImg — see buildCloudShadow).
+  private cloudShadowImg: HTMLCanvasElement | null = null;
 
   constructor() {
     const canvas = document.createElement("canvas");
@@ -576,15 +581,13 @@ export class WeatherFx {
       // every particle across the screen when the tab returns.
       this.dt = Math.min(0.05, (t - this.last) / 1000) || 1 / 60;
       this.last = t;
-      // WORLD-SPACE: sample the camera scroll every frame (cheap read) so
-      // the particle field inherits camera movement at the layer parallax.
-      // Scaled by PARALLAX×ZOOM: the camera scroll is in world px while this
-      // canvas is in screen px, so zoom (2.0) must divide it back out; the
-      // parallax factor then keeps a touch of "distant weather" depth.
+      // WORLD-SPACE: sample the RAW camera scroll (world px) every frame.
+      // Each layer converts it to its own screen-space parallax offset at
+      // draw time (zoom × factor) — see drawSheets / drawClouds.
       const cam = this.cameraHook?.() ?? null;
       if (cam) {
-        this.camScroll.x = cam.x / 2 * NEAR_CAM_PARALLAX;
-        this.camScroll.y = cam.y / 2 * NEAR_CAM_PARALLAX;
+        this.camScroll.x = cam.x;
+        this.camScroll.y = cam.y;
       } else {
         this.camScroll.x = 0;
         this.camScroll.y = 0;
@@ -789,6 +792,21 @@ export class WeatherFx {
     }
   }
 
+  /** Build the dark shadow copy of cloud.png ONCE (white sprite -> ekonia
+   *  shadow color rgb(33,36,51)) via source-atop on an offscreen canvas. */
+  private buildCloudShadow(src: HTMLImageElement): HTMLCanvasElement {
+    const cv = document.createElement("canvas");
+    cv.width = src.width;
+    cv.height = src.height;
+    const c2 = cv.getContext("2d")!;
+    c2.drawImage(src, 0, 0);
+    c2.globalCompositeOperation = "source-atop";
+    c2.fillStyle = "rgb(33,36,51)"; // 0x21,0x24,0x33 = ekonia tint
+    c2.fillRect(0, 0, cv.width, cv.height);
+    this.cloudShadowImg = cv;
+    return cv;
+  }
+
   /** Draw the cloud-shadow blobs of ONE slot at the given intensity.
    *  WORLD-SPACE: the render position = world anchor − camera scroll
    *  (divided by zoom, same convention as the rain sheets), so the blob
@@ -799,22 +817,24 @@ export class WeatherFx {
     const img = this.cloudImg;
     if (!img || slot.clouds.length === 0) return;
     const ctx = this.ctx;
-    const zoom = 2.0; // matches the game camera (see main.ts setCameraHook)
+    // FULL world anchoring (user rule: "player di chuyển thì nó mặt kệ"):
+    // render pos = world anchor − camera scroll × zoom (screen px per world
+    // px at zoom 2.0) — the blob moves 1:1 with the ground, zero parallax.
     for (const c of slot.clouds) {
       const age = (now - c.bornAt) / CLOUD_SHADOW.lifeMs;
       const fade = Math.min(1, Math.min(age, 1 - age) / 0.12);
       if (fade <= 0) continue;
-      const x = c.wx - this.camScroll.x / NEAR_CAM_PARALLAX / zoom;
-      const y = c.wy - this.camScroll.y / NEAR_CAM_PARALLAX / zoom;
+      const x = c.wx - this.camScroll.x * CAM_ZOOM;
+      const y = c.wy - this.camScroll.y * CAM_ZOOM;
       const w = img.width * c.scale;
       const h = img.height * c.scale;
-      ctx.save();
-      // Screen-space cam offset: camScroll already carries the parallax
-      // factor; the /NEAR_CAM_PARALLAX/zoom recovers the raw scroll so the
-      // blob moves 1:1 with the ground (full world anchoring).
+      // DARK SHADOW SPRITE: the source cloud.png is WHITE — painting it raw
+      // reads as a white blob. A pre-tinted offscreen copy (recolors only the
+      // sprite's own opaque pixels to the ekonia shadow color, alpha shape
+      // untouched) is what gets drawn — a true dark translucent shadow.
+      const shadow = this.cloudShadowImg ?? this.buildCloudShadow(img);
       ctx.globalAlpha = Math.min(1, CLOUD_SHADOW.alpha * intensity * fade);
-      ctx.drawImage(img, x - w / 2, y - h / 2, w, h);
-      ctx.restore();
+      ctx.drawImage(shadow, x - w / 2, y - h / 2, w, h);
     }
     ctx.globalAlpha = 1;
   }
@@ -878,11 +898,11 @@ export class WeatherFx {
 
     if (style.horizontal) {
       // Wind drifts RIGHT; the camera scroll slides BOTH layers sideways.
-      const ox = dist - this.camScroll.x;
+      const ox = dist - this.camScroll.x * CAM_ZOOM * NEAR_CAM_PARALLAX;
       // Far layer drifts slower (0.6x parallax) phase-shifted 512px — same
       // numbers as the Discord _scroll_overlays wind branch. Both layers tile
       // the full viewport; the 96px far offset just de-correlates the rows.
-      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512 - this.camScroll.x * 0.4, 96);
+      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512 - this.camScroll.x * CAM_ZOOM * FAR_CAM_PARALLAX, 96);
       drawLayer(slot.near!, NEAR_ALPHA, ox, 0);
     } else {
       // Falling particles scroll DOWN (the paste origin grows with the
@@ -891,9 +911,10 @@ export class WeatherFx {
       // moves across it. The far layer inherits LESS of the scroll (deeper
       // parallax) and keeps its 137px x phase shift.
       const oy = dist;
-      drawLayer(slot.far!, FAR_ALPHA, 137 - this.camScroll.x * (FAR_CAM_PARALLAX / NEAR_CAM_PARALLAX),
-        oy + slot.far!.h / 3 - this.camScroll.y * (FAR_CAM_PARALLAX / NEAR_CAM_PARALLAX));
-      drawLayer(slot.near!, NEAR_ALPHA, -this.camScroll.x, oy - this.camScroll.y);
+      drawLayer(slot.far!, FAR_ALPHA, 137 - this.camScroll.x * CAM_ZOOM * FAR_CAM_PARALLAX,
+        oy + slot.far!.h / 3 - this.camScroll.y * CAM_ZOOM * FAR_CAM_PARALLAX);
+      drawLayer(slot.near!, NEAR_ALPHA, -this.camScroll.x * CAM_ZOOM * NEAR_CAM_PARALLAX,
+        oy - this.camScroll.y * CAM_ZOOM * NEAR_CAM_PARALLAX);
     }
   }
 
