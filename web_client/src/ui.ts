@@ -2139,15 +2139,10 @@ export class Hud {
   setNearStation(near: boolean): void {
     if (near === this.nearTable) return;
     this.nearTable = near;
+    // Leaving the range only DOWNGRADES the grid (9 -> 4) and returns any
+    // overflow stacks — the panel STAYS OPEN (user rule 15/09).
     if (near === false) {
       this.overflowMatToBag(); // 3x3 -> 2x2: cells 4..8 go home
-      // Left the station's range while its pinned window is open: close
-      // the whole window (also fires onPanelWindowClosed -> bubble back).
-      if (this.stationWindowOpen) {
-        this.stationOpen = false;
-        this.animateHide(this.invPanel);
-        this.onPanelWindowClosed?.();
-      }
     }
     if (this.inventoryOpen) this.renderInventory();
   }
