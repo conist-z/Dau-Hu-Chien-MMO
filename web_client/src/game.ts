@@ -1575,10 +1575,16 @@ export class WorldScene extends Phaser.Scene {
     return this.add.container(0, 0, [g, label]);
   }
 
-  /** E pressed (or station clicked): explosion burst replaces the bubble
-   *  (it dissolves into the sparks), then the panel opens. */
+  /** E pressed (or station clicked): on OPEN the bubble dissolves into an
+   *  explosion burst, then the panel opens. A close-press (panel already
+   *  open) is silent — no explosion, the bubble just fades back. */
   stationInteract(): void {
     if (!this.nearestStation) return;
+    if (this.suppressPrompt) {
+      // Panel already open: silent close (main.ts toggles it shut).
+      this.onStationInteract?.();
+      return;
+    }
     this.promptPunchAt = performance.now();
     const p = this.nearestStation;
     // Kill the bubble instantly — the explosion takes its place. The

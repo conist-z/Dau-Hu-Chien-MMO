@@ -623,9 +623,14 @@ const input = new KeyboardInput({
 // receives events (clicks dead, browser context menu leaked through).
 game.events.once("ready", () => {
   input.bindCanvas(game.canvas);
-  // Station interact pipeline: scene punch + explosion -> HUD panel. The
-  // bubble stays hidden until the window closes (then fades back in).
+  // Station interact pipeline. TOGGLE: if the station window is already
+  // open, E closes it (bubble fades back); otherwise open + suppress the
+  // bubble. The explosion only plays on the OPEN press.
   scene.onStationInteract = () => {
+    if (hud.stationWindowOpen) {
+      hud.toggleInventory(false);
+      return;
+    }
     hud.openCraftPanel();
     hud.onPanelWindowClosed = () => scene.setPromptSuppressed(false);
     scene.setPromptSuppressed(true);
