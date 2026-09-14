@@ -45,6 +45,30 @@
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>
+        <!-- Player profile popup (click another player in the world) -->
+        <div id="profile-popup" class="hidden">
+          <div class="pp-card">
+            <div class="pp-head">
+              <div class="pp-avatar">
+                <img id="pp-avatar" src="" alt="" />
+              </div>
+              <div class="pp-id">
+                <div id="pp-name" class="pp-name">?</div>
+                <div id="pp-sub" class="pp-sub">Cấp 1</div>
+              </div>
+              <button id="pp-close" class="pp-close" type="button">✕</button>
+            </div>
+            <div class="pp-stats">
+              <div class="pp-stat"><span class="pp-ico heart"></span><span class="pp-label">HP</span><span id="pp-hp" class="pp-val red">?</span></div>
+              <div class="pp-stat"><span class="pp-ico gem"></span><span class="pp-label">Cấp</span><span id="pp-level" class="pp-val cyan">?</span></div>
+              <div class="pp-stat"><span class="pp-ico sword"></span><span class="pp-label">Chế độ</span><span id="pp-mode" class="pp-val">?</span></div>
+            </div>
+            <div class="pp-actions">
+              <button id="pp-msg" class="pp-btn" type="button">💬 Nhắn tin</button>
+              <button id="pp-trade" class="pp-btn dim" type="button" disabled>🤝 Trao đổi <small>(sắp có)</small></button>
+            </div>
+          </div>
+        </div>
         <!-- Death overlay (hp 0): full-screen veil + respawn countdown -->
         <div id="death-overlay" class="hidden">
           <div class="death-panel">

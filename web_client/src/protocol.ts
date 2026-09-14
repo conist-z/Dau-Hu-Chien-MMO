@@ -193,6 +193,10 @@ export interface PlayerPayload {
   // Permanent role color ("#rrggbb", "" = legacy server): chat name +
   // avatar label color.
   color?: string;
+  // Profile popup stats (click-a-player card).
+  hp?: number;
+  max_hp?: number;
+  level?: number;
 }
 
 // Night zombie (Kaetram-style mob, shared pack with Discord):

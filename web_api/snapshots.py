@@ -115,6 +115,10 @@ def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict
             # Permanent role color ("#rrggbb", empty = not yet minted):
             # colors the chat name AND the label above the avatar.
             "color": p.name_color or "",
+            # Profile popup stats (click-a-player card).
+            "hp": p.hp,
+            "max_hp": p.max_hp,
+            "level": p.level,
         })
     return out
 

@@ -97,6 +97,8 @@ interface RemotePlayer {
   // Kaetram paperdoll for remote web bodies (spawned when the manifest +
   // base sheet are ready; null while the square placeholder is showing).
   doll: PaperdollBody | null;
+  // Latest profile payload for the click-popup (kept fresh each snapshot).
+  profile: PlayerPayload;
 }
 
 // Hand orbit: distance from the body centre + dot radius. Exported so the
@@ -238,6 +240,32 @@ export class WorldScene extends Phaser.Scene {
       `cvg=${this.convergeEvents}`,
     ].join("  ");
   }
+  /** Set by main.ts: opens the profile popup for the clicked player. */
+  onPlayerClick: ((p: PlayerPayload) => void) | null = null;
+
+  /** True when the base paperdoll sheet is registered (portrait available). */
+  hasPaperdollTexture(): boolean {
+    return this.paperdollReady && this.textures.exists("pd-base");
+  }
+
+  /** Data-URL portrait of the base paperdoll (idle SOUTH frame) for the
+   *  profile popup avatar. Extracts frame 0 onto a tiny offscreen canvas. */
+  paperdollPortraitSrc(): string {
+    if (!this.hasPaperdollTexture()) return "";
+    const mf = this.playersManifest;
+    const fw = mf?.base?.frame_w || 32;
+    const fh = mf?.base?.frame_h || 32;
+    const src = this.textures.get("pd-base").getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+    const canvas = document.createElement("canvas");
+    canvas.width = fw;
+    canvas.height = fh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, 0, 0, fw, fh, 0, 0, fw, fh);
+    return canvas.toDataURL();
+  }
+
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
   // True while hp == 0 (server-authoritative): prediction frozen, overlay on.
   private selfDead = false;
@@ -1061,8 +1089,15 @@ export class WorldScene extends Phaser.Scene {
       container.add(hand);
       container.add(toolIcon);
       container.add(label);
-      rp = { container, body, mode: p.mode, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir, doll: null };
+      rp = { container, body, mode: p.mode, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir, doll: null, profile: p };
       container.setData("pid", p.id);
+      // Click the player -> profile popup (ekonia parity). Only the body
+      // shape is interactive so the label/hand don't steal map clicks.
+      body.setInteractive({ useHandCursor: true });
+      body.on("pointerdown", () => {
+        const cur = this.players.get(p.id);
+        if (cur) this.onPlayerClick?.(cur.profile);
+      });
       this.players.set(p.id, rp);
       // Paperdoll texture already live? Swap immediately (square stays as
       // invisible fallback geometry otherwise). Chat players never get a
@@ -1081,6 +1116,7 @@ export class WorldScene extends Phaser.Scene {
     rp.buf.push([now, p.x * 32, p.y * 32]);
     if (rp.buf.length > 12) rp.buf.shift();
     rp.dir = p.dir;
+    rp.profile = p; // fresh stats for the profile popup
     // Role color can arrive after the body is created (minted server-side on
     // first join) — live-update the label so every viewer sees the SAME color.
     if (p.color && rp.label.style.color !== p.color) {

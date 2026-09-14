@@ -20,6 +20,64 @@ let pendingRejoinChannel: string | null = null;
 // so the same browser keeps the same identity/bag across sessions.
 const hud = new Hud();
 const scene = new WorldScene();
+
+// ----- player profile popup (click another player in the world) -----
+
+const profilePopup = document.getElementById("profile-popup")!;
+
+/** Open the profile card for a clicked player (ekonia palette + layout). */
+function showProfilePopup(p: {
+  id: number; name: string; color?: string; mode: "chat" | "web";
+  hp?: number; max_hp?: number; level?: number;
+}): void {
+  const nameEl = document.getElementById("pp-name")!;
+  nameEl.textContent = p.name;
+  // Name colored with the player's permanent role color (falls back white).
+  nameEl.style.color = p.color || "#ffffff";
+  (document.getElementById("pp-level") as HTMLElement).textContent =
+    String(p.level ?? 1);
+  (document.getElementById("pp-hp") as HTMLElement).textContent =
+    `${p.hp ?? "?"}/${p.max_hp ?? "?"}`;
+  (document.getElementById("pp-mode") as HTMLElement).textContent =
+    p.mode === "web" ? "Web" : "Discord";
+  (document.getElementById("pp-sub") as HTMLElement).textContent =
+    `Cấp ${p.level ?? 1} · ${p.mode === "web" ? "Web" : "Discord"}`;
+  // Avatar: chat players get their color circle letter; web players reuse
+  // the shared base paperdoll portrait when it is registered.
+  const img = document.getElementById("pp-avatar") as HTMLImageElement;
+  if (scene.hasPaperdollTexture()) {
+    img.src = scene.paperdollPortraitSrc();
+    img.style.display = "";
+  } else {
+    // Inline SVG fallback: colored circle + first letter (no network).
+    const letter = encodeURIComponent(p.name.charAt(0).toUpperCase() || "?");
+    img.src =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='38' height='38'%3E" +
+      `%3Ccircle cx='19' cy='19' r='18' fill='${p.color || "#2f9e63"}'/%3E` +
+      `%3Ctext x='19' y='25' text-anchor='middle' font-size='18' fill='%23fff'%3E${letter}%3C/text%3E%3C/svg%3E`;
+    img.style.display = "";
+  }
+  profilePopup.classList.remove("hidden");
+}
+
+// Close paths: ✕ button or click on the dim veil (not the card).
+document.getElementById("pp-close")!.addEventListener("click", () =>
+  profilePopup.classList.add("hidden"),
+);
+profilePopup.addEventListener("pointerdown", (ev) => {
+  if (ev.target === profilePopup) profilePopup.classList.add("hidden");
+});
+// "Nhắn tin" → prefill the chat input with a mention-ish prefix and focus it.
+document.getElementById("pp-msg")!.addEventListener("click", () => {
+  const name = (document.getElementById("pp-name") as HTMLElement).textContent ?? "";
+  profilePopup.classList.add("hidden");
+  const input = document.getElementById("chat-input") as HTMLInputElement;
+  input.value = `@${name} `;
+  input.focus();
+});
+
+// Scene -> popup wiring: click a remote body opens their card.
+scene.onPlayerClick = (p) => showProfilePopup(p);
 // every snapshot (and the welcome default below).
 weatherFx.mount(document.getElementById("game-root")!);
 // WORLD-SPACE weather: feed the overlay the LIVE Phaser camera scroll each
@@ -297,6 +355,7 @@ const net = new Net({
       scene.swingRemoteHandAt(uid, tx, ty);
     }
   },
+
   onError: (code, message) => {
     // SESSION DESYNC RECOVERY: the client thinks it is joined but the
     // server disagrees (bot restarted, registry dropped, relay re-hub).
