@@ -407,6 +407,25 @@ def _web_session_of(rt: ScenarioRuntime, user_id: int):
     return getattr(rt, "web_sessions", {}).get(user_id)
 
 
+# Day-only weather keys (nắng) — never valid during in-game night: the map
+# renders a dark blue night tint, and sunshine shadows/palette would read as
+# "nắng đêm". Night = before 06:00 or after 21:00 (daynight.py gradient).
+_DAY_ONLY_WEATHER = ("sunny", "sun_clouds")
+
+
+def _web_weather_key(rt) -> str:
+    """The weather key the WEB client should render — with the night guard:
+    a day-only key (sunny/sun_clouds) observed during in-game night is
+    remapped to cloudy. Covers every path that can set the key (auto fetch
+    already guards, but an admin /setweather pin does not)."""
+    key = getattr(rt, "weather_key", "") or "sun_clouds"
+    if key in _DAY_ONLY_WEATHER:
+        sec = ingame_seconds() % 86400
+        if sec < 6 * 3600 or sec >= 21 * 3600:
+            return "cloudy"
+    return key
+
+
 def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
     """One 20 Hz world snapshot (per connected client, self-view included)."""
     player = rt.state.get_player(user_id)
@@ -422,7 +441,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "seq": seq,
         "map_id": rt.map_data.map_id,
         "clock": ingame_seconds() % 86400,
-        "weather": rt.weather_key,
+        "weather": _web_weather_key(rt),
         "players": _players_payload(rt, user_id),
         **_heavy_payloads(rt),
         "zombies": _zombies_payload(rt),

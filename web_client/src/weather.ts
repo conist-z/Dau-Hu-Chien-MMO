@@ -66,6 +66,9 @@ interface WeatherStyle {
   particles?: boolean;  // ALWAYS procedural (never tile a sheet) — used by
                         // snow so every flake is an individual with its own
                         // size/fall/sway instead of a repeating strip
+  cloudShadow?: boolean; // drift the soft cloud.png blobs OVER the ground
+                         // (ekonia parity: 3-4 blobs, 28 s life, alpha .16);
+                         // stacks with rain/snow — never forced alone
 }
 
 // speedPx ≈ Discord speed-per-frame (rendering/weather_fx.py _STYLES.speed)
@@ -75,14 +78,18 @@ const STYLES: Record<string, WeatherStyle> = {
   rain: {
     // Visibility boost (user rule 14/09: "mưa yếu phải lòi mắt"): the pack
     // sheets are faint streaks — the boost brightens + thickens them without
-    // touching the artwork.
+    // touching the artwork. cloudShadow: bóng mây trôi trên đất STACK cùng
+    // mưa (ekonia parity) — không bao giờ xuất hiện một mình.
     sheet: "rain", speedPx: 200, tint: "rgba(12,18,34,0.12)", alphaBoost: 2.1,
+    cloudShadow: true,
   },
   heavy_rain: {
     sheet: "rain", speedPx: 300, tint: "rgba(8,12,22,0.18)", alphaBoost: 2.3,
+    cloudShadow: true,
   },
   storm: {
-    sheet: "rain", speedPx: 300, tint: "rgba(5,9,18,0.22)", bolt: true, alphaBoost: 2.4,
+    sheet: "rain", speedPx: 300, tint: "rgba(5,9,18,0.22)", bolt: true,
+    alphaBoost: 2.4, cloudShadow: true,
   },
   snow: {
     // Snow is ALWAYS procedural: a tiled 32px strip can only ever repeat —
@@ -175,6 +182,30 @@ function loadSheet(dir: string, file: string): Promise<Sheet | null> {
 
 function rand(a: number, b: number): number {
   return a + Math.random() * (b - a);
+}
+
+// ---------------------------------------------------------------- cloud shadows
+
+// EKONIA PARITY (weather_layer.gd + cloud_shadows.tres): soft cloud blobs
+// drift OVER the ground — area-scattered, constant slow velocity, 28 s life
+// with a 0->1->0 fade, alpha ~0.16 dark tint, big scale. Renders in WORLD
+// space via the same camera-parallax offset as the rain sheets.
+const CLOUD_SHADOW = {
+  count: 4,               // ekonia: amount 3 (we use 4 to cover wider screens)
+  lifeMs: 28000,          // ekonia: lifetime 28.0
+  windPx: 9,              // ekonia: wind 8 px/s (constant, never accelerates)
+  fallPx: 2,              // ekonia: fall_speed 2 px/s
+  alpha: 0.16,            // ekonia: Color(0.13, 0.14, 0.2, 0.16)
+  color: "rgb(33,36,51)", // ekonia tint 0.13/0.14/0.2
+  scaleMin: 3.0,          // ekonia: scale_min/max (x 80px sheet = 240-440 px)
+  scaleMax: 5.5,
+};
+
+interface CloudBlob {
+  wx: number; wy: number;       // world-space anchor (px, incl. cam offset)
+  vx: number; vy: number;       // drift velocity px/s
+  scale: number;
+  bornAt: number;               // ms
 }
 
 // ---------------------------------------------------------------- wind masters
@@ -325,6 +356,7 @@ interface WeatherSlot {
   proceduralKind: string | null;
   nearP: Particle[];
   farP: Particle[];
+  clouds: CloudBlob[];
   nextBoltAt: number;
   bolt: Bolt | null;
 }
@@ -339,6 +371,7 @@ function makeSlot(key: string): WeatherSlot {
     proceduralKind: null,
     nearP: [],
     farP: [],
+    clouds: [],
     nextBoltAt: 0,
     bolt: null,
   };
@@ -366,6 +399,8 @@ export class WeatherFx {
   // to the old screen-space behaviour.
   private cameraHook: (() => { x: number; y: number } | null) | null = null;
   private camScroll = { x: 0, y: 0 };
+  // cloud.png sprite (lazy-loaded once; null until ready, retry each slot).
+  private cloudImg: HTMLImageElement | null = null;
 
   constructor() {
     const canvas = document.createElement("canvas");
@@ -446,6 +481,15 @@ export class WeatherFx {
       slot.near = buildWindMaster(0);
       slot.far = buildWindMaster(1);
       return;
+    }
+    // Cloud shadows (ekonia parity): scatter blobs across the view + drift.
+    if (style.cloudShadow) {
+      this.seedClouds(slot);
+      if (!this.cloudImg) {
+        const img = new Image();
+        img.onload = () => { this.cloudImg = img; };
+        img.src = `${FX_ROOT}/cloud/cloud.png`;
+      }
     }
     // Warm the fallback immediately so the first raindrops are visible while
     // the sheets stream in (procedural is swapped out once they arrive).
@@ -597,11 +641,43 @@ export class WeatherFx {
       g.x += g.vx * this.dt;
       g.y += g.vy * this.dt;
     }
+    // Cloud shadows drift at constant slow velocity in WORLD space; blobs
+    // recycle on the ekonia 28 s life (fade handled at draw time).
+    for (const s of [this.outgoing, this.current]) {
+      if (!s || s.clouds.length === 0) continue;
+      const nowMs = now;
+      for (const c of s.clouds) {
+        c.wx += c.vx * this.dt;
+        c.wy += c.vy * this.dt;
+        if (nowMs - c.bornAt >= CLOUD_SHADOW.lifeMs) {
+          // Respawn: fresh scatter + size (random per cycle, ekonia parity).
+          c.wx = rand(-this.w, this.w * 2);
+          c.wy = rand(-this.h * 0.5, this.h * 1.5);
+          c.scale = rand(CLOUD_SHADOW.scaleMin, CLOUD_SHADOW.scaleMax);
+          c.bornAt = nowMs;
+        }
+      }
+    }
     if (p >= 1) {
       // Transition done: drop the outgoing ghost + the burst.
       this.outgoing = null;
       this.gust = [];
     }
+  }
+
+  /** Seed the cloud-shadow blobs: scattered across the viewport (staggered
+   *  life phases so they never all fade together) — ekonia AREA_DRIFT. */
+  private seedClouds(slot: WeatherSlot): void {
+    const now = performance.now();
+    slot.clouds = Array.from({ length: CLOUD_SHADOW.count }, (_, i) => ({
+      wx: rand(-this.w, this.w * 2),
+      wy: rand(-this.h * 0.5, this.h * 1.5),
+      vx: CLOUD_SHADOW.windPx * rand(0.8, 1.25),
+      vy: CLOUD_SHADOW.fallPx * rand(0.6, 1.4),
+      scale: rand(CLOUD_SHADOW.scaleMin, CLOUD_SHADOW.scaleMax),
+      // Stagger births so the fade cycles never sync up (natural rhythm).
+      bornAt: now - (i / CLOUD_SHADOW.count) * CLOUD_SHADOW.lifeMs * rand(0.3, 0.95),
+    }));
   }
 
   private spawnBolt(slot: WeatherSlot, now: number): Bolt {
@@ -704,11 +780,43 @@ export class WeatherFx {
 
     // ---- 4. Weather layers (outgoing fades, incoming builds) ----
     if (leaving && outA > 0.01) {
+      this.drawClouds(leaving, outA, now);
       this.drawSlot(leaving, outA, now);
     }
     if (entering && inA > 0.01) {
+      this.drawClouds(entering, inA, now);
       this.drawSlot(entering, inA, now);
     }
+  }
+
+  /** Draw the cloud-shadow blobs of ONE slot at the given intensity.
+   *  WORLD-SPACE: the render position = world anchor − camera scroll
+   *  (divided by zoom, same convention as the rain sheets), so the blob
+   *  stays put over the same patch of ground while the player walks.
+   *  Life fade: ease in over the first 12% and out over the last 12% of
+   *  the 28 s life — never pops in/out (ekonia gradient ramp parity). */
+  private drawClouds(slot: WeatherSlot, intensity: number, now: number): void {
+    const img = this.cloudImg;
+    if (!img || slot.clouds.length === 0) return;
+    const ctx = this.ctx;
+    const zoom = 2.0; // matches the game camera (see main.ts setCameraHook)
+    for (const c of slot.clouds) {
+      const age = (now - c.bornAt) / CLOUD_SHADOW.lifeMs;
+      const fade = Math.min(1, Math.min(age, 1 - age) / 0.12);
+      if (fade <= 0) continue;
+      const x = c.wx - this.camScroll.x / NEAR_CAM_PARALLAX / zoom;
+      const y = c.wy - this.camScroll.y / NEAR_CAM_PARALLAX / zoom;
+      const w = img.width * c.scale;
+      const h = img.height * c.scale;
+      ctx.save();
+      // Screen-space cam offset: camScroll already carries the parallax
+      // factor; the /NEAR_CAM_PARALLAX/zoom recovers the raw scroll so the
+      // blob moves 1:1 with the ground (full world anchoring).
+      ctx.globalAlpha = Math.min(1, CLOUD_SHADOW.alpha * intensity * fade);
+      ctx.drawImage(img, x - w / 2, y - h / 2, w, h);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** Draw ONE weather slot at the given intensity multiplier (0..1). */
