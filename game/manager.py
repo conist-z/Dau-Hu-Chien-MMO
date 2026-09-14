@@ -848,14 +848,22 @@ class GameManager:
                 # never teleport through the lobby doors — the old check ran
                 # only in the Discord dispatch path). The web tick moves the
                 # body via converge/integration, so this is the correct hook:
-                # side worlds only, latch prevents instant bounce-back
-                # (move_player_between_runtimes arms it on arrival).
+                # side worlds only. moved_off_portal lets a player STANDING on
+                # the door tile get the teleport (they may have walked on
+                # between two flushes); the latch still prevents bounce-back
+                # within one continuous portal contact.
                 if moved_any and self.side_runtimes.get(
                     (rt.channel_id, rt.map_data.map_id)
                 ) is rt:
                     from game.travel import check_portal_after_move
 
-                    fired = check_portal_after_move(rt, self.portals, user_id)
+                    prev_off = (
+                        getattr(rt, "on_portal_tile", None) is None
+                        or user_id not in rt.on_portal_tile
+                    )
+                    fired = check_portal_after_move(
+                        rt, self.portals, user_id, moved_off_portal=prev_off
+                    )
                     if fired is not None:
                         link, portal_player = fired
                         await self._teleport_through_link(

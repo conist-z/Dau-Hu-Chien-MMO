@@ -29,6 +29,22 @@ TRADE_INTERIOR_MAP = "montertradebase"
 # Runtime attribute: per-player "standing on a portal tile" latch (anti-loop).
 _PORTAL_LATCH_ATTR = "on_portal_tile"
 
+# TRADE ZONES: maps where building is forbidden (user rule 15/09 — "ở khu
+# trao đổi thì cấm phá block"). Both the Discord path and the web path go
+# through GameManager.dispatch, so a gate there covers every client.
+TRADE_ZONE_MAPS = frozenset({TRADE_LOBBY_MAP, TRADE_INTERIOR_MAP})
+
+
+def is_trade_zone(rt) -> bool:
+    """True when ``rt`` is a trade-zone world (lobby / monter interior).
+
+    Side worlds carry the map_id on their map_data; main worlds simply don't
+    match the frozenset."""
+    try:
+        return rt.map_data.map_id in TRADE_ZONE_MAPS
+    except AttributeError:
+        return False
+
 
 def load_portals(assets_dir: Path) -> Portals:
     """Load portals.json. ``assets_dir`` is the project's assets root (or the
@@ -82,13 +98,22 @@ def portal_link_for(rt, portal_cfg: Portals, x: int, y: int) -> PortalLink | Non
     return portal_cfg.link_at(rt.map_data.map_id, x, y)
 
 
-def check_portal_after_move(rt, portal_cfg: Portals, user_id: int):
+def check_portal_after_move(rt, portal_cfg: Portals, user_id: int,
+                            moved_off_portal: bool = False):
     """Called after a successful move. Returns the (link, player) pair when a
     teleport must fire, else None.
 
     Anti-loop latch: arriving ON a portal tile (the interior mat IS the
     arrival AND the trigger) does not re-fire until the player steps off
-    every portal tile of the current map."""
+    every portal tile of the current map.
+
+    ``moved_off_portal`` (web tick path): True when the player's PREVIOUS
+    position was off every portal tile — web movement reports a target
+    every flush, so "standing still on the door, wanting the teleport" is
+    a legitimate re-entry; the latch alone would swallow it forever (the
+    "đi xuyên cửa" bug). With this the latch only blocks BACK-TO-BACK
+    teleports within continuous portal contact, same as Discord.
+    """
     player = rt.state.get_player(user_id)
     if player is None:
         return None
@@ -101,7 +126,7 @@ def check_portal_after_move(rt, portal_cfg: Portals, user_id: int):
         if user_id in latched:
             latched.discard(user_id)
         return None
-    if user_id in latched:
+    if user_id in latched and not moved_off_portal:
         return None
     latched.add(user_id)
     return link, player
