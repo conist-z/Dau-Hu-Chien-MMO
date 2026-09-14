@@ -545,7 +545,9 @@ export class Hud {
       this.animateShow(this.invPanel);
       this.renderInventory();
     } else {
+      this.stationOpen = false;
       this.animateHide(this.invPanel);
+      this.onPanelWindowClosed?.();
     }
   }
 
@@ -574,6 +576,16 @@ export class Hud {
     this.applyTabLayout();
     this.craftDetail.classList.toggle("hidden", true);
     this.renderInventory();
+  }
+
+  /** Set by main.ts: called when the WHOLE window closes (any path —
+   *  X buttons, B key, station range exit) so the scene can un-suppress
+   *  the station "E" bubble. */
+  onPanelWindowClosed: (() => void) | null = null;
+
+  /** True while the station-pinned window is open (9-cell override). */
+  get stationWindowOpen(): boolean {
+    return this.stationOpen && !this.invPanel.classList.contains("hidden");
   }
 
   /** Re-apply the CURRENT tab layout to the three panel wraps, honoring
@@ -627,7 +639,9 @@ export class Hud {
       this.invClosed = true;
       // On the items tab the inv panel is the only one: whole window goes.
       if (!this.craftTab.classList.contains("active")) {
+        this.stationOpen = false;
         this.animateHide(this.invPanel);
+        this.onPanelWindowClosed?.();
         return;
       }
       this.applyTabLayout();
@@ -641,7 +655,9 @@ export class Hud {
       // is what remains visible).
       if (this.invClosed) {
         // Both closed via craft X too: hide the whole window.
+        this.stationOpen = false;
         this.animateHide(this.invPanel);
+        this.onPanelWindowClosed?.();
         return;
       }
     }
@@ -2123,7 +2139,16 @@ export class Hud {
   setNearStation(near: boolean): void {
     if (near === this.nearTable) return;
     this.nearTable = near;
-    if (near === false) this.overflowMatToBag(); // 3x3 -> 2x2: cells 4..8 go home
+    if (near === false) {
+      this.overflowMatToBag(); // 3x3 -> 2x2: cells 4..8 go home
+      // Left the station's range while its pinned window is open: close
+      // the whole window (also fires onPanelWindowClosed -> bubble back).
+      if (this.stationWindowOpen) {
+        this.stationOpen = false;
+        this.animateHide(this.invPanel);
+        this.onPanelWindowClosed?.();
+      }
+    }
     if (this.inventoryOpen) this.renderInventory();
   }
 

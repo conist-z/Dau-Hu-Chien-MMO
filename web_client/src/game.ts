@@ -1499,7 +1499,9 @@ export class WorldScene extends Phaser.Scene {
     this.nearestStation = this.findNearestStation();
     const st = this.nearestStation;
     if (st) this.lastPromptPos = st;
-    const target = st ? 1 : 0;
+    // The bubble is suppressed while the station panel is open — it only
+    // comes back after the player closes the panel (user rule).
+    const target = st && !this.suppressPrompt ? 1 : 0;
     // Exponential fade toward the target (~0.25s in/out), plus a slight
     // upward drift while disappearing.
     this.promptAlpha += (target - this.promptAlpha) * Math.min(1, this.frameDtSec * 9);
@@ -1518,13 +1520,14 @@ export class WorldScene extends Phaser.Scene {
       this.stationPrompt.setAlpha(this.promptAlpha);
       this.stationPrompt.setVisible(true).setDepth(150);
     }
-    if (!st) {
+    if (!st || this.suppressPrompt) {
       if (this.hoverStationCursor) {
         this.hoverStationCursor = false;
         this.game.canvas.style.cursor = "";
       }
-      return;
+      if (st && this.suppressPrompt) return; // still in range, panel open
     }
+    if (!st) return;
     // Bubble (lazy-built): pixel "E" in a dark rounded box + tail.
     if (!this.stationPrompt) this.stationPrompt = this.buildStationPrompt();
     // Hover cursor (Kaetram parity): crafting cursor over the station tile.
@@ -1543,6 +1546,14 @@ export class WorldScene extends Phaser.Scene {
   private promptAlpha = 0;
   /** Last tile that had a bubble (fades out in place when out of range). */
   private lastPromptPos: { x: number; y: number } | null = null;
+  /** True while the station panel is open — the bubble hides until the
+   *  player closes it (set via setPromptSuppressed). */
+  private suppressPrompt = false;
+
+  /** Show/hide the station bubble while the craft panel is open/closed. */
+  setPromptSuppressed(on: boolean): void {
+    this.suppressPrompt = on;
+  }
 
   /** Build the pixel "E" prompt bubble (dark box + tail + letter). */
   private buildStationPrompt(): Phaser.GameObjects.Container {
@@ -1570,9 +1581,11 @@ export class WorldScene extends Phaser.Scene {
     if (!this.nearestStation) return;
     this.promptPunchAt = performance.now();
     const p = this.nearestStation;
-    // Kill the bubble instantly — the explosion takes its place.
+    // Kill the bubble instantly — the explosion takes its place. The
+    // suppression flag keeps it hidden until the panel closes.
     this.promptAlpha = 0;
     this.stationPrompt?.setVisible(false);
+    this.suppressPrompt = true;
     this.spawnPromptExplosion(p.x * 32 + 16, p.y * 32 - 24);
     this.onStationInteract?.();
   }

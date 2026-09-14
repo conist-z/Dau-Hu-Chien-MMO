@@ -623,8 +623,13 @@ const input = new KeyboardInput({
 // receives events (clicks dead, browser context menu leaked through).
 game.events.once("ready", () => {
   input.bindCanvas(game.canvas);
-  // Station interact pipeline: scene punch + explosion -> HUD panel.
-  scene.onStationInteract = () => hud.openCraftPanel();
+  // Station interact pipeline: scene punch + explosion -> HUD panel. The
+  // bubble stays hidden until the window closes (then fades back in).
+  scene.onStationInteract = () => {
+    hud.openCraftPanel();
+    hud.onPanelWindowClosed = () => scene.setPromptSuppressed(false);
+    scene.setPromptSuppressed(true);
+  };
 });
 
 // Tab-return hygiene: rAF paused while hidden — clear stuck movement keys
