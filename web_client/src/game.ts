@@ -2539,6 +2539,11 @@ export class WorldScene extends Phaser.Scene {
     const sig = snap.blocks.length + ":" + snap.blocks.map((b) => b[0] + "," + b[1]).join(";");
     if (sig !== this.lastBlockSig) {
       this.lastBlockSig = sig;
+      // Keep welcome.blocks fresh: onBlockTexture re-runs updateBlocks from
+      // this.welcome when a face PNG arrives — with the stale join-time list
+      // it destroyed the placeholder for any block placed AFTER join (the
+      // "đặt block tàn hình" bug).
+      if (this.welcome) this.welcome.blocks = snap.blocks;
       this.updateBlocks(snap.blocks);
     }
     // Collision truth rebuilt from EVERY snapshot (a cheap Set — the old
