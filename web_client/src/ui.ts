@@ -1947,11 +1947,41 @@ export class Hud {
     const changed: string[] = [];
     const allIds = new Set([...Object.keys(shown), ...Object.keys(server)]);
     for (const id of allIds) {
-      // Purse echo: subtract the op's own not-yet-landed diff from the
-      // server's before comparing — only the RESIDUE (real events like a
-      // pickup) is merged, at its correct slot.
-      const adj = id === echoId ? echoDelta : 0;
-      const d = (server[id] ?? 0) - adj - (shown[id] ?? 0);
+      // Purse echo, ACK-AWARE: the held diff is only valid while the op is
+      // genuinely un-acked. The raw diff tells us the state:
+      //   0            → op fully acked: clear the echo, merge nothing
+      //                  (a fixed TTL here minted +1 phantom EVERY snapshot
+      //                  after ack — the "stack nhảy số liên tục" bug)
+      //   same sign,   → partial acks: shrink the echo to the un-acked
+      //   |d|≤|echo|     remainder, merge nothing
+      //   otherwise    → the op landed (or real events dominate): merge the
+      //                  true residue
+      const dRaw = (server[id] ?? 0) - (shown[id] ?? 0);
+      let d = dRaw;
+      if (id === echoId && echoDelta !== 0) {
+        if (dRaw === 0) {
+          this.purseEcho = null;
+          this.purseEchoItemId = null;
+          continue;
+        }
+        const sameSign = Math.sign(dRaw) === Math.sign(echoDelta);
+        if (sameSign && Math.abs(dRaw) <= Math.abs(echoDelta)) {
+          // Partial acks: only the un-acked remainder is still pending.
+          this.purseEcho = { itemId: id, delta: dRaw };
+          continue;
+        }
+        if (sameSign) {
+          // Pending op + extra same-direction events: merge only the excess.
+          d = dRaw - echoDelta;
+          if (d === 0) continue;
+        } else {
+          // Op landed; dRaw is real events (opposite sign = server crossed
+          // past the optimistic preview).
+          this.purseEcho = null;
+          this.purseEchoItemId = null;
+          d = dRaw;
+        }
+      }
       if (d === 0) continue;
       changed.push(id);
       if (d > 0) {
