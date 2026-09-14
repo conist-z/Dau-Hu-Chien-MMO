@@ -36,4 +36,17 @@ export const WEAPON_SHEETS: Record<string, string> = {
   cooked_meat: "cookedmeat",
   rotten_flesh: "rottenflesh",
   potion_hp: "potionhp",
+  // ÉP BUỘC (hard rule): every item holds a sheet — keep in sync with
+  // game/appearance.py (asserted by tests/test_appearance.py).
+  charcoal: "charcoal",
+  crafting_table: "crafting_table",
+  dirt: "dirt",
+  floor: "floor",
+  furnace: "furnace",
+  key_stone: "keystone",
+  mushroom_brown: "mushroom_brown",
+  mushroom_purple: "mushroom_purple",
+  potion_mp: "potion_mp",
+  raw_meat: "raw_meat",
+  seed: "seed",
 };
