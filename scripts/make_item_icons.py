@@ -47,6 +47,12 @@ SOURCES: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float, float]]
     "iron_ore": ("kaetram", "ironore"),
     "iron_pickaxe": ("kaetram", "ironpickaxe"),
     "iron_sword": ("kaetram", "ironsword"),
+    "stone_sword": ("kaetram", "tinsword"),
+    "stone_axe": ("kaetram", "bronzebattleaxe"),
+    "stone_pickaxe": ("kaetram", "bonepickaxe"),
+    "gold_ingot": ("kaetram", "goldbar"),
+    "gold_ore": ("kaetram", "goldore"),
+    "steel_ingot": ("kaetram", "moonrockore"),
     "key_stone": ("kaetram", "candykey"),
     "raw_meat": ("kaetram", "rawbeef"),
     "steel_axe": ("kaetram", "cobaltaxe"),
@@ -72,7 +78,9 @@ SOURCES: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float, float]]
     "steel_sword": ("kaetram", "goldsword", (0.55, 0.68, 0.92)),
     # ---- Twemoji fallbacks (Kaetram has no match) ----
     "dirt": ("twemoji", "1f7e4"),
-    "plank": ("twemoji", "1f7eb"),
+    # plank: user rule — icon = the bright wood-plank texture (same family
+    # as the floor planks) so Ván gỗ reads as planks, not a brown square.
+    "plank": ("block", "floor"),
     "rotten_flesh": ("twemoji", "1f969"),
 }
 

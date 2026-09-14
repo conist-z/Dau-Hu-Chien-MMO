@@ -1,8 +1,8 @@
 """Tool tier system — data-driven tool definitions (pure, no discord/IO).
 
-Every tool family (shovel / pickaxe / axe / sword) comes in four material
- tiers, strongest last: wood ("gỗ"), iron ("sắt"), gold ("vàng") and
- steel ("thép").
+Every tool family (shovel / pickaxe / axe / sword) comes in five material
+ tiers, strongest last: stone ("đá"), iron ("sắt"), gold ("vàng") and
+ steel ("thép"). The wood tier renders the bronze sheets (legacy naming).
 
  VISUAL MAPPING (user rule — assets are recolours, not new names):
  ``wood`` renders the Kaetram BRONZE sheets, ``iron`` the IRON sheets,
@@ -20,7 +20,7 @@ from typing import Dict, Optional
 
 # Tier order (weakest -> strongest). Visual assets per tier live in
 # ``TIER_SHEET_STEM`` (game/appearance.py WEAPON_SHEETS uses it).
-MATERIALS = ("wood", "iron", "gold", "steel")
+MATERIALS = ("wood", "stone", "iron", "gold", "steel")
 
 TOOL_FAMILIES = ("shovel", "pickaxe", "axe", "sword")
 
@@ -41,6 +41,12 @@ TIER_SHEET_STEM = {
         "pickaxe": "bronzepickaxe",
         "shovel": "spoon",  # placeholder art; the wood shovel is the spoon
     },
+    "stone": {  # Kaetram sheets closest to a stone-tool look (no real
+        # stone tool art exists): tin sword + bronze axe/pickaxe variants
+        "sword": "tinsword",
+        "axe": "bronzebattleaxe",
+        "pickaxe": "bonepickaxe",
+    },
     "iron": {"sword": "ironsword", "axe": "ironaxe", "pickaxe": "ironpickaxe"},
     "gold": {"sword": "goldsword", "axe": "goldaxe", "pickaxe": "goldpickaxe"},
     "steel": {"sword": "steelsword", "axe": "cobaltaxe", "pickaxe": "cobaltpickaxe"},
@@ -48,7 +54,7 @@ TIER_SHEET_STEM = {
 
 # ---- base values (tier "wood" = 1.0) --------------------------------------
 # Per-tier strength multiplier applied to the family base.
-TIER_MULT = {"wood": 1.0, "iron": 1.6, "gold": 2.25, "steel": 3.2}
+TIER_MULT = {"wood": 1.0, "stone": 1.3, "iron": 1.6, "gold": 2.25, "steel": 3.2}
 
 # Family base stats at the wood tier.
 SHOVEL_BASE_HITS = 3      # swings to scoop one grass tuft
@@ -141,12 +147,15 @@ def parse_tool_id(item_id: Optional[str]) -> Optional[ToolDef]:
         "axe": "Rìu",
         "sword": "Kiếm",
     }
-    mats = {"wood": "gỗ", "iron": "sắt", "gold": "vàng", "steel": "thép"}
+    mats = {"wood": "gỗ", "stone": "đá", "iron": "sắt", "gold": "vàng", "steel": "thép"}
     emojis = {
         ("shovel", "wood"): "🥄",
         ("pickaxe", "wood"): "⛏️",
         ("axe", "wood"): "🪓",
         ("sword", "wood"): "🗡️",
+        ("pickaxe", "stone"): "⛏️",
+        ("axe", "stone"): "🪓",
+        ("sword", "stone"): "🗡️",
         ("pickaxe", "iron"): "⛏️",
         ("axe", "iron"): "🪓",
         ("sword", "iron"): "⚔️",

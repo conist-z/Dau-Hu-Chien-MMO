@@ -49,14 +49,17 @@ WEAPON_SHEETS: Dict[str, str] = {
     # BRONZE sheets, iron -> IRON, gold -> GOLD, steel -> COBALT (blue-steel).
     # The shovel ships ONLY at the wood tier (one shovel total).
     "wood_sword": "bronzesword",
+    "stone_sword": "tinsword",
     "iron_sword": "ironsword",
     "gold_sword": "goldsword",
     "steel_sword": "steelsword",
     "wood_axe": "bronzeaxe",
+    "stone_axe": "bronzebattleaxe",
     "iron_axe": "ironaxe",
     "gold_axe": "goldaxe",
     "steel_axe": "cobaltaxe",
     "wood_pickaxe": "bronzepickaxe",
+    "stone_pickaxe": "bonepickaxe",
     "iron_pickaxe": "ironpickaxe",
     "gold_pickaxe": "goldpickaxe",
     "steel_pickaxe": "cobaltpickaxe",
@@ -71,11 +74,27 @@ WEAPON_SHEETS: Dict[str, str] = {
     "plank": "plank",
     "coal": "coal",
     "iron_ore": "ironore",
+    "gold_ore": "goldore",
     "iron_ingot": "ironbar",
+    "gold_ingot": "goldbar",
+    "steel_ingot": "moonrockore",  # no steel-bar art — grey ore reads as steel
     "coin": "coin",
     "cooked_meat": "cookedmeat",
     "rotten_flesh": "rottenflesh",
     "potion_hp": "potionhp",
+    # ÉP BUỘC (hard rule): EVERY item must have a hand sheet — no bare-hand
+    # fallback for registry items. Generated sheets (make_held_sheet.py).
+    "charcoal": "charcoal",
+    "crafting_table": "crafting_table",
+    "dirt": "dirt",
+    "floor": "floor",
+    "furnace": "furnace",
+    "key_stone": "keystone",
+    "mushroom_brown": "mushroom_brown",
+    "mushroom_purple": "mushroom_purple",
+    "potion_mp": "potion_mp",
+    "raw_meat": "raw_meat",
+    "seed": "seed",
 }
 
 

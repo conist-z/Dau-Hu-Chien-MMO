@@ -165,13 +165,14 @@ export const CRAFT_MAT_CELL = "ui/v5/atoms/craft_output_cell.png";
 export const ITEM_ICONS: Record<string, string> = Object.fromEntries(
   [
     "apple", "charcoal", "coal", "coin", "cooked_meat", "crafting_table",
-    "dirt", "floor", "furnace", "gold_axe", "gold_pickaxe", "gold_sword",
-    "iron_axe", "iron_ingot", "iron_ore", "iron_pickaxe", "iron_sword",
-    "key_stone", "leaves", "mushroom_brown", "mushroom_purple", "plank",
-    "potion_hp", "potion_mp", "raw_meat", "rotten_flesh", "seed",
-    "steel_axe", "steel_pickaxe", "steel_sword", "stick",
-    "stone", "torch", "wood", "wood_axe", "wood_pickaxe", "wood_shovel",
-    "wood_sword",
+    "dirt", "floor", "furnace", "gold_axe", "gold_ingot", "gold_ore",
+    "gold_pickaxe", "gold_sword", "iron_axe", "iron_ingot", "iron_ore",
+    "iron_pickaxe", "iron_sword", "key_stone", "leaves", "mushroom_brown",
+    "mushroom_purple", "plank", "potion_hp", "potion_mp", "raw_meat",
+    "rotten_flesh", "seed", "steel_axe", "steel_ingot", "steel_pickaxe",
+    "steel_sword", "stick", "stone", "stone_axe", "stone_pickaxe",
+    "stone_sword", "torch", "wood", "wood_axe", "wood_pickaxe",
+    "wood_shovel", "wood_sword",
   ].map((id) => [id, `ui/icons/${id}.png`]),
 );
 

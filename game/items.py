@@ -42,8 +42,11 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     # Smelting chain (game/smelting.py): ores from mining, ingots/fuel/food
     # from the furnace, cooked meat is a real consumable.
     "iron_ore": ItemDef("iron_ore", "Quặng sắt", "🟤", "material", {}, "Nung ở lò ra thỏi sắt"),
+    "gold_ore": ItemDef("gold_ore", "Quặng vàng", "🟡", "material", {}, "Nung ở lò ra thỏi vàng"),
     "coal": ItemDef("coal", "Than đá", "⚫", "material", {}, "Nhiên liệu tốt nhất cho lò nung"),
     "iron_ingot": ItemDef("iron_ingot", "Thỏi sắt", "🥈", "material", {}, "Nguyên liệu tool sắt"),
+    "gold_ingot": ItemDef("gold_ingot", "Thỏi vàng", "🥇", "material", {}, "Nguyên liệu tool vàng"),
+    "steel_ingot": ItemDef("steel_ingot", "Thỏi thép", "🔩", "material", {}, "Nguyên liệu tool thép — hợp kim sắt + than"),
     "charcoal": ItemDef("charcoal", "Than củi", "🌑", "material", {}, "Nhiên liệu nung gỗ trong lò"),
     "raw_meat": ItemDef("raw_meat", "Thịt sống", "🍖", "consumable", {"heal_hp": 8}, "Ăn sống được, hồi 8 HP — nấu chín hồi nhiều hơn"),
     "cooked_meat": ItemDef(

@@ -136,14 +136,15 @@ def _register_tool_recipes() -> None:
         "axe": "🪓",
         "sword": "🗡️",
     }
-    mats = {"wood": "gỗ", "iron": "sắt", "gold": "vàng", "steel": "thép"}
+    mats = {"wood": "gỗ", "stone": "đá", "iron": "sắt", "gold": "vàng", "steel": "thép"}
     # Số nguyên liệu mỗi công thức (wiki Mine: cúp/rìu 3, kiếm 2, xẻng 1).
-    material_qty = {"wood": 3, "iron": 3, "gold": 3, "steel": 3}
+    material_qty = {"wood": 3, "stone": 3, "iron": 3, "gold": 3, "steel": 3}
     material_item = {
-        "wood": "plank",        # gỗ: dùng trực tiếp ván gỗ như Minecraft
+        "wood": "plank",         # gỗ: dùng trực tiếp ván gỗ như Minecraft
+        "stone": "stone",        # đá: cục đá khai thác từ tảng đá
         "iron": "iron_ingot",
-        "gold": "gold_ingot",   # not yet obtainable — smelt chain TODO
-        "steel": "steel_ingot", # not yet obtainable — smelt chain TODO
+        "gold": "gold_ingot",    # nung gold_ore ở lò (node drop: sau)
+        "steel": "steel_ingot",  # hợp kim nung ở lò (node drop: sau)
     }
 
     def _pattern(fam: str, mat_item: str) -> List[Tuple[str, int, int]]:
@@ -173,10 +174,16 @@ def _register_tool_recipes() -> None:
             inputs: List[Tuple[str, int]] = []
             pat: Optional[List[Tuple[str, int, int]]] = None
             if m_item == "gold_ingot" or m_item == "steel_ingot":
-                # Material chain chưa có (không obtainable) — recipe skeleton.
-                desc = (f"Công cụ {mats[mat]} bậc "
-                        f"{"wood iron gold steel".split().index(mat) + 1} — "
-                        f"chờ dây chuyền nung (thỏi {mats[mat]}).")
+                # Material chain CHỜ node drop (gold/steel ore chưa có trong
+                # drops) — nhưng RECIPE ĐÃ MỞ: khi nguyên liệu xuất hiện là
+                # craft được ngay, không cần sửa code nữa (user 14/09).
+                inputs = [(m_item, qty), ("stick", 2)]
+                pat = _pattern(fam, m_item)
+                desc = (f"{ {"pickaxe": "3 nguyên liệu hàng trên + 2 gậy cột giữa",
+                             "axe": "2 nguyên liệu hàng trên + 1 dưới + 2 gậy cột phải",
+                             "shovel": "1 nguyên liệu trên + 2 gậy cột giữa",
+                             "sword": "2 nguyên liệu + 1 gậy xếp thành cột"}[fam] }"
+                        f" (wiki Mine) — thỏi {mats[mat]} nung ở lò.")
             else:
                 inputs = [(m_item, qty), ("stick", 2)]
                 pat = _pattern(fam, m_item)

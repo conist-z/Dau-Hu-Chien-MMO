@@ -43,7 +43,7 @@ class FuelDef:
 FUEL_REGISTRY: Dict[str, FuelDef] = {
     "coal": FuelDef("coal", "Than đá", 40.0),
     "charcoal": FuelDef("charcoal", "Than củi", 20.0),
-    "wood": FuelDef("wood", "Gỗ", 10.0),
+    "wood": FuelDef("wood", "Khúc gỗ", 10.0),
     "plank": FuelDef("plank", "Ván gỗ", 5.0),
     "stick": FuelDef("stick", "Gậy", 3.0),
 }
@@ -65,6 +65,14 @@ class SmeltDef:
 SMELT_REGISTRY: Dict[str, SmeltDef] = {
     "smelt_iron": SmeltDef(
         "smelt_iron", "Nung thỏi sắt", "iron_ore", "iron_ingot", 1, 10.0
+    ),
+    "smelt_gold": SmeltDef(
+        "smelt_gold", "Nung thỏi vàng", "gold_ore", "gold_ingot", 1, 14.0
+    ),
+    "smelt_steel": SmeltDef(
+        # Hợp kim: thỏi sắt + than (nhiên liệu ĐỒNG THỜI là nguyên liệu hợp kim
+        # — hành vi Minecraft-ish, đơn giản cho MVP).
+        "smelt_steel", "Nung thỏi thép", "iron_ingot", "steel_ingot", 1, 18.0
     ),
     "smelt_charcoal": SmeltDef(
         "smelt_charcoal", "Nung than củi", "wood", "charcoal", 1, 10.0
