@@ -1991,31 +1991,6 @@ export class WorldScene extends Phaser.Scene {
     this.remoteDolls.get(id)?.swing(performance.now());
   }
 
-  /**
-   * Swing the remote hand standing closest to a tile (chop/break confirm).
-   * The harvester is whoever works that node — no server id needed.
-   */
-  swingRemoteHandNear(tx: number, ty: number): void {
-    const px = tx * 32 + 16;
-    const py = ty * 32 + 16;
-    let best: RemotePlayer | null = null;
-    let bestD = 3.5 * 32; // ignore hands further than a harvest reach away
-    for (const rp of this.players.values()) {
-      const d = Math.hypot(rp.container.x - px, rp.container.y - py);
-      if (d < bestD) {
-        bestD = d;
-        best = rp;
-      }
-    }
-    if (best) {
-      best.swingT0 = performance.now();
-      // Paperdoll arc too — swingT0 alone only pushed the plan-A hand dot;
-      // the doll body never played the animation, so other players' swings
-      // were invisible (bug 15/09).
-      this.remoteDolls.get(best.container.getData("pid"))?.swing(performance.now());
-    }
-  }
-
   // -------------------------------------------------- hostiles (zombies)
 
   /**
@@ -2484,34 +2459,13 @@ export class WorldScene extends Phaser.Scene {
    */
   syncProgressBars(
     progress: Record<string, [number, number, number[][]]>,
-    selfTile?: { x: number; y: number },
+    _selfTile?: { x: number; y: number }, // kept for call-site compat (unused)
   ): void {
-    // Any node whose hit count GREW since the last sync = a landed swing:
-    // swing the nearest hand (self when selfTile is at/near the node, else
-    // the closest remote). This IS the dig/chop animation, driven by the
-    // 20 Hz server echo — no extra protocol needed.
-    for (const [key, entry] of Object.entries(progress)) {
-      const prev = this.lastProgressRaw.get(key)?.[0] ?? 0;
-      const hits = entry[0] ?? 0;
-      if (hits > prev && hits > 0) {
-        const bbox = entry[2] ?? [];
-        const nearSelf =
-          !!selfTile &&
-          bbox.some(
-            ([bx, by]) =>
-              Math.abs(bx - selfTile.x) <= 2 && Math.abs(by - selfTile.y) <= 2,
-          );
-        if (nearSelf) {
-          this.swingSelfHand();
-        } else if (bbox.length > 0) {
-          const cx =
-            bbox.reduce((a, [bx]) => a + bx, 0) / bbox.length;
-          const cy =
-            bbox.reduce((a, [, by]) => a + by, 0) / bbox.length;
-          this.swingRemoteHandNear(Math.round(cx), Math.round(cy));
-        }
-      }
-    }
+    // Progress-bar sync ONLY. It must NOT trigger swing animations —
+    // "who is hitting this node" is unknowable from a hit counter (a
+    // neighbor standing near MY tree got animated as the harvester).
+    // Actor swings arrive as server "swing" echoes keyed by uid
+    // (swingRemoteHandAt) + the client-optimistic self swing.
     this.lastProgressRaw = new Map(Object.entries(progress));
     this.lastProgressBbox.clear();
     for (const [anchor, entry] of this.lastProgressRaw) {
