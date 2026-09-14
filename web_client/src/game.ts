@@ -947,7 +947,12 @@ export class WorldScene extends Phaser.Scene {
     doll.spawn(rp.container.x, rp.container.y + 16, 7);
     this.remoteDolls.set(id, doll);
     rp.doll = doll;
-    rp.body.setVisible(false); // hide the square; keep it for hit geometry
+    // Hide the square but KEEP IT INPUT-ENABLED: Phaser 3 disables the hit
+    // test for invisible game objects, so setVisible(false) killed clicks.
+    // Alpha 0.001 stays clickable while looking fully transparent — the
+    // square remains the click target for the profile popup.
+    rp.body.setVisible(true);
+    rp.body.setAlpha(0.001);
     if (rp.held) doll.setWeapon(weapon_sheet_for(rp.held));
   }
 
