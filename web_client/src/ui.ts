@@ -973,22 +973,34 @@ export class Hud {
   }
 
   /** Drop the parked result onto a bag slot: ONE collect frame tells the
-   *  server WHERE to put it (merge onto the same kind, bad_slot otherwise).
-   *  OPTIMISTIC: the result clears and lands in the bag AT ONCE — the
-   *  server's inventory delta (same round-trip) reconciles via the
-   *  delta-merge in setInventory, so no visible jank either way. */
+   *  server WHERE to put it. OPTIMISTIC, position-precise: the result
+   *  lands in EXACTLY the dropped-on cell (no auto-merge, no first-free
+   *  search — the server's collect-with-slot writes the same cell, so the
+   *  post-ack snapshot matches the screen and the layout never reshuffles).
+   *  A null slot (plain click on the result) keeps the classic landing. */
   private resultToBag(slot: number | null): void {
     if (!this.parkedResult) return;
     const res = { ...this.parkedResult };
     this.parkedResult = null;
     if (this.craftTab.classList.contains("active")) this.renderCraftPanel();
-    // Local landing: merge onto a same-kind stack, else the first free cell.
-    const same = this.inventory.bag.find((b) => b && b.id === res.id);
-    if (same) {
-      same.qty += res.qty;
+    if (slot !== null) {
+      // Drop-to-slot: the cell the player chose, verbatim. Occupied cells
+      // keep the local swap the server will mirror (displaced stack parks
+      // back on the result slot).
+      const cell = this.inventory.bag[slot];
+      this.inventory.bag[slot] = { id: res.id, qty: res.qty };
+      if (cell && cell.id !== res.id) {
+        this.parkedResult = { id: cell.id, qty: cell.qty }; // swap echo
+      }
     } else {
-      const free = this.inventory.bag.findIndex((b) => !b);
-      if (free >= 0) this.inventory.bag[free] = res;
+      // Click collect: merge onto a same-kind stack, else first free cell.
+      const same = this.inventory.bag.find((b) => b && b.id === res.id);
+      if (same) {
+        same.qty += res.qty;
+      } else {
+        const free = this.inventory.bag.findIndex((b) => !b);
+        if (free >= 0) this.inventory.bag[free] = res;
+      }
     }
     this.invVersion = -1; // force the next server delta to reconcile
     this.renderHotbar();
