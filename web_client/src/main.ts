@@ -541,12 +541,8 @@ const input = new KeyboardInput({
         net.action("chop");
         return;
       }
-      // Station FIRST: clicking a crafting table (in range) opens the craft
-      // panel — never chops/breaks the station itself.
-      if (scene.hoveringStation()) {
-        scene.stationInteract();
-        return;
-      }
+      // LEFT click is ALWAYS a break/chop — even on a station. The left
+      // click must never be stolen (breaking the table would be impossible).
       // Clamp to the tile the server will ACTUALLY act on (mirrors its own
       // clamp). The break-vs-chop decision AND the optimistic collision must
       // live on that tile — targeting from a stale snapshot used to break
@@ -580,10 +576,13 @@ const input = new KeyboardInput({
       // damage look like it rewound on rapid clicks).
       return;
     }
-    // Secondary (right-click): scope follows the HELD hotbar slot ONLY —
-    // place the block actually in hand. If the active slot holds a tool,
-    // an unplaceable item, or nothing, nothing happens at all (no action,
-    // no message). The client never sends place with a non-block held.
+    // Secondary (right-click): FIRST a station interact — right-clicking a
+    // crafting table in range opens/toggles the craft panel (left-click
+    // stays free for breaking the table). Then: place the block in hand.
+    if (tile && scene.hoveringStation()) {
+      scene.stationInteract();
+      return;
+    }
     const placeable = new Set((welcome?.blocks_catalog ?? []).map((b) => b.id));
     const held = hud.heldItem;
     if (!tile || !held) return;
