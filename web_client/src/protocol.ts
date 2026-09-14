@@ -44,6 +44,7 @@ export interface WelcomePayload {
     walk_speed: number;
     run_speed: number;
     dir: string;
+    color?: string;
   };
   inventory: InventoryPayload;
   recipes: RecipePayload[];
@@ -112,7 +113,8 @@ export type WebZombiePayload = [
 // Drop entity ("linh khí"): [id, item_id, qty, x, y, z, phase].
 // Float x/y tile units; z = height above ground (arc); phase drives the
 // client animation: idle (bob) | magnet (vortex pull) | collected (burst).
-export type DropPayload = [string, string, number, number, number, number, string];
+// [id, item, qty, x, y, z, phase, target_user_id (0 = none)]
+export type DropPayload = [string, string, number, number, number, number, string, number];
 
 export interface SnapshotPayload {
   type: "snapshot";
@@ -188,6 +190,9 @@ export interface PlayerPayload {
   mode: "chat" | "web";
   // Item id currently held (hotbar slot -> item). Null = empty hand.
   held: string | null;
+  // Permanent role color ("#rrggbb", "" = legacy server): chat name +
+  // avatar label color.
+  color?: string;
 }
 
 // Night zombie (Kaetram-style mob, shared pack with Discord):
@@ -237,6 +242,7 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
+  | { type: "chat"; uid: number; name: string; color: string; text: string }
   | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }
   | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string; message?: string }

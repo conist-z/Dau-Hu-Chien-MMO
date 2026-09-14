@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS furnaces (
 
 
 PLAYER_COLUMNS = [
+    # Permanent role color ("1 a maus su dung mai moi" — user rule 15/09):
+    # random on first join, then kept forever until manually changed.
+    ("name_color", "TEXT"),
     ("hp", "INTEGER NOT NULL DEFAULT 100"),
     ("max_hp", "INTEGER NOT NULL DEFAULT 100"),
     ("mana", "INTEGER NOT NULL DEFAULT 50"),

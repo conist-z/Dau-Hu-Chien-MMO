@@ -43,6 +43,29 @@ ARC_LAUNCH_VX = 1.6        # horizontal scatter speed
 BOUNCE_DAMPING = 0.35      # energy kept after the ground bounce
 GROUND_Y_OFFSET = 0.5      # rest height inside the tile (centre)
 DESPAWN_SECONDS = 60.0     # uncollected drops vanish
+# A freshly THROWN drop cannot be re-collected by its thrower for this long
+# ("vức ra là nhặt lại luôn" fix): the throw spawns at the player's feet,
+# deep inside MAGNET_RADIUS, so without this window the homing magnet grabs
+# it the very next tick. Block/zombie drops are spawned with the window at
+# zero — only the throw path arms it.
+NO_COLLECT_WINDOW_S = 1.2
+# Directional throw: launch speed (tiles/s) — vs the idle scatter's 1.6.
+# ~2.5x stronger so the stack visibly lands 2-3 tiles away in the faced
+# direction. Perpendicular jitter is added in spawn() for the tossed feel.
+THROW_LAUNCH_VX = 4.0
+# Cardinal + diagonal throw directions -> (vx, vy) unit vectors. Tile grid:
+# +y is DOWN (SOUTH), matching the map coordinate space.
+_THROW_DIR_VECTORS = {
+    "NORTH": (0.0, -1.0), "SOUTH": (0.0, 1.0),
+    "EAST": (1.0, 0.0), "WEST": (-1.0, 0.0),
+    "NORTHEAST": (0.7071, -0.7071), "NORTHWEST": (-0.7071, -0.7071),
+    "SOUTHEAST": (0.7071, 0.7071), "SOUTHWEST": (-0.7071, 0.7071),
+    # short aliases the web client sends
+    "N": (0.0, -1.0), "S": (0.0, 1.0),
+    "E": (1.0, 0.0), "W": (-1.0, 0.0),
+    "NE": (0.7071, -0.7071), "NW": (-0.7071, -0.7071),
+    "SE": (0.7071, 0.7071), "SW": (-0.7071, 0.7071),
+}
 MAX_DROPS_PER_STATE = 200  # hard safety cap (perf) — oldest despawn first
 
 
@@ -74,6 +97,9 @@ class DropEntity:
     # collected drops linger briefly so the client can play the burst, then
     # the manager prunes them
     collected_by: Optional[int] = None
+    # monotonic() until which this drop may NOT be collected (throw grace:
+    # spawn-at-feet must not be re-grabbed instantly). 0.0 = collectible now.
+    no_collect_until: float = 0.0
 
 
 class DropField:
@@ -94,23 +120,46 @@ class DropField:
         y_f: float,
         rng: Optional[random.Random] = None,
         scatter: bool = True,
+        no_collect_window: float = 0.0,
+        direction: Optional[str] = None,
     ) -> DropEntity:
-        """Spawn one drop popping out of (x_f, y_f) with a small arc."""
+        """Spawn one drop popping out of (x_f, y_f) with a small arc.
+
+        ``direction`` ("NORTH"/"SOUTH"/"EAST"/"WEST"/NE/NW/SE/SW, case-
+        insensitive) throws the drop THAT way with a stronger launch (the
+        player-throw feel: the stack visibly flies where the player faces).
+        ``no_collect_window`` should be armed together with it.
+        """
         rng = rng or random.Random()
         self.seq += 1
-        ang = rng.uniform(0, 2 * 3.14159265)
-        speed = ARC_LAUNCH_VX * rng.uniform(0.6, 1.4) if scatter else 0.0
+        if direction:
+            vec = _THROW_DIR_VECTORS.get(str(direction).upper(), (0.0, 1.0))
+            # Stronger launch + small perpendicular jitter (hand-tossed feel)
+            speed = THROW_LAUNCH_VX * rng.uniform(0.85, 1.15)
+            perp = speed * 0.18
+            ang = rng.uniform(0, 2 * 3.14159265)
+            vx = vec[0] * speed + _math.cos(ang) * perp
+            vy = vec[1] * speed + _math.sin(ang) * perp
+        else:
+            ang = rng.uniform(0, 2 * 3.14159265)
+            speed = ARC_LAUNCH_VX * rng.uniform(0.6, 1.4) if scatter else 0.0
+            vx = speed * _math.cos(ang)
+            vy = speed * _math.sin(ang)
         d = DropEntity(
             drop_id=f"drop-{self.seq}",
             item_id=item_id,
             qty=max(1, int(qty)),
             x_f=x_f,
             y_f=y_f,
-            vx=speed * _math.cos(ang),
-            vy=speed * _math.sin(ang),
+            vx=vx,
+            vy=vy,
             vz=ARC_LAUNCH_VY * rng.uniform(0.85, 1.15),
             born_at=time.monotonic(),
             phase="idle",
+            no_collect_until=(
+                time.monotonic() + max(0.0, no_collect_window)
+                if no_collect_window > 0.0 else 0.0
+            ),
         )
         self.drops[d.drop_id] = d
         # enforce the safety cap: oldest drops go first
@@ -129,10 +178,16 @@ class DropField:
         x_f: float,
         y_f: float,
         rng: Optional[random.Random] = None,
+        no_collect_window: float = 0.0,
+        direction: Optional[str] = None,
     ) -> List[DropEntity]:
         out = []
         for item_id, qty in items:
-            out.append(self.spawn(item_id, qty, x_f, y_f, rng=rng))
+            out.append(self.spawn(
+                item_id, qty, x_f, y_f, rng=rng,
+                no_collect_window=no_collect_window,
+                direction=direction,
+            ))
         return out
 
     def remove(self, drop_id: str) -> Optional[DropEntity]:
@@ -178,15 +233,23 @@ def spawn_drops(
     y: float,
     items: Sequence[Tuple[str, int]],
     rng: Optional[random.Random] = None,
+    no_collect_window: float = 0.0,
+    direction: Optional[str] = None,
 ) -> List[DropEntity]:
     """Public API: every drop source calls this instead of inventory.add.
 
     Spawns one drop per (item_id, qty) pair popping out of tile (x, y).
+    ``no_collect_window`` > 0 arms the throw grace (no re-collect for that
+    long) — only the player-throw path passes it.
     """
     if not items:
         return []
     field_ = _ensure_field(state)
-    return field_.spawn_many(items, float(x) + 0.5, float(y) + 0.5, rng=rng)
+    return field_.spawn_many(
+        items, float(x) + 0.5, float(y) + 0.5, rng=rng,
+        no_collect_window=no_collect_window,
+        direction=direction,
+    )
 
 
 def tick_drops(
@@ -220,13 +283,14 @@ def tick_drops(
             continue
 
         # ---- magnet: nearest player inside the radius pulls the drop -----
-        # HOMING (exponential steering), not raw acceleration: the drop's
-        # velocity converges to dir*MAGNET_MAX_SPEED every tick, so it always
-        # overtakes even a running player. The old accel-from-rest model let a
-        # walking player stroll straight past a drop without collecting it,
-        # and the leftover speed made drops glide toward players far away.
+        # THROW GRACE: a just-thrown drop ignores every player until its
+        # window elapses (see NO_COLLECT_WINDOW_S) — otherwise the thrower
+        # standing at the spawn point re-collects it the very next tick.
         target = None
-        best = MAGNET_RADIUS
+        if now < d.no_collect_until:
+            best = -1.0  # grace: nobody is ever "within radius" this tick
+        else:
+            best = MAGNET_RADIUS
         for p in alive_players:
             dist = _math.hypot(p.x_f - d.x_f, p.y_f - d.y_f)
             if dist < best:
@@ -303,7 +367,11 @@ def tick_drops(
                     d.vz = 0.0
 
         # ---- collect -------------------------------------------------------
-        if target is not None and best <= COLLECT_RADIUS:
+        if (
+            target is not None
+            and best <= COLLECT_RADIUS
+            and now >= d.no_collect_until
+        ):
             d.phase = "collected"
             d.collected_at = now
             d.collected_by = target.user_id
@@ -320,7 +388,11 @@ def drops_payload(
     center_y: float,
     cull_radius: float = 24.0,
 ) -> List[list]:
-    """Viewport-culled wire format: [id, item_id, qty, x, y, z, phase]."""
+    """Viewport-culled wire format: [id, item_id, qty, x, y, z, phase, target].
+
+    ``target`` is the user_id currently magnet-pulling this drop (0 = none)
+    so OBSERVER clients can animate the flight toward the right player
+    (bug 15/09: everyone saw drops fly into themselves)."""
     field_ = getattr(state, "drop_field", None)
     out: List[list] = []
     if field_ is None:
@@ -338,5 +410,6 @@ def drops_payload(
             round(d.y_f, 3),
             round(d.z, 3),
             d.phase,
+            d.target_id or 0,
         ])
     return out

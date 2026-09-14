@@ -112,6 +112,9 @@ def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict
             # web client renders chat players as round avatar tokens.
             "mode": p.mode,
             "held": _held_of(rt, p.user_id),
+            # Permanent role color ("#rrggbb", empty = not yet minted):
+            # colors the chat name AND the label above the avatar.
+            "color": p.name_color or "",
         })
     return out
 
@@ -473,6 +476,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "self": {
             "hp": player.hp if player else 0,
             "max_hp": player.max_hp if player else 100,
+            "color": (player.name_color if player else "") or "",
             "mana": player.mana if player else 0,
             "max_mana": player.max_mana if player else 50,
             "stamina": int(player.stamina) if player else 0,

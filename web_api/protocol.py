@@ -28,6 +28,7 @@ MSG_SNAPSHOT = "snapshot"        # periodic world state (diff/AOI)
 MSG_INV_DELTA = "inventory_delta"
 MSG_CRAFT_RESULT = "craft_result"
 MSG_PUSH = "push"                # one-off UI notice (toast)
+MSG_CHAT = "chat"                # cross-player chat {uid, name, color, text}
 MSG_ERROR = "error"              # {code, message}
 MSG_PONG = "pong"
 
@@ -87,8 +88,9 @@ class SessionRegistry:
     def __init__(self):
         self._sessions: Dict[str, WebSession] = {}
 
-    def create(self, user_id: int, display_name: str, channel_id: int) -> WebSession:
-        token = secrets.token_urlsafe(24)
+    def create(self, user_id: int, display_name: str, channel_id: int, token: str | None = None) -> WebSession:
+        if token is None:
+            token = secrets.token_urlsafe(24)
         sess = WebSession(user_id, display_name, channel_id, token)
         self._sessions[token] = sess
         return sess

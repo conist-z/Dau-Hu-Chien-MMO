@@ -38,6 +38,14 @@ def next_clockwise(direction: Direction) -> Direction:
     return CLOCKWISE_ORDER[(i + 1) % len(CLOCKWISE_ORDER)]
 
 
+def random_name_color() -> str:
+    """Random pleasant pastel-ish role color, minted ONCE per player and
+    then persisted forever ("1 màu dùng mãi mãi" — user rule 15/09)."""
+    import random
+
+    return "#{:06x}".format(random.randrange(0x2f9e63, 0xffffff))
+
+
 @dataclass
 class ActionResult:
     success: bool
@@ -140,6 +148,10 @@ class Player:
     # `crystal` stack that lands in the bag — see game/purse.py).
     crystals: int = 0
     class_id: str = "adventurer"
+    # Permanent role color ("#rrggbb"): random on first join, kept forever
+    # (persisted in players.name_color) — colors the chat name AND the label
+    # above the avatar. Runtime-only default; manager assigns on join.
+    name_color: str = ""
     learned_skills: List[str] = field(default_factory=lambda: ["slash"])
     # Discord message ids of this player's map, D-pad controls, and hub.
     # The controls id is persisted so the separate persistent View is restored

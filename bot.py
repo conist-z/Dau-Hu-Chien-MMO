@@ -204,6 +204,16 @@ async def setup_hook():
             player.xp = p["xp"]
             player.coins = p["coins"]
             player.class_id = p["class_id"]
+            # Permanent role color (persisted): keep it, or mint one now on
+            # first-ever appearance so every save thereafter stores it.
+            player.name_color = p.get("name_color") or ""
+            if not player.name_color:
+                from game.state import random_name_color
+                player.name_color = random_name_color()
+            # display_name is not persisted in players; restore it so the
+            # snapshot shows the real name right after boot.
+            if p.get("display_name"):
+                player.display_name = p["display_name"]
             # Remembered movement preference (1/3/5 steps per press).
             player.step_size = int(p.get("step_size") or 1)
             # Per-player screen: restore its message id and re-bind the view so

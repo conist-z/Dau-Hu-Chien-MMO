@@ -478,6 +478,12 @@ class GameManager:
                 rt.map_data.spawn[0], rt.map_data.spawn[1],
             )
             player.x, player.y = rt.map_data.spawn
+        player.display_name = display_name or player.display_name
+        # Permanent role color: mint once on first appearance, keep forever
+        # ("1 màu dùng mãi mãi" — colors chat name + avatar label).
+        if not player.name_color:
+            from game.state import random_name_color
+            player.name_color = random_name_color()
         player.is_web = True
         # "Web wins": while a web session is attached it controls the shared
         # body; the Discord side reads this flag to pause its own refresh +
@@ -1811,6 +1817,82 @@ class GameManager:
         rt.inventories = main_rt.inventories
         return rt
 
+    async def web_travel_trade(self, channel_id: int, user_id: int,
+                               action: str) -> tuple:
+        """Web mirror of the Discord /khutraodoi command (game-layer only —
+        no Discord I/O): teleport the player between the main world and the
+        trade lobby.
+
+        action "in": bigmap -> lobbytrade, spawn on the noted tile and save
+        the return spot. action "out": back to the saved bigmap spot.
+        Returns ``(rt, message)`` — the runtime the player now stands in and
+        a Vietnamese status string for the chat (or a refusal reason).
+        """
+        from game.travel import (
+            TRADE_LOBBY_MAP,
+            free_arrival_tile,
+            move_player_between_runtimes,
+            resolve_spawn_tiles,
+        )
+        main_rt = self.runtimes.get(channel_id)
+        if main_rt is None:
+            return None, "Chưa có map trong kênh này."
+        cur_rt = self.runtime_of(channel_id, user_id) or main_rt
+        player = cur_rt.state.get_player(user_id)
+        if player is None:
+            return None, "Bạn chưa tham gia map."
+
+        if action == "in":
+            if cur_rt.map_data.map_id == TRADE_LOBBY_MAP:
+                return cur_rt, "Bạn đang ở trong chợ rồi."
+            if self.db is not None:
+                from persistence.repositories import save_travel_return
+                async with cur_rt.lock:
+                    await save_travel_return(
+                        self.db, channel_id, user_id,
+                        cur_rt.map_data.map_id, player.x, player.y,
+                        player.direction,
+                    )
+            lobby_rt = self.get_or_create_side_runtime(main_rt, TRADE_LOBBY_MAP)
+            occupied = {(p.x, p.y) for p in lobby_rt.state.get_visible_players()}
+            tile = free_arrival_tile(
+                lobby_rt,
+                resolve_spawn_tiles(lobby_rt, self.portals, TRADE_LOBBY_MAP),
+                occupied,
+            )
+            async with cur_rt.lock:
+                move_player_between_runtimes(cur_rt, lobby_rt, user_id, tile)
+            self.touch_session(channel_id, user_id)
+            self._notify_travel_change(cur_rt, user_id)
+            self._notify_travel_change(lobby_rt, user_id)
+            return lobby_rt, "Đã vào khu trao đổi. (dùng /khutraodoi out để ra)"
+
+        # action == "out"
+        saved = None
+        if self.db is not None:
+            from persistence.repositories import load_travel_return
+            saved = await load_travel_return(self.db, channel_id, user_id)
+        if cur_rt.map_data.map_id == main_rt.map_data.map_id and saved is None:
+            return cur_rt, "Bạn không ở trong chợ."
+        tile = (main_rt.map_data.spawn[0], main_rt.map_data.spawn[1])
+        direction = "SOUTH"
+        if saved is not None and saved[0] == main_rt.map_data.map_id:
+            tile, direction = (saved[1], saved[2]), saved[3]
+        if not main_rt.collision.is_walkable(*tile):
+            tile = tuple(main_rt.map_data.spawn)
+        async with cur_rt.lock:
+            move_player_between_runtimes(cur_rt, main_rt, user_id, tile)
+        player = main_rt.state.get_player(user_id)
+        if player is not None:
+            player.direction = direction
+        if self.db is not None:
+            from persistence.repositories import delete_travel_return
+            await delete_travel_return(self.db, channel_id, user_id)
+        self.touch_session(channel_id, user_id)
+        self._notify_travel_change(cur_rt, user_id)
+        self._notify_travel_change(main_rt, user_id)
+        return main_rt, "Đã quay về chỗ cũ."
+
     def runtime_of(self, channel_id: int, user_id: int) -> Optional[ScenarioRuntime]:
         """The runtime whose world the player currently stands in (the world
         holding their PLAYER object; falls back to the screen holder)."""
@@ -2046,7 +2128,21 @@ class GameManager:
             # (apply_attack reads the held item for bare-hand vs weapon dmg).
             # The hotbar is a projection of each ordered bag — no separate map.
             rt.state.inventories = rt.inventories
-            if isinstance(action, PlaceBlockAction):
+            # TRADE ZONE GATE (user rule 15/09): in the trade lobby/interior
+            # building is forbidden — no placing AND no breaking blocks.
+            # One check here covers the Discord D-pad path and the web mouse
+            # path alike (both funnel through dispatch).
+            from game.travel import is_trade_zone
+
+            if is_trade_zone(rt) and isinstance(
+                action, (PlaceBlockAction, BreakBlockAction)
+            ):
+                _actor_g = rt.state.get_player(action.user_id)
+                result = ActionResult(
+                    False, "trade_zone_protected",
+                    pos=(_actor_g.x, _actor_g.y) if _actor_g is not None else None,
+                )
+            elif isinstance(action, PlaceBlockAction):
                 inv = self.get_inventory(channel_id, action.user_id)
                 result = apply_place_block(
                     rt.state, action, rt.collision, rt.state.blocks, inv

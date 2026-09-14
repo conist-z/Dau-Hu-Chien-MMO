@@ -281,6 +281,9 @@ const net = new Net({
     // it here: the output must STAY in the result slot until collected.
   },
   onPush: (message) => hud.toast(message),
+  onChat: (_uid, name, color, text) => {
+    hud.chatPlayerLine(name, color, text);
+  },
   onError: (code, message) => {
     // SESSION DESYNC RECOVERY: the client thinks it is joined but the
     // server disagrees (bot restarted, registry dropped, relay re-hub).
@@ -511,8 +514,13 @@ hud.onThrow = (itemId, qty) => {
 hud.setHooks(
   (itemId) => net.inventoryOp("use", { item_id: itemId }),
   (text) => {
-    hud.chatLine(`> ${text}`);
-    net.chatCommand(text);
+    if (text.startsWith("/")) {
+      net.chatCommand(text);
+    } else {
+      // Plain chat: the server broadcasts "chat" back to EVERYONE including
+      // self — no local echo here (it used to double the line).
+      net.chatCommand(text);
+    }
   },
   (recipeId) => net.craftOp(recipeId),
 );

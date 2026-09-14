@@ -2348,6 +2348,24 @@ export class Hud {
     this.chatLog.scrollTop = this.chatLog.scrollHeight;
   }
 
+  /** Player chat line: colored name + escaped text (cross-player chat). */
+  chatPlayerLine(name: string, color: string, text: string): void {
+    const div = document.createElement("div");
+    div.className = "line";
+    const nameSpan = document.createElement("b");
+    nameSpan.textContent = name; // textContent escapes — no HTML injection
+    if (color) nameSpan.style.color = color;
+    const textSpan = document.createElement("span");
+    textSpan.textContent = `: ${text}`;
+    div.appendChild(nameSpan);
+    div.appendChild(textSpan);
+    this.chatLog.appendChild(div);
+    while (this.chatLog.children.length > 50) {
+      this.chatLog.removeChild(this.chatLog.firstChild!);
+    }
+    this.chatLog.scrollTop = this.chatLog.scrollHeight;
+  }
+
   toast(message: string): void {
     const div = document.createElement("div");
     div.className = "toast";

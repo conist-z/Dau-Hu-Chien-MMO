@@ -42,6 +42,7 @@ from web_api.protocol import (
     MSG_PING,
     MSG_PONG,
     MSG_PUSH,
+    MSG_CHAT,
     MSG_WELCOME,
     SessionRegistry,
     WebSession,
@@ -850,9 +851,25 @@ class WebHub:
     async def _handle_chat_cmd(self, sess: WebSession, frame: dict) -> None:
         text = (frame.get("text") or "").strip()
         if not text.startswith("/"):
-            await self.send_to_client_conn(sess, {
-                "type": MSG_PUSH, "message": "Lệnh phải bắt đầu bằng /",
-            })
+            # Cross-player chat broadcast: everyone in the same channel sees
+            # "<name>: text" with the player's permanent role color.
+            rt = self.manager.get_runtime(sess.channel_id)
+            player = rt.state.get_player(sess.user_id) if rt else None
+            name = (player.display_name if player else "") or sess.display_name
+            color = (player.name_color if player else "") or ""
+            chat_frame = {
+                "type": MSG_CHAT,
+                "uid": sess.user_id,
+                "name": name,
+                "color": color,
+                "text": text[:200],
+            }
+            if rt is not None:
+                for other in list(rt.web_sessions.values()):
+                    try:
+                        await self.send_to_client_conn(other, chat_frame)
+                    except Exception:  # noqa: BLE001 — one dead conn can't block chat
+                        pass
             return
         parts = text[1:].split()
         cmd, args = parts[0].lower(), parts[1:]

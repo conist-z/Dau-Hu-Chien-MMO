@@ -51,9 +51,9 @@ async def save_player(db, channel_id: int, player: Player) -> None:
     await db.execute(
         """
         INSERT INTO players (channel_id, user_id, x, y, x_f, y_f, direction, sprite_id, visible,
-                            hp, max_hp, mana, max_mana, level, xp, coins, class_id,
+                            name_color, hp, max_hp, mana, max_mana, level, xp, coins, class_id,
                             screen_message_id, controls_message_id, hub_message_id, step_size)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(channel_id, user_id) DO UPDATE SET
             x=excluded.x, y=excluded.y, x_f=excluded.x_f, y_f=excluded.y_f,
             direction=excluded.direction,
@@ -76,6 +76,7 @@ async def save_player(db, channel_id: int, player: Player) -> None:
             player.direction,
             player.sprite_id,
             1 if player.visible else 0,
+            getattr(player, "name_color", None),
             player.hp,
             player.max_hp,
             player.mana,
@@ -95,7 +96,7 @@ async def save_player(db, channel_id: int, player: Player) -> None:
 async def load_players(db, channel_id: int) -> list:
     rows = await db.fetchall(
         "SELECT user_id, x, y, x_f, y_f, direction, sprite_id, visible, "
-        "hp, max_hp, mana, max_mana, level, xp, coins, class_id, "
+        "name_color, hp, max_hp, mana, max_mana, level, xp, coins, class_id, "
         "screen_message_id, controls_message_id, hub_message_id, step_size "
         "FROM players WHERE channel_id=?",
         (channel_id,),
@@ -110,18 +111,19 @@ async def load_players(db, channel_id: int) -> list:
             "direction": r[5],
             "sprite_id": r[6],
             "visible": bool(r[7]),
-            "hp": r[8],
-            "max_hp": r[9],
-            "mana": r[10],
-            "max_mana": r[11],
-            "level": r[12],
-            "xp": r[13],
-            "coins": r[14],
-            "class_id": r[15],
-            "screen_message_id": r[16],
-            "controls_message_id": r[17],
-            "hub_message_id": r[18],
-            "step_size": r[19] if len(r) > 19 else 1,
+            "name_color": r[8] if len(r) > 8 else None,
+            "hp": r[9],
+            "max_hp": r[10],
+            "mana": r[11],
+            "max_mana": r[12],
+            "level": r[13],
+            "xp": r[14],
+            "coins": r[15],
+            "class_id": r[16],
+            "screen_message_id": r[17],
+            "controls_message_id": r[18],
+            "hub_message_id": r[19],
+            "step_size": r[20] if len(r) > 20 else 1,
         }
         for r in rows
     ]

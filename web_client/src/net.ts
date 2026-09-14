@@ -17,6 +17,8 @@ export interface NetHandlers {
   onCraftState?: (matGrid: [string, number][], result: { id: string; qty: number } | null) => void;
   onCraftResult: (ok: boolean, reason: string, itemId: string | null, qty: number) => void;
   onPush: (message: string) => void;
+  /** Cross-player chat line (server broadcast, colored name). */
+  onChat?: (uid: number, name: string, color: string, text: string) => void;
   onError: (code: string, message?: string) => void;
   onAssetData: (name: string, b64: string | null) => void;
   onLoginOk: (token: string, displayName: string, avatarUrl: string) => void;
@@ -424,6 +426,9 @@ export class Net {
         break;
       case "push":
         this.handlers.onPush(frame.message);
+        break;
+      case "chat":
+        this.handlers.onChat?.(frame.uid, frame.name, frame.color, frame.text);
         break;
       case "error":
         this.handlers.onError(frame.code, frame.message);

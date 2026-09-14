@@ -120,6 +120,7 @@ export class WorldScene extends Phaser.Scene {
   private loadedTilesets = new Set<string>(); // tileset images that arrived
   private players = new Map<number, RemotePlayer>();
   private selfMarker: Phaser.GameObjects.Rectangle | null = null;
+  private selfLabel: Phaser.GameObjects.Text | null = null;
   private blockLayer: Phaser.GameObjects.Layer | null = null;
   // Diff cache for the block overlay: tile key -> sprite. Rapid place/break
   // used to tear down and rebuild EVERY block rectangle on each snapshot sig
@@ -949,6 +950,13 @@ export class WorldScene extends Phaser.Scene {
     this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
+    // Permanent role color label above self (same rule as remote labels).
+    if (s.name) {
+      this.selfLabel = this.add.text(s.x * 32, s.y * 32 + 22, s.name, {
+        fontSize: "10px", color: s.color || "#ffffff",
+        stroke: "#000000", strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(9);
+    }
     // Paperdoll texture already live? Swap the square for the body at once.
     // (Keep the square — it becomes invisible only when the doll spawns.)
     if (this.paperdollReady) {
@@ -1041,7 +1049,7 @@ export class WorldScene extends Phaser.Scene {
         : this.add.rectangle(0, 0, PLAYER_SIZE, PLAYER_SIZE, color);
       body.setStrokeStyle(2, 0xffffff, 0.9);
       const label = this.add.text(0, 22, p.name, {
-        fontSize: "10px", color: "#ffffff",
+        fontSize: "10px", color: p.color || "#ffffff",
         stroke: "#000000", strokeThickness: 3,
       }).setOrigin(0.5);
       // Plan A hand: same-colour dot + tool icon, BOTH inside the container
@@ -1131,6 +1139,9 @@ export class WorldScene extends Phaser.Scene {
     // The atk overlay is owned by PaperdollBody (swing() arms a one-shot
     // timer); we only feed the base idle/walk action here.
     const nowMs = performance.now();
+    if (this.selfLabel) {
+      this.selfLabel.setPosition(this.selfX * 32, this.selfY * 32 + 22);
+    }
     if (this.selfDoll?.ready && this.selfMarker) {
       // MOVING = any movement input, not Shift-running. The old check read
       // inputVec.running (Shift only), so plain walking never left the idle
