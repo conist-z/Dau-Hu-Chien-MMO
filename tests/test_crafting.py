@@ -81,19 +81,20 @@ def test_can_craft_table_requires_only_hand():
     assert ok and reason == "ok"
 
 
-def test_table_recipe_blocked_without_table():
-    # Tool recipes are intentionally EMPTY for now (user 14/09) — craft is
-    # impossible regardless; keep the recipe lookup alive.
+def test_tool_recipes_have_real_inputs():
+    # Tool recipes carry their Mine-parity patterns + inputs (the old static
+    # empty entries used to shadow the registered ones).
     r = get_recipe("wood_axe")
-    assert r is not None and r.inputs == []
+    assert r is not None and r.inputs and r.pattern
 
 
 def test_table_recipe_ok_near_table():
-    # Empty tool recipe = locked even near the table.
     r = get_recipe("wood_axe")
     inv = Inventory()
+    inv.add("plank", 3)
+    inv.add("stick", 2)
     ok, reason = can_craft(r, inv, near_table=True)
-    assert not ok and reason == "missing_materials"
+    assert ok and reason == "ok"
 
 
 # ----- do_craft -----
@@ -220,7 +221,7 @@ def test_full_progression_hand_to_axe():
         player = rt.state.get_player(10)
         rt.state.blocks.place(player.x + 2, player.y, "crafting_table")
 
-        # 5. The axe recipe is an empty skeleton now — stays locked.
+        # 5. Axe recipe has real inputs now — empty bag = missing materials.
         ok, reason, _, _ = await m.craft_item(1, 10, "wood_axe")
         assert not ok and reason == "missing_materials"
 

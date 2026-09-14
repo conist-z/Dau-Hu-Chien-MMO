@@ -81,20 +81,9 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         description="2x2 ván gỗ — đặt ra đất, đứng gần để mở khóa công thức phức tạp.",
     ),
     # --- near a placed crafting table ---
-    "wood_axe": RecipeDef(
-        "wood_axe", "Rìu gỗ", "🪓",
-        inputs=[],  # tool recipes intentionally empty for now (14/09)
-        output=("wood_axe", 1),
-        requires_table=True,
-        description="Chặt cây nhanh hơn (công thức chưa mở).",
-    ),
-    "wood_pickaxe": RecipeDef(
-        "wood_pickaxe", "Cuốc gỗ", "⛏️",
-        inputs=[],  # tool recipes intentionally empty for now (14/09)
-        output=("wood_pickaxe", 1),
-        requires_table=True,
-        description="Đập đá hiệu quả hơn (công thức chưa mở).",
-    ),
+    # wood_axe / wood_pickaxe are registered by _register_tool_recipes()
+    # below (Mine-parity patterns) — static empty entries here used to SHADOW
+    # them (the registerer skips existing ids, leaving inputs=[] forever).
     "furnace": RecipeDef(
         "furnace", "Lò nung", "🔥",
         inputs=[("stone", 8)],
