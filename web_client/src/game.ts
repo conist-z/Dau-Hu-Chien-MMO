@@ -64,6 +64,11 @@ const DIR_VECTORS: Record<string, [number, number]> = {
 // 13/09): damage drains at 1/s after the 3.5 s idle — the client mirrors
 // that pace between 20 Hz samples so the crack rewinds smoothly.
 const BLOCK_HEAL_RATE = 1.0;
+// Station blocks the E-prompt/hover/click interact flow targets (mirrors
+// game/crafting.py STATION_BLOCK_IDS).
+const STATION_BLOCK_IDS = new Set(["crafting_table", "furnace"]);
+// Interact range: Chebyshev tiles (matches server STATION_RANGE = 3).
+const STATION_INTERACT_RANGE = 3;
 
 interface RemotePlayer {
   container: Phaser.GameObjects.Container;
@@ -114,6 +119,19 @@ export class WorldScene extends Phaser.Scene {
   // change (~20 Hz while building) — the create/destroy churn was a real
   // source of stutter. Now only added/removed tiles touch the scene.
   private blockSprites = new Map<string, Phaser.GameObjects.GameObject>();
+
+  // ----- Station interact (E prompt + hover cursor + click-to-open) -----
+  /** Tile keys of STATION blocks from the latest snapshot (crafting table,
+   *  furnace...). Rebuilt with the block sig — same cost class. */
+  private stationTiles = new Set<string>();
+  /** The "E" prompt bubble above the nearest in-range station. */
+  private stationPrompt: Phaser.GameObjects.Container | null = null;
+  /** Nearest station tile within interact range (recomputed per frame). */
+  private nearestStation: { x: number; y: number } | null = null;
+  /** Set from main.ts: opens the craft panel (E key / station click). */
+  onStationInteract: (() => void) | null = null;
+  /** E-key press feedback: the bubble pops (scale punch). */
+  private promptPunchAt = 0;
   private mapBake: Phaser.GameObjects.Image | null = null;
   private lastBlockSig = "";
   // Real block faces (assets/blocks/<id>.png fetched via asset_request).
@@ -1050,6 +1068,7 @@ export class WorldScene extends Phaser.Scene {
       this.mouseTile = null;
     }
     this.updateHoverSquare();
+    this.updateStationPrompt();
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
@@ -1453,6 +1472,98 @@ export class WorldScene extends Phaser.Scene {
       .setDepth(100)
       .setActive(true)
       .setAlpha(1);
+  }
+
+  // ===== Station interact: E prompt + hover cursor + click-to-open =====
+
+  /** Nearest station tile within Chebyshev STATION_INTERACT_RANGE of the
+   *  self position (server positions are tile-center based). */
+  private findNearestStation(): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (const key of this.stationTiles) {
+      const [sx, sy] = key.split(",").map(Number);
+      const d = Math.max(Math.abs(sx - this.selfX), Math.abs(sy - this.selfY));
+      if (d <= STATION_INTERACT_RANGE && d < bestD) {
+        bestD = d;
+        best = { x: sx, y: sy };
+      }
+    }
+    return best;
+  }
+
+  /** Per-frame: recompute the nearest station, show/hide + bob the "E"
+   *  bubble, and swap the CSS cursor while hovering the station tile. */
+  private updateStationPrompt(): void {
+    this.nearestStation = this.findNearestStation();
+    const st = this.nearestStation;
+    if (!st) {
+      this.stationPrompt?.setVisible(false);
+      if (this.hoverStationCursor) {
+        this.hoverStationCursor = false;
+        this.game.canvas.style.cursor = "";
+      }
+      return;
+    }
+    // Bubble (lazy-built): pixel "E" in a dark rounded box + tail.
+    if (!this.stationPrompt) this.stationPrompt = this.buildStationPrompt();
+    const now = performance.now();
+    const bob = Math.sin(now / 300) * 2; // gentle 2px float
+    const sincePunch = now - this.promptPunchAt;
+    const punch = sincePunch < 160 ? 1 + 0.35 * (1 - sincePunch / 160) : 1;
+    this.stationPrompt.setPosition(st.x * 32 + 16, st.y * 32 - 24 + bob);
+    this.stationPrompt.setScale(punch);
+    this.stationPrompt.setVisible(true).setDepth(150);
+    // Hover cursor (Kaetram parity): crafting cursor over the station tile.
+    const hovering = !!this.mouseTile &&
+      this.mouseTile.x === st.x && this.mouseTile.y === st.y;
+    if (hovering !== this.hoverStationCursor) {
+      this.hoverStationCursor = hovering;
+      this.game.canvas.style.cursor = hovering
+        ? "url('ui/cursors/crafting.png') 8 8, pointer"
+        : "";
+    }
+  }
+
+  private hoverStationCursor = false;
+
+  /** Build the pixel "E" prompt bubble (dark box + tail + letter). */
+  private buildStationPrompt(): Phaser.GameObjects.Container {
+    const W = 22, H = 22, R = 4;
+    const g = this.add.graphics();
+    g.fillStyle(0x1c1a17, 0.92);
+    g.fillRoundedRect(-W / 2, -H / 2, W, H, R);
+    g.lineStyle(2, 0xd8b46a, 1);
+    g.strokeRoundedRect(-W / 2, -H / 2, W, H, R);
+    // Tail pointing down at the station.
+    g.fillStyle(0x1c1a17, 0.92);
+    g.fillTriangle(-4, H / 2 - 1, 4, H / 2 - 1, 0, H / 2 + 5);
+    const label = this.add.text(0, 0, "E", {
+      fontFamily: "Verdana, sans-serif",
+      fontSize: "14px",
+      color: "#f0e6c8",
+      fontStyle: "bold",
+    }).setOrigin(0.5);
+    return this.add.container(0, 0, [g, label]);
+  }
+
+  /** E pressed (or station clicked): punch the bubble + open the panel. */
+  stationInteract(): void {
+    if (!this.nearestStation) return;
+    this.promptPunchAt = performance.now();
+    this.onStationInteract?.();
+  }
+
+  /** True when a station is within interact range (E-key gate). */
+  nearStation(): boolean {
+    return this.nearestStation !== null;
+  }
+
+  /** True when the CURRENT hover tile is a station in range (click router). */
+  hoveringStation(): boolean {
+    return !!this.nearestStation && !!this.mouseTile &&
+      this.mouseTile.x === this.nearestStation.x &&
+      this.mouseTile.y === this.nearestStation.y;
   }
 
   /**
@@ -2545,6 +2656,11 @@ export class WorldScene extends Phaser.Scene {
       // "đặt block tàn hình" bug).
       if (this.welcome) this.welcome.blocks = snap.blocks;
       this.updateBlocks(snap.blocks);
+      // Station tiles (E-prompt targets) follow the same sig-guarded pass.
+      this.stationTiles.clear();
+      for (const [x, y, bid] of snap.blocks) {
+        if (STATION_BLOCK_IDS.has(bid)) this.stationTiles.add(`${x},${y}`);
+      }
     }
     // Collision truth rebuilt from EVERY snapshot (a cheap Set — the old
     // sig-guarded rebuild let a rejected/clamped own-action leave a phantom

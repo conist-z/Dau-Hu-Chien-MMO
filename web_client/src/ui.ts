@@ -209,8 +209,8 @@ export class Hud {
     qty: number;
     at: number;
   } | null = null;
-  /** Transient pre-ack server diff of the last purse op (+qty deposit /
-   *  −1 withdraw), held out of the delta-merge for 2s. Real pickups of the
+  /** Transient pre-ack server diff of the last purse op (−qty deposit /
+   *  +1 withdraw), held out of the delta-merge for 2s. Real pickups of the
    *  same currency during the window still apply (precise — no freeze). */
   private purseEcho: { itemId: string; delta: number } | null = null;
   private purseEchoAt = 0;
@@ -552,6 +552,25 @@ export class Hud {
     return !this.invPanel.classList.contains("hidden");
   }
 
+  /** Station interact (E key / station click): open the window on the
+   *  CRAFT tab. Reset per-panel close state like a fresh open; playing the
+   *  normal show + tab-in animations. */
+  openCraftPanel(): void {
+    this.invClosed = false;
+    this.craftClosed = false;
+    this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
+    if (this.invPanel.classList.contains("hidden")) {
+      this.applyTabLayout(false);
+      this.animateShow(this.invPanel);
+    }
+    // Switch to (or re-light) the craft tab + repaint.
+    document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
+    this.craftTab.classList.add("active");
+    this.applyTabLayout();
+    this.craftDetail.classList.toggle("hidden", true);
+    this.renderInventory();
+  }
+
   /** Re-apply the CURRENT tab layout to the three panel wraps, honoring
    *  the per-panel close flags, and sync the tab strip + drag-partner
    *  visibility. Called on every tab click / X press. */
@@ -721,7 +740,7 @@ export class Hud {
     this.inventory.bag[fromIndex] = null;
     if (itemId === "coin") this.purseCoins += qty;
     else this.purseCrystals += qty;
-    this.trackPursePending(itemId, -qty);
+    this.trackPursePending(itemId, qty); // echo = expected server diff (+qty)
     this.lastPurseOp = { kind: "deposit", itemId, slot: fromIndex, qty, at: Date.now() };
     this.renderHotbar();
     this.renderInventory();
@@ -817,20 +836,9 @@ export class Hud {
     const d = this.drag;
     this.endDrag();
     if (!d || (d.from === target && d.index === index)) return;
-    // PURSE DEPOSIT: dropping a currency stack ONTO THE MATCHING PURSE
-    // CELL (a bag slot already holding the same currency) banks it. Any
-    // other slot = a normal free move (currency is a free item).
-    if (
-      d.from === "bag" && target === "bag" && isCurrency(d.stack.id)
-    ) {
-      const onto = this.inventory.bag[index];
-      const isPurseCell = !!onto && onto.id === d.stack.id;
-      if (isPurseCell) {
-        this.depositCurrency(d.stack.id, d.index, d.stack.qty);
-        return;
-      }
-      // not the purse cell: fall through to the normal move below.
-    }
+    // NOTE: NO deposit-on-coin-cell here. Dropping a coin stack onto
+    // another coin stack is a plain MERGE — deposit into the purse happens
+    // ONLY on the purse icons below the panel (the "ô có icon coin").
     if (d.from === "bag" && target === "bag") {
       this.moveBag(d.index, index);
     } else if (d.from === "mat" && target === "mat") {
@@ -1840,7 +1848,7 @@ export class Hud {
       }
       if (itemId === "coin") this.purseCoins = Math.max(0, this.purseCoins - 1);
       else this.purseCrystals = Math.max(0, this.purseCrystals - 1);
-      this.trackPursePending(itemId, +1);
+      this.trackPursePending(itemId, -1); // echo = expected server diff (−1)
       this.lastPurseOp = { kind: "withdraw", itemId, slot, qty: 1, at: Date.now() };
       this.renderHotbar();
       this.renderInventory();
@@ -1905,7 +1913,7 @@ export class Hud {
     }
     // 3) Per-item delta. Everything unchanged keeps its slot untouched.
     // PURSE-ECHO HOLD: while the last purse op is unacked (2s), its own
-    // transient server diff (+qty for a deposit / −1 for a withdraw) is
+    // transient server diff (−qty for a deposit / +1 for a withdraw) is
     // HELD OUT of the merge — applying it mid-flight is what minted phantom
     // coins and shuffled coin stacks (the flicker-reorder). The optimistic
     // preview already shows the final state; real pickups of the same

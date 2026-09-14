@@ -518,6 +518,13 @@ const input = new KeyboardInput({
     scene.combatSwing();
   },
   onToggleInventory: () => hud.toggleInventory(),
+  // E near a station: open the craft panel (bubble punch effect plays in
+  // the scene). Returns true when handled; false falls back to inventory.
+  onStationKey: () => {
+    if (!scene.nearStation()) return false;
+    scene.stationInteract();
+    return true;
+  },
   onSlot: (index) => hud.selectSlot(index),
   onThrowHeld: () => {
     // Q: toss the full active-slot stack (the server removes + spawns the
@@ -532,6 +539,12 @@ const input = new KeyboardInput({
     if (kind === "primary") {
       if (!tile) {
         net.action("chop");
+        return;
+      }
+      // Station FIRST: clicking a crafting table (in range) opens the craft
+      // panel — never chops/breaks the station itself.
+      if (scene.hoveringStation()) {
+        scene.stationInteract();
         return;
       }
       // Clamp to the tile the server will ACTUALLY act on (mirrors its own

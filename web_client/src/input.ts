@@ -7,6 +7,9 @@ export interface InputHooks {
   onVector: (dx: number, dy: number, running: boolean) => void;
   onAttack: () => void;
   onToggleInventory: () => void;
+  /** E while near a station: open the station panel (craft) with a press
+   *  effect. Falls back to onToggleInventory when no station is in range. */
+  onStationKey?: () => boolean;
   onSlot: (index: number) => void;
   /** Q: throw the stack in the active hotbar slot into the world. */
   onThrowHeld?: () => void;
@@ -67,6 +70,9 @@ export class KeyboardInput {
     }
     if (e.code === "KeyE") {
       e.preventDefault();
+      // Near a station: E interacts (opens the craft panel with the press
+      // effect on the E bubble). Otherwise E stays the inventory toggle.
+      if (this.hooks.onStationKey?.()) return;
       this.hooks.onToggleInventory();
       return;
     }
