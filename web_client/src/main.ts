@@ -57,13 +57,18 @@ game.scene.add("world", scene, true);
 
 function applyTexture(name: string, b64: string): void {
   // Block faces register under "block-<id>" — the key game.ts looks up in
-  // buildBlocks. Mob sheets register under "mob-<id>". Tilesets keep their
-  // basename key.
+  // buildBlocks. Mob sheets register under "mob-<id>". Tilesets register
+  // under the BARE filename — the scene's tileTextures map (and the map
+  // bake) key by basename, so keeping the "tilesets/" lane prefix in the
+  // texture key left the bake lookup always missing → black canvas.
+  const bareTileset = name.startsWith("tilesets/")
+    ? name.slice("tilesets/".length)
+    : name;
   const key = name.startsWith("blocks/")
     ? `block-${name.slice("blocks/".length).replace(/\.png$/i, "")}`
     : name.startsWith("mobs/")
       ? `mob-${name.slice("mobs/".length).replace(/\.png$/i, "")}`
-      : name.replace(/\.png$/i, "");
+      : bareTileset.replace(/\.png$/i, "");
   if (assetTextures.has(key) || !game.textures) return;
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
