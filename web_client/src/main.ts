@@ -442,6 +442,11 @@ const net = new Net({
   },
 });
 
+// Idle heartbeat: the idle input timer keeps reporting the CURRENT predicted
+// position (see Net.flushInput) so the server body can never drift from what
+// the player sees — the "đứng yên mà hitbox ở chỗ khác" fix.
+net.idlePosHook = () => scene.getSelfPos();
+
 // Consumable ids the right-click EAT applies to (server re-validates type
 // + stock; this set only routes the click so tools still place nothing).
 const EDIBLE_IDS = new Set([
@@ -487,7 +492,7 @@ hud.setHooks(
 // from the real bag). Split = slot-based op. Bag reorder is debounced
 // client-side (ui.ts) so fast drags never spam the network.
 hud.setCraftHooks(
-  (inputs) => net.craftFromGrid(inputs),
+  (inputs, layout) => net.craftFromGrid(inputs, layout),
   (_grid) => { /* no-op: the grid is local now */ },
   (slot) => net.inventoryOp("split", { slot }),
 );

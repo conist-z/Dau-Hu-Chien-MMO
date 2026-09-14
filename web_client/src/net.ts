@@ -41,6 +41,9 @@ export class Net {
   /** Delivery callback for each seq'd input, so the scene can buffer exact
    * inputs for replay (set by main.ts right after construction). */
   onSeqInput: ((seq: number, dx: number, dy: number, running: boolean) => void) | null = null;
+  /** Idle heartbeat: returns the CURRENT predicted position so the idle
+   *  timer keeps reporting it (set from main.ts → scene.getSelfPos). */
+  idlePosHook: (() => { x: number; y: number } | null) | null = null;
   private handlers: NetHandlers;
   private pendingInput = { dx: 0, dy: 0, running: false, dirty: false, px: 0, py: 0, hasPos: false };
   private inputTimer: number | null = null;
@@ -246,7 +249,26 @@ export class Net {
 
   private flushInput(): void {
     const p = this.pendingInput;
-    if (!p.dirty || !this.joined) return;
+    if (!this.joined) return;
+    if (!p.dirty) {
+      // IDLE HEARTBEAT (the "hitbox bên kia" bug): when the player stops,
+      // the movement timer self-stops after one zero vector — the predicted
+      // position is then NEVER reported again, so the server body can drift
+      // from what's on screen (mobs bite the ghost). While idle, keep
+      // reporting the CURRENT predicted position on the same 20 Hz cadence:
+      // same seq stream, zero-vector movement, authoritative position. The
+      // server's expiry logic treats each report as fresh (see manager).
+      const pos = this.idlePosHook?.();
+      if (pos) {
+        const seq = ++this.inputSeq;
+        this.send({
+          type: MSG_INPUT, seq, dx: 0, dy: 0, running: false,
+          x: Math.round(pos.x * 1000) / 1000, y: Math.round(pos.y * 1000) / 1000,
+        });
+        if (this.onSeqInput) this.onSeqInput(seq, 0, 0, false);
+      }
+      return;
+    }
     p.dirty = false;
     const seq = ++this.inputSeq;
     this.send({
@@ -262,9 +284,9 @@ export class Net {
     // stop moving at the right instant.
     if (this.onSeqInput) this.onSeqInput(seq, p.dx, p.dy, p.running);
     if (p.dx === 0 && p.dy === 0 && this.inputTimer !== null) {
-      // Idle: one zero vector sent, stop the timer until the next keypress.
-      window.clearInterval(this.inputTimer);
-      this.inputTimer = null;
+      // Idle: the movement vector is zero — the timer KEEPS RUNNING as the
+      // idle heartbeat (see the !p.dirty branch above). It is only stopped
+      // on disconnect/leave.
     }
   }
 
@@ -305,11 +327,17 @@ export class Net {
   }
 
   /** Craft: send the LOCAL material grid's exact multiset once — the server
-   *  validates against the real bag and consumes there. */
-  craftFromGrid(inputs?: { id: string; qty: number }[]): void {
-    // DIAG (temporary): confirms the browser actually sent the craft frame.
-    console.log("[CRAFT] sending craft_op", JSON.stringify(inputs ?? []));
-    this.send({ type: "craft_op", op: "craft", inputs: inputs ?? [] });
+   *  validates against the real bag and consumes there. ``layout`` is the
+   *  optional exact 3x3 placement [(id, col, row)] — when present the
+   *  server matches the ARRANGEMENT (mirror allowed), Minecraft parity. */
+  craftFromGrid(inputs?: { id: string; qty: number }[],
+                layout?: { id: string; col: number; row: number }[]): void {
+    this.send({
+      type: "craft_op",
+      op: "craft",
+      inputs: inputs ?? [],
+      ...(layout && layout.length > 0 ? { layout } : {}),
+    });
   }
 
   /** Collect the parked craft result into the bag. ``slot`` targets a
