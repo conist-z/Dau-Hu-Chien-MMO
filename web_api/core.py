@@ -859,8 +859,23 @@ class WebHub:
         if cmd == "help":
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
+                "message": "Lệnh: /help, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
             })
+        elif cmd == "khutraodoi":
+            action = (args[0].lower() if args else "in")
+            if action not in ("in", "out"):
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH, "message": "Dùng: /khutraodoi in|out",
+                })
+                return
+            rt, message = await self.manager.web_travel_trade(
+                sess.channel_id, sess.user_id, action
+            )
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": message,
+            })
+            if rt is not None:
+                await self._maybe_teleport_welcome(sess, rt)
         elif cmd == "weather":
             rt = self.manager.get_runtime(sess.channel_id)
             key = rt.weather_key if rt is not None else "?"
@@ -881,6 +896,19 @@ class WebHub:
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Lệnh không rõ: /{cmd}",
             })
+
+    async def _maybe_teleport_welcome(self, sess: WebSession, rt) -> None:
+        """After a trade-zone teleport, re-send the world payload so the web
+        client loads the destination map (welcome carries the full tile
+        layers; snapshots only carry map_id).
+
+        Session migration: the web session object now lives on the
+        destination runtime's web_sessions (moved by
+        move_player_between_runtimes); make the SessionRegistry pointer and
+        the connection follow it."""
+        # Registry session identity stays; conn->session binding is intact.
+        welcome = build_welcome(rt, sess.user_id)
+        await self.send_to_client_conn(sess, welcome)
 
     async def _cmd_give(self, sess: WebSession, args: List[str]) -> None:
         """Admin /give: mint any item or block straight into the player's bag.
@@ -1223,6 +1251,13 @@ class WebHub:
             return
         if name.startswith("blocks/"):
             base_dir = ASSETS_DIR.parent / "blocks"
+        elif name.startswith("tilesets/"):
+            # Tiled tileset sheets (bigmap/lobbytrade maps reference them as
+            # "tilesets/<name>.png" relative to assets/) — served from
+            # assets/tilesets so side maps like lobbytrade render instead of
+            # a black canvas.
+            safe = Path(name).parts[-1]
+            base_dir = ASSETS_DIR.parent / "tilesets"
         elif name.startswith("icons/"):
             base_dir = ASSETS_DIR.parent / "gui" / "icons"
         elif name.startswith("mobs/"):
@@ -1274,7 +1309,9 @@ class WebHub:
             for conn in list(self.connections.values()):
                 if not conn.joined or conn.session is None:
                     continue
-                rt = self.manager.get_runtime(conn.session.channel_id)
+                rt = self.manager.runtime_of(
+                    conn.session.channel_id, conn.session.user_id
+                ) or self.manager.get_runtime(conn.session.channel_id)
                 if rt is None:
                     continue
                 conn.seq += 1

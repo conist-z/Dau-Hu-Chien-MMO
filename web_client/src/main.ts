@@ -121,10 +121,13 @@ function applyTexture(name: string, b64: string): void {
       return;
     }
     // Tileset image arrived (blocking asset) — tick the loading overlay.
-    onBlockingAssetDone(name.replace(/\.png$/i, ""));
+    // Strip the "tilesets/" lane prefix: the scene keys baked textures by
+    // the bare filename (tileTextures map).
+    const bareName = name.replace(/^tilesets\//, "");
+    onBlockingAssetDone(bareName.replace(/\.png$/i, ""));
     // Tileset arrived: re-bake ONLY the map canvas (no world rebuild —
     // rebuilding duplicated players and reset the camera).
-    scene.onTilesetLoaded(name);
+    scene.onTilesetLoaded(bareName);
   };
   img.src = url;
   assetTextures.set(key, key);

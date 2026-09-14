@@ -94,6 +94,9 @@ interface RemotePlayer {
   // interpolation buffer: [t_recv, x, y]
   buf: [number, number, number][];
   dir: string;
+  // Kaetram paperdoll for remote web bodies (spawned when the manifest +
+  // base sheet are ready; null while the square placeholder is showing).
+  doll: PaperdollBody | null;
 }
 
 // Hand orbit: distance from the body centre + dot radius. Exported so the
@@ -280,6 +283,8 @@ export class WorldScene extends Phaser.Scene {
   // (fresh samples reset the local heal projection).
   // Drop entities ("linh khí"): id -> live sprite group. Server-authoritative
   // position/phase at 20 Hz; the client animates bob/glow/collect locally.
+  // target: user_id the server's magnet is homing this drop toward (0 = none)
+  // so OBSERVERS animate the flight toward the RIGHT player, not themselves.
   private dropLayer: Phaser.GameObjects.Layer | null = null;
   private drops = new Map<string, {
     container: Phaser.GameObjects.Container;
@@ -292,6 +297,7 @@ export class WorldScene extends Phaser.Scene {
     phase: string;
     bornT: number;
     collectedT: number;
+  target: number;
     bobSeed: number;
   }>();
   private zombies = new Map<string, {
@@ -424,7 +430,11 @@ export class WorldScene extends Phaser.Scene {
       if (!ts.image) continue;
       if (!this.tileTextures.has(ts.image)) {
         this.tileTextures.set(ts.image, ts.image.replace(/\.png$/i, ""));
-        fetchAsset(ts.image);
+        // Server asset lane: "tilesets/<name>.png" resolves in
+        // assets/tilesets (bigmap's sheet also lives in assets/maps — the
+        // server falls back to basename matching, so this path works for
+        // every map).
+        fetchAsset(`tilesets/${ts.image}`);
       }
     }
     // Request every DISTINCT block face once (blocks payload may repeat ids).
@@ -907,6 +917,7 @@ export class WorldScene extends Phaser.Scene {
     const doll = new PaperdollBody(this, this.playersManifest);
     doll.spawn(rp.container.x, rp.container.y + 16, 7);
     this.remoteDolls.set(id, doll);
+    rp.doll = doll;
     rp.body.setVisible(false); // hide the square; keep it for hit geometry
     if (rp.held) doll.setWeapon(weapon_sheet_for(rp.held));
   }
@@ -1042,7 +1053,7 @@ export class WorldScene extends Phaser.Scene {
       container.add(hand);
       container.add(toolIcon);
       container.add(label);
-      rp = { container, body, mode: p.mode, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir };
+      rp = { container, body, mode: p.mode, label, webBadge: null, hand, handColor: color, toolIcon, held: null, swingT0: 0, buf: [], dir: p.dir, doll: null };
       container.setData("pid", p.id);
       this.players.set(p.id, rp);
       // Paperdoll texture already live? Swap immediately (square stays as
@@ -1156,7 +1167,7 @@ export class WorldScene extends Phaser.Scene {
       rp.toolIcon.setPosition(rp.hand.x, rp.hand.y);
       // Paperdoll: hide the hand dot + icon under the Kaetram body, animate
       // the doll. (The square stays hidden — it's hit geometry only.)
-      const doll = this.remoteDolls.get(parseInt(String(rp.container.getData("pid") ?? ""), 10));
+      const doll = rp.doll;
       if (doll?.ready) {
         rp.hand.setVisible(false);
         rp.toolIcon.setVisible(false);
@@ -1178,7 +1189,7 @@ export class WorldScene extends Phaser.Scene {
   syncDrops(list: DropPayload[]): void {
     const now = performance.now();
     const seen = new Set<string>();
-    for (const [id, itemId, qty, x, y, z, phase] of list) {
+    for (const [id, itemId, qty, x, y, z, phase, target] of list) {
       seen.add(id);
       let d = this.drops.get(id);
       if (!d) {
@@ -1210,7 +1221,7 @@ export class WorldScene extends Phaser.Scene {
         d = {
           container, glow, itemId, icon, label,
           tx: x * 32, ty: y * 32, z: z * 32,
-          phase, bornT: now, collectedT: 0,
+          phase, bornT: now, collectedT: 0, target,
           bobSeed: Math.random() * Math.PI * 2,
         };
         this.drops.set(id, d);
@@ -1220,6 +1231,7 @@ export class WorldScene extends Phaser.Scene {
         d.tx = x * 32;
         d.ty = y * 32;
         d.z = z * 32;
+        d.target = target;
         if (d.phase !== phase) {
           d.phase = phase;
           if (phase === "collected") d.collectedT = now;
@@ -1238,14 +1250,18 @@ export class WorldScene extends Phaser.Scene {
   private updateDrops(now: number): void {
     for (const d of this.drops.values()) {
       const age = now - d.bornT;
-      // MAGNET phases home DIRECTLY to the live self sprite (60 fps, zero
-      // sample lag): the 20 Hz server target lagged a running player, so
-      // drops flew into empty air. The server still owns the phase/collect
-      // decision — this is render-only pursuit of the player we can SEE.
+      // MAGNET phases home DIRECTLY to the live sprite of the player the
+      // server is pulling the drop toward — for SELF that is the predicted
+      // marker (zero sample lag), for OTHERS their remote body. Falling back
+      // to self for someone else's drop made every observer see drops fly
+      // into THEMSELVES first (bug 15/09).
       const self = this.selfMarker;
-      const magnet = d.phase === "magnet" && self !== null && !this.selfDead;
-      const gx = magnet && self ? self.x : d.tx;
-      const gy = magnet && self ? self.y - 10 : d.ty; // torso, not feet
+      const targetBody = d.target && d.target !== (this.welcome?.self.id ?? 0)
+        ? this.players.get(d.target)?.container ?? null
+        : (self !== null && !this.selfDead ? self : null);
+      const magnet = d.phase === "magnet" && targetBody !== null;
+      const gx = magnet && targetBody ? targetBody.x : d.tx;
+      const gy = magnet && targetBody ? targetBody.y - 10 : d.ty; // torso, not feet
       // Snappier smoothing while magnet (the server sample moves in 0.55-tile
       // jumps at 11 tiles/s; a slow lerp made the flight feel mushy/laggy).
       const k = 1 - Math.exp((magnet ? -30 : -18) * this.frameDtSec);
