@@ -33,6 +33,10 @@ def _tilesets_payload(rt: ScenarioRuntime) -> List[dict]:
             "firstgid": ts.get("firstgid", 1),
             "columns": ts.get("columns", 1),
             "tilewidth": ts.get("tilewidth", 32),
+            # Exact gid-range length: the client needs it to disambiguate
+            # overlapping ranges (and duplicate same-image entries) — without
+            # it the client guesses and ground tiles vanish.
+            "tilecount": ts.get("tilecount"),
             # Basename only: the client requests <name>.png through the
             # asset_request frame (no filesystem paths leak to the client).
             "image": img_path.name if img_path is not None else None,

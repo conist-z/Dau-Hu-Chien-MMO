@@ -26,6 +26,9 @@ export interface WelcomePayload {
       firstgid: number;
       columns: number;
       tilewidth: number;
+      /** Exact gid count (server Tiled tilecount) — may be missing on old
+       *  caches; the client falls back to a generous guess then. */
+      tilecount?: number | null;
       image: string | null;
     }[];
     spawn: [number, number];

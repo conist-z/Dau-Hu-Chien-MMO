@@ -657,12 +657,9 @@ export class WorldScene extends Phaser.Scene {
     let rangeHit: WelcomePayload["map"]["tilesets"][number] | null = null;
     for (const t of map.tilesets) {
       if (!t.image || t.firstgid > gid) continue;
-      // Payload has no tilecount/imageheight — use columns as the sheet's
-      // width and a generous row count (sheets are 8-64 cols; rows never
-      // exceed ~150, so 512 covers every real sheet without overreaching
-      // into the NEXT tileset's range... except duplicate same-image entries
-      // like BaseChip@577/5337, where "last range hit wins" resolves it).
-      const count = t.columns * 512;
+      // Prefer the server's exact tilecount; fall back to a generous guess
+      // (512 rows) only when it's missing (stale cached welcome).
+      const count = t.tilecount ?? t.columns * 512;
       if (gid < t.firstgid + count) {
         // Range hit: prefer the LAST such entry (later duplicates win —
         // Tiled re-exports append, and the later registration is authoritative).
