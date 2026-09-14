@@ -62,6 +62,10 @@ interface WeatherStyle {
   bolt?: boolean;       // storm: fire thunder/bolt_*.png lightning events
   fog?: boolean;        // procedural mist (web-only key, no sheet)
   horizontal?: boolean; // wind scrolls sideways instead of down
+  alphaBoost?: number;  // visibility multiplier for the particle layers
+  particles?: boolean;  // ALWAYS procedural (never tile a sheet) — used by
+                        // snow so every flake is an individual with its own
+                        // size/fall/sway instead of a repeating strip
 }
 
 // speedPx ≈ Discord speed-per-frame (rendering/weather_fx.py _STYLES.speed)
@@ -69,19 +73,24 @@ interface WeatherStyle {
 // 48/0.16=300, snow 16/0.2=80, wind ~600 (matches the old web gust speed).
 const STYLES: Record<string, WeatherStyle> = {
   rain: {
-    sheet: "rain", speedPx: 200, tint: "rgba(12,18,34,0.07)",
+    // Visibility boost (user rule 14/09: "mưa yếu phải lòi mắt"): the pack
+    // sheets are faint streaks — the boost brightens + thickens them without
+    // touching the artwork.
+    sheet: "rain", speedPx: 200, tint: "rgba(12,18,34,0.12)", alphaBoost: 2.1,
   },
   heavy_rain: {
-    sheet: "rain", speedPx: 300, tint: "rgba(8,12,22,0.12)",
+    sheet: "rain", speedPx: 300, tint: "rgba(8,12,22,0.18)", alphaBoost: 2.3,
   },
   storm: {
-    sheet: "rain", speedPx: 300, tint: "rgba(5,9,18,0.16)", bolt: true,
+    sheet: "rain", speedPx: 300, tint: "rgba(5,9,18,0.22)", bolt: true, alphaBoost: 2.4,
   },
   snow: {
-    sheet: "snow", speedPx: 80, tint: "rgba(250,252,255,0.04)",
+    // Snow is ALWAYS procedural: a tiled 32px strip can only ever repeat —
+    // individual flakes each with own size/fall-speed/sway read alive.
+    sheet: "", speedPx: 80, tint: "rgba(250,252,255,0.05)", particles: true,
   },
   cold: {
-    sheet: "snow", speedPx: 80, tint: "rgba(185,214,255,0.06)",
+    sheet: "", speedPx: 80, tint: "rgba(185,214,255,0.08)", particles: true,
   },
   wind: {
     // Discord parity: the 1024px master wraps across 6 GIF frames of 160ms
@@ -254,16 +263,18 @@ const FALLBACK_CFG: Record<string, {
   len: [number, number]; wid: [number, number]; al: [number, number];
   col: string[]; kind: "streak" | "flake" | "dash" | "mist";
 }> = {
-  rain: { n: 70, f: 30, spd: 520, dr: 90, len: [12, 26], wid: [1, 1.5],
-    al: [0.30, 0.62], col: ["#c4dbff", "#aac8ff"], kind: "streak" },
-  heavy_rain: { n: 130, f: 60, spd: 760, dr: 150, len: [18, 34], wid: [1.5, 2.5],
-    al: [0.42, 0.78], col: ["#cee2ff", "#bad3ff"], kind: "streak" },
-  storm: { n: 140, f: 65, spd: 820, dr: 200, len: [20, 38], wid: [2, 3],
-    al: [0.48, 0.85], col: ["#cae0ff", "#b4cfff"], kind: "streak" },
-  snow: { n: 55, f: 28, spd: 90, dr: 28, len: [2, 4], wid: [2, 4],
-    al: [0.5, 0.95], col: ["#f8faff", "#e8f0ff"], kind: "flake" },
-  cold: { n: 30, f: 14, spd: 80, dr: 22, len: [1.5, 3], wid: [1.5, 3],
-    al: [0.4, 0.75], col: ["#e4f0ff", "#d2e4fc"], kind: "flake" },
+  rain: { n: 90, f: 46, spd: 620, dr: 130, len: [14, 30], wid: [1.4, 2.2],
+    al: [0.38, 0.7], col: ["#cfE2ff", "#b6d0ff"].map((c) => c.toLowerCase()), kind: "streak" },
+  heavy_rain: { n: 150, f: 76, spd: 840, dr: 190, len: [20, 38], wid: [1.8, 2.8],
+    al: [0.5, 0.85], col: ["#d6e6ff", "#c0d8ff"], kind: "streak" },
+  storm: { n: 165, f: 84, spd: 900, dr: 230, len: [22, 42], wid: [2.2, 3.2],
+    al: [0.55, 0.9], col: ["#d2e4ff", "#bcd6ff"], kind: "streak" },
+  // Snow: rich individual flakes — wide size band, per-flake drift + sway
+  // (applied in step()), slow twinkle via alpha variance, several whites.
+  snow: { n: 110, f: 60, spd: 70, dr: 26, len: [1.6, 5.2], wid: [1.6, 5.2],
+    al: [0.45, 1.0], col: ["#ffffff", "#f4f8ff", "#e6eefc", "#dbe6f8"], kind: "flake" },
+  cold: { n: 60, f: 34, spd: 62, dr: 20, len: [1.2, 4.2], wid: [1.2, 4.2],
+    al: [0.4, 0.85], col: ["#eaf2ff", "#d6e4fa", "#c8daf6"], kind: "flake" },
   wind: { n: 34, f: 16, spd: 0, dr: 640, len: [18, 52], wid: [1, 2],
     al: [0.35, 0.75], col: ["#f8fcff", "#e8f0fc", "#d4e6fa"], kind: "dash" },
   fog: { n: 14, f: 8, spd: 14, dr: 40, len: [90, 220], wid: [16, 34],
@@ -421,8 +432,8 @@ export class WeatherFx {
     const key = slot.key;
     const style = slot.style;
     if (!style) return;
-    if (style.fog) {
-      slot.proceduralKind = FALLBACK_CFG.fog.kind;
+    if (style.fog || style.particles) {
+      slot.proceduralKind = FALLBACK_CFG[key]?.kind ?? "mist";
       this.seedProcedural(slot, key);
       return;
     }
@@ -568,8 +579,11 @@ export class WeatherFx {
         pt.x += pt.vx * this.dt;
         pt.y += pt.vy * this.dt;
         if (snowLike) {
-          pt.phase += this.dt * 1.6;
-          pt.x += Math.sin(pt.phase) * 12 * this.dt;
+          pt.phase += this.dt * rand(0.9, 2.2);
+          // Bigger flakes sway wider + fall a touch faster — natural depth
+          // (a single fixed sine made the old snow read as one rigid law).
+          pt.x += Math.sin(pt.phase) * (6 + pt.len * 4) * this.dt;
+          pt.x += Math.cos(pt.phase * 0.53) * 9 * this.dt;
         }
         const m = 60;
         if (pt.x > this.w + m) pt.x = -m;
@@ -735,9 +749,11 @@ export class WeatherFx {
     const ctx = this.ctx;
     const style = slot.style;
     const dist = (now / 1000) * style.speedPx;
+    // Visibility boost (rain pack art is faint — see STYLES.alphaBoost).
+    const boost = style.alphaBoost ?? 1;
 
     const drawLayer = (sheet: Sheet, alpha: number, ox: number, oy: number): void => {
-      ctx.globalAlpha = alpha * intensity;
+      ctx.globalAlpha = Math.min(1, alpha * intensity * boost);
       const w = sheet.w;
       const h = sheet.h;
       let y = (oy % h) - h;
@@ -791,14 +807,26 @@ export class WeatherFx {
           ctx.lineTo(p.x - ux, p.y - uy);
           ctx.stroke();
         } else if (kind === "flake") {
-          ctx.fillStyle = p.color;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y - p.len);
-          ctx.lineTo(p.x + p.len, p.y);
-          ctx.lineTo(p.x, p.y + p.len);
-          ctx.lineTo(p.x - p.len, p.y);
-          ctx.closePath();
-          ctx.fill();
+          // Organic flakes: soft circle for small ones, faceted diamond for
+          // big ones + a gentle twinkle (alpha breathes with phase) so the
+          // field never reads as one repeated strip.
+          const twinkle = 0.78 + 0.22 * Math.sin(p.phase * 1.7);
+          ctx.globalAlpha = Math.min(1, p.alpha * intensity * twinkle);
+          if (p.len < 2.6) {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.len * 0.9, 0, TAU);
+            ctx.fill();
+          } else {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y - p.len);
+            ctx.lineTo(p.x + p.len * 0.8, p.y);
+            ctx.lineTo(p.x, p.y + p.len);
+            ctx.lineTo(p.x - p.len * 0.8, p.y);
+            ctx.closePath();
+            ctx.fill();
+          }
         } else if (kind === "mist") {
           const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.len);
           g.addColorStop(0, p.color);
