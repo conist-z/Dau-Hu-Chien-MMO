@@ -2007,11 +2007,11 @@ export class Hud {
     }
   }
 
-  /** Q-key throw: toss the FULL stack in the active hotbar slot into the
-   *  world (same server op as the drag-out throw). */
+  /** Q-key throw: toss just ONE unit of the active hotbar slot's stack
+   *  into the world (drag-out throws the whole stack — this is the Q rule). */
   throwHeldStack(): void {
     const st = this.inventory.bag[this.activeSlot];
-    if (st && this.onThrow) this.onThrow(st.id, st.qty);
+    if (st && this.onThrow) this.onThrow(st.id, 1);
   }
 
   // ----- chat + toasts -----
