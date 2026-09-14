@@ -1,4 +1,5 @@
 import logging
+import math
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -115,6 +116,16 @@ class WebSession:
     # client never outruns the server by more than ~1 tile, without ever
     # applying a counter-force.
     time_debt: float = 0.0  # legacy, unused since the catch-up integration (kept for pickled sessions)
+    # Client-authoritative position (web client is the truth source for its
+    # own body — user's design decision): last reported predicted position
+    # + monotonic stamp. _web_tick_runtime converges the body toward the
+    # report (speed-capped to run speed + swept-collision-checked) instead
+    # of integrating time independently. Stale reports (>1s) are ignored.
+    report_x: float = 0.0
+    report_y: float = 0.0
+    report_at: float = 0.0
+    # Stamp of the last consumed convergence: a report is applied once.
+    last_converge: float = 0.0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -533,8 +544,16 @@ class GameManager:
         return None
 
     def web_input(self, channel_id: int, user_id: int,
-                  dx: float, dy: float, running: bool = False) -> bool:
-        """Store one input vector (called from the WS handler)."""
+                  dx: float, dy: float, running: bool = False,
+                  report_x: object = None, report_y: object = None) -> bool:
+        """Store one input vector (called from the WS handler).
+
+        Client-authoritative position: when the (web) client reports its
+        predicted position, remember it — _web_tick_runtime converges the
+        real body toward the reported position instead of integrating time
+        independently. This structurally removes server-integration desync
+        ("player here, hitbox bitten over there").
+        """
         rt = self.runtime_of(channel_id, user_id) or self.runtimes.get(channel_id)
         if rt is None:
             return False
@@ -544,6 +563,14 @@ class GameManager:
         sess.dx = max(-1.0, min(1.0, float(dx)))
         sess.dy = max(-1.0, min(1.0, float(dy)))
         sess.running = bool(running)
+        try:
+            rx = float(report_x) if report_x is not None else None
+            ry = float(report_y) if report_y is not None else None
+        except (TypeError, ValueError):
+            rx = ry = None
+        if rx is not None and ry is not None:
+            sess.report_x, sess.report_y = rx, ry
+            sess.report_at = _loop_time()
         self.touch_session(channel_id, user_id)
         return True
 
@@ -689,49 +716,82 @@ class GameManager:
                 self._regen_player_beat(rt, player, now)
                 self._stamina_regen_beat(rt, player, now)
                 self._eat_complete_beat(rt, player, now)
-                # NO LOST TIME: a stalled loop (heavy Discord renders at
-                # night, GC) used to clamp dt to 0.2s and the overrun was
-                # silently discarded — the server integrated LESS time than
-                # the client's real wall clock. The gap never came back, so
-                # the server's "true" position drifted behind the avatar the
-                # player saw: zombies bit the ghost trail ("linh hồn nhận
-                # sát thương"), reload "snapped" the player far back. Fix:
-                # split the elapsed time into at most 4 sweep-safe chunks
-                # (stalled loop) and integrate them ALL — nothing is thrown
-                # away, yet no single step can tunnel through a wall (swept
-                # collision assumes <= 1 tile steps). The window itself is
-                # hard-capped at 0.5s above: silently-dead sockets can never
-                # inject phantom movement time again.
-                remaining = raw_dt
-                # SPRINT stamina gate: running drains stamina; at zero the
-                # player falls back to WALK speed (no teleport, no block —
-                # just slower). Walking never costs stamina.
-                eff_running = sess.running
-                if eff_running and (sess.dx or sess.dy):
-                    if player.stamina <= 0.0:
-                        eff_running = False
-                while remaining > 1e-6:
-                    dt = min(0.2, remaining)
-                    remaining -= dt
-                    if eff_running:
-                        self._drain_stamina(player, STAMINA_RUN_DRAIN * dt)
-                    speed = WEB_RUN_SPEED if eff_running else WEB_WALK_SPEED
-                    # EATING: chew while walking = half speed (user feature).
-                    if player.eating_until > now:
-                        speed *= EAT_SPEED_MULT
-                    step_x = sess.dx * speed * dt
-                    step_y = sess.dy * speed * dt
-                    nx_f, ny_f = rt.collision.can_move_float(
-                        player.x_f, player.y_f, step_x, step_y
+                # CLIENT-AUTHORITATIVE MOVEMENT (replaces time integration).
+                # The web client reports its predicted position with every
+                # input flush; the server pulls the real body toward that
+                # position, speed-capped to the legal move rate and swept-
+                # collision-checked. Whatever the client shows is what the
+                # server converges to — server-side time integration can no
+                # longer diverge ("player here, hitbox bitten over there").
+                # Fairness: max convergence rate = run speed (2x walk), so a
+                # hacked client teleports at most 2x too fast, never skips
+                # walls (swept collision), and a silent socket's stale report
+                # expires (see below) — no rubber-banding of honest players.
+                # SPRINT stamina gate still applies in the legacy fallback
+                # below (clients that never report a position).
+                have_report = (
+                    sess.report_at > 0.0
+                    and 0.0 < (now - sess.report_at) < 1.0  # fresh report
+                )
+                if have_report:
+                    # Converge time budget = time since the last applied
+                    # report (capped by raw_dt's 0.5s ceiling). One report =
+                    # one application: never re-applied on later ticks.
+                    step_budget = min(
+                        0.5, max(0.0, now - max(sess.report_at, sess.last_converge))
                     )
-                    if (nx_f, ny_f) != (player.x_f, player.y_f):
-                        player.x_f, player.y_f = nx_f, ny_f
-                        moved_any = True
+                    sess.last_converge = now
+                    sess.report_at = 0.0  # consume: a report is applied once
+                    tgt_x = max(0.0, float(sess.report_x))
+                    tgt_y = max(0.0, float(sess.report_y))
+                    step_total = math.hypot(tgt_x - player.x_f, tgt_y - player.y_f)
+                    max_speed = WEB_RUN_SPEED
+                    if player.eating_until > now:
+                        max_speed *= EAT_SPEED_MULT
+                    max_step = max_speed * max(step_budget, 1.0 / WEB_TICK_HZ)
+                    if step_total > 1e-6:
+                        moved = min(step_total, max_step)
+                        ux = (tgt_x - player.x_f) / step_total
+                        uy = (tgt_y - player.y_f) / step_total
+                        nx_f, ny_f = rt.collision.can_move_float(
+                            player.x_f, player.y_f, ux * moved, uy * moved,
+                        )
+                        if (nx_f, ny_f) != (player.x_f, player.y_f):
+                            player.x_f, player.y_f = nx_f, ny_f
+                            moved_any = True
+                    if (sess.dx or sess.dy):
+                        player.direction = _web_direction(sess.dx, sess.dy)
+                else:
+                    # LEGACY fallback (old client / expired report): the
+                    # original time integration, still dt-capped.
+                    eff_running = sess.running
+                    if eff_running and (sess.dx or sess.dy):
+                        if player.stamina <= 0.0:
+                            eff_running = False
+                    remaining = raw_dt
+                    while remaining > 1e-6:
+                        dt = min(0.2, remaining)
+                        remaining -= dt
+                        if eff_running:
+                            self._drain_stamina(player, STAMINA_RUN_DRAIN * dt)
+                        speed = WEB_RUN_SPEED if eff_running else WEB_WALK_SPEED
+                        # EATING: chew while walking = half speed (user feature).
+                        if player.eating_until > now:
+                            speed *= EAT_SPEED_MULT
+                        step_x = sess.dx * speed * dt
+                        step_y = sess.dy * speed * dt
+                        nx_f, ny_f = rt.collision.can_move_float(
+                            player.x_f, player.y_f, step_x, step_y
+                        )
+                        if (nx_f, ny_f) != (player.x_f, player.y_f):
+                            player.x_f, player.y_f = nx_f, ny_f
+                            moved_any = True
+                    if moved_any:
+                        player.direction = _web_direction(sess.dx, sess.dy)
                 # One int sync + save per tick (not per chunk).
                 if moved_any:
                     player.sync_int_from_float()
                     player.float_moved = True
-                    player.direction = _web_direction(sess.dx, sess.dy)
                     self._schedule_save(rt, player)
             # SEPARATE realtime web pack (state.web_zombies, float positions):
             # driven by this same 20 Hz tick with the tick dt — movement

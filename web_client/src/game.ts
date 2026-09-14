@@ -170,6 +170,16 @@ export class WorldScene extends Phaser.Scene {
   private seqReplayActive = false;
   /** Wall-clock time of the last update() frame — feeds pendingDt. */
   private lastFrameT = 0;
+
+  /** CLIENT-AUTHORITATIVE position reporting: the web client is the truth
+   *  source for its own body position (the user asked for this model — no
+   *  server time-integration desync is possible in it). The prediction
+   *  position is handed to Net on every input flush; the server pulls the
+   *  real body toward the reported position (speed-capped + collision-checked
+   *  server-side, so it stays fair) instead of integrating time itself. */
+  getSelfPos(): { x: number; y: number } {
+    return { x: this.selfX, y: this.selfY };
+  }
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
   // True while hp == 0 (server-authoritative): prediction frozen, overlay on.
   private selfDead = false;

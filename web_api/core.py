@@ -576,6 +576,10 @@ class WebHub:
             sess.channel_id, sess.user_id,
             float(frame.get("dx", 0.0)), float(frame.get("dy", 0.0)),
             bool(frame.get("running", False)),
+            # Client-authoritative position (web client is the truth source
+            # for its own body — user's design choice). Absent = old client.
+            report_x=frame.get("x"),
+            report_y=frame.get("y"),
         )
 
     async def _handle_inventory_op(self, sess: WebSession, frame: dict) -> None:

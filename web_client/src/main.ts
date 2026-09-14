@@ -491,7 +491,12 @@ const input = new KeyboardInput({
     // Zero-lag: prediction runs every frame locally; the network copy is
     // just the authoritative echo (20 Hz throttle in Net).
     scene.setLocalInput(dx, dy, running);
-    net.setInput(dx, dy, running);
+    // Client-authoritative movement: report the PREDICTED position with the
+    // input — the server pulls its body to where the player actually is
+    // (speed-capped, collision-checked) instead of integrating time itself.
+    // This removes the whole class of server-side integration desync.
+    const sp = scene.getSelfPos();
+    net.setInput(dx, dy, running, sp);
   },
   onAttack: () => {
     // Cheap melee: attack IN PLACE + swing the hand at once (the swing is

@@ -42,7 +42,7 @@ export class Net {
    * inputs for replay (set by main.ts right after construction). */
   onSeqInput: ((seq: number, dx: number, dy: number, running: boolean) => void) | null = null;
   private handlers: NetHandlers;
-  private pendingInput = { dx: 0, dy: 0, running: false, dirty: false };
+  private pendingInput = { dx: 0, dy: 0, running: false, dirty: false, px: 0, py: 0, hasPos: false };
   private inputTimer: number | null = null;
   private pingTimer: number | null = null;
   private lastRttMs = 0;
@@ -233,9 +233,12 @@ export class Net {
     this.send({ type: "select_slot", slot });
   }
 
-  setInput(dx: number, dy: number, running: boolean): void {
+  setInput(dx: number, dy: number, running: boolean, pos?: { x: number; y: number }): void {
     const p = this.pendingInput;
     p.dx = dx; p.dy = dy; p.running = running; p.dirty = true;
+    if (pos) {
+      p.px = pos.x; p.py = pos.y; p.hasPos = true;
+    }
     if (this.inputTimer === null) {
       this.inputTimer = window.setInterval(() => this.flushInput(), INPUT_SEND_INTERVAL_MS) as unknown as number;
     }
@@ -246,7 +249,14 @@ export class Net {
     if (!p.dirty || !this.joined) return;
     p.dirty = false;
     const seq = ++this.inputSeq;
-    this.send({ type: MSG_INPUT, seq, dx: p.dx, dy: p.dy, running: p.running });
+    this.send({
+      type: MSG_INPUT, seq, dx: p.dx, dy: p.dy, running: p.running,
+      // Client-authoritative position piggybacks on every flushed input:
+      // the server converges its body to this (speed-capped + collision-
+      // checked), so a server time-integration desync can never diverge
+      // from what the player sees on screen.
+      ...(p.hasPos ? { x: Math.round(p.px * 1000) / 1000, y: Math.round(p.py * 1000) / 1000 } : {}),
+    });
     // Hand the exact input to the scene's replay buffer (same seq the server
     // will ack). Buffered even for the idle zero vector — replay needs it to
     // stop moving at the right instant.
