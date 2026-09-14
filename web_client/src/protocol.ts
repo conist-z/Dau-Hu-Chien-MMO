@@ -216,6 +216,9 @@ export interface RecipePayload {
   output: { id: string; qty: number };
   needs_table: boolean;
   description: string;
+  /** Minecraft-style grid layout [(id, col, row)] on the 3x3 grid; null
+   *  = multiset-only (any arrangement matches). */
+  pattern?: { id: string; col: number; row: number }[] | null;
 }
 
 export interface ScenarioItem {

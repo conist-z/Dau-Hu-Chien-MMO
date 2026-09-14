@@ -1453,7 +1453,26 @@ class GameManager:
                 cleaned.append((str(iid), q))
         if not cleaned:
             return {"ok": False, "reason": "empty_grid", "item_id": None, "qty": 0}
-        recipe = crafting.find_recipe_by_inputs(cleaned)
+        # Layout-aware match: the client may send the exact 3x3 placement
+        # [(item_id, col, row), ...]. With a layout, the recipe must match
+        # the ARRANGEMENT (mirror allowed) — not just the multiset.
+        raw_layout = frame.get("layout")
+        layout = None
+        if isinstance(raw_layout, list):
+            layout = []
+            for entry in raw_layout:
+                if isinstance(entry, dict):
+                    iid = entry.get("id")
+                    col, row = entry.get("col"), entry.get("row")
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                    iid, col, row = entry[0], entry[1], entry[2]
+                else:
+                    continue
+                try:
+                    layout.append((str(iid), int(col), int(row)))
+                except (TypeError, ValueError):
+                    continue
+        recipe = crafting.find_recipe_by_inputs(cleaned, pattern=layout)
         if recipe is None:
             return {"ok": False, "reason": "no_matching_recipe", "item_id": None, "qty": 0}
         near_table = crafting.nearest_station(rt.state.blocks, player)

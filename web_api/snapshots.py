@@ -261,6 +261,12 @@ def _recipes_payload() -> List[dict]:
             "needs_table": r.requires_table,
             "group": getattr(r, "group", "usable"),
             "description": r.description,
+            # Minecraft-style grid layout ([(item_id, col, row), ...]) — the
+            # client quick-fill auto-arranges materials into it; None for
+            # multiset-only recipes.
+            "pattern": ([{"id": iid, "col": c, "row": w}
+                         for iid, c, w in r.pattern]
+                        if getattr(r, "pattern", None) else None),
         }
         for r in RECIPE_REGISTRY.values()
     ]

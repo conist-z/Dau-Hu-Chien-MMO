@@ -574,15 +574,17 @@ html, body {
 .slot-pix.quick.locked .icon-img,
 .slot-pix.quick.locked .icon { opacity: 0.45; }
 
-/* Craftable recipe that is only short on MATERIALS: thin red border frame
-   around the slot (icon stays fully visible — the desc rows say what's
-   missing). Distinct from the "impossible" hatch above. */
+/* Craftable recipe that is only short on MATERIALS: gray border + dimmed
+   icon — "chế được nhưng chưa đủ nguyên liệu" (user 14/09). Distinct from
+   the red hatch (missing table) and the green glow (craftable now). */
 .slot-pix.quick.short::after {
   content: "";
   position: absolute; inset: 0;
-  box-shadow: inset 0 0 0 2px rgba(190, 60, 40, 0.85);
+  box-shadow: inset 0 0 0 2px rgba(190, 190, 200, 0.75);
   z-index: 4;
 }
+.slot-pix.quick.short .icon-img,
+.slot-pix.quick.short .icon { opacity: 0.5; }
 
 /* Hover: 4-corner bracket highlight (pixel-art style — no rounded glow).
    Drawn as 4 small L-shapes on ::before so ::after stays free for state

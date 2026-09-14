@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-B7SJQ49U.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BQCp1VBD.css">
+    <script type="module" crossorigin src="./assets/index-DcMllig9.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-COdq2YGj.css">
   </head>
   <body>
     <div id="game-root">

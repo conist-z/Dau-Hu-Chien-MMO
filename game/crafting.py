@@ -31,6 +31,13 @@ class RecipeDef:
     ``requires_table`` marks recipes only craftable while the player stands
     near a placed crafting table; simple recipes (planks, the table itself)
     are craftable anywhere by hand.
+
+    ``pattern`` (optional, Minecraft-style): the EXACT grid layout the
+    materials must sit in for the recipe to match — list of (item_id, col,
+    row) with col/row in a 3x3 grid (0-indexed, origin top-left). When set,
+    the web craft grid must match the LAYOUT (not just the multiset), and
+    the client's quick-fill auto-arranges the materials into it. Mirror
+    layouts count as a match (Minecraft parity).
     """
 
     id: str
@@ -44,6 +51,8 @@ class RecipeDef:
     # "decor" (trang trí + block: bàn chế tạo, lò nung, đuốc...), "usable"
     # (dùng được: thuốc, đồ ăn...). Anything else defaults to "usable".
     group: str = "usable"
+    # [(item_id, col, row), ...] — see docstring. None = multiset-only.
+    pattern: Optional[List[Tuple[str, int, int]]] = None
 
 
 RECIPE_REGISTRY: Dict[str, RecipeDef] = {
@@ -103,11 +112,15 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
 
 # ---- Tool recipes (game/tools.py): mỗi tool được làm từ đúng vật liệu của nó
 # (gỗ / sắt / vàng / thép) và CHỈ chế được khi có bàn chế tạo gần đó (user rule).
-# Bậc sau tốn nhiều nguyên liệu hơn bậc trước (data-driven, tune tại đây).
 #
-# RECIPES ARE INTENTIONALLY EMPTY for now (user 14/09: "công thức của bọn nó
-# tạm thời để trống") — the loader below registers a skeleton entry per tool
-# with NO inputs, meaning "not yet craftable". Fill ``inputs`` to enable.
+# Minecraft-parity GRID PATTERNS (user 14/09: chép từ wiki Mine). ``pattern``
+# liệt kê từng ô trong lưới 3x3 (col, row, gốc trên-trái) — craft chỉ khớp khi
+# nguyên liệu nằm ĐÚNG vị trí (cho phép đặt镜像 — Minecraft parity):
+#   pickaxe: M M M / . S . / . S .      axe: M M . / M S . / . S .
+#   shovel:  . M . / . S . / . S .      sword: . M . / . M . / . S .
+# Số lượng nguyên liệu theo bậc: wood 1 / iron, gold 3 / steel 4 (xẻng chỉ
+# có gỗ, 1 nguyên liệu). Gậy luôn 2 cái xếp thành cột.
+
 def _register_tool_recipes() -> None:
     from game.tools import FAMILY_MATERIALS, TOOL_FAMILIES, tool_item_id
 
@@ -124,30 +137,65 @@ def _register_tool_recipes() -> None:
         "sword": "🗡️",
     }
     mats = {"wood": "gỗ", "iron": "sắt", "gold": "vàng", "steel": "thép"}
-    # Per-tier material cost once recipes go live (tune freely).
-    material_qty = {"wood": 2, "iron": 3, "gold": 3, "steel": 4}
-    stick_qty = {"wood": 2, "iron": 2, "gold": 2, "steel": 2}
+    # Số nguyên liệu mỗi công thức (wiki Mine: cúp/rìu 3, kiếm 2, xẻng 1).
+    material_qty = {"wood": 3, "iron": 3, "gold": 3, "steel": 3}
     material_item = {
-        "wood": "wood",
+        "wood": "plank",        # gỗ: dùng trực tiếp ván gỗ như Minecraft
         "iron": "iron_ingot",
-        "gold": "gold_ingot",   # not yet obtainable — recipe stays empty
-        "steel": "steel_ingot", # not yet obtainable — recipe stays empty
+        "gold": "gold_ingot",   # not yet obtainable — smelt chain TODO
+        "steel": "steel_ingot", # not yet obtainable — smelt chain TODO
     }
+
+    def _pattern(fam: str, mat_item: str) -> List[Tuple[str, int, int]]:
+        """Grid layout (3x3, origin top-left) per family — wiki Mine parity."""
+        S = "stick"
+        if fam == "pickaxe":
+            # Hàng trên đầy nguyên liệu + 2 gậy cột giữa.
+            return [(mat_item, 0, 0), (mat_item, 1, 0), (mat_item, 2, 0),
+                    (S, 1, 1), (S, 1, 2)]
+        if fam == "axe":
+            # 2 nguyên liệu hàng trên (2 ô trái) + 1 ô dưới trái + 2 gậy cột phải.
+            return [(mat_item, 0, 0), (mat_item, 1, 0), (mat_item, 0, 1),
+                    (S, 2, 1), (S, 2, 2)]
+        if fam == "shovel":
+            # 1 nguyên liệu trên + 2 gậy cột giữa.
+            return [(mat_item, 1, 0), (S, 1, 1), (S, 1, 2)]
+        # sword: 2 nguyên liệu + 1 gậy thành 1 cột giữa.
+        return [(mat_item, 1, 0), (mat_item, 1, 1), (S, 1, 2)]
+
     for fam in TOOL_FAMILIES:
         for mat in FAMILY_MATERIALS[fam]:
             rid = tool_item_id(fam, mat)
             if rid in RECIPE_REGISTRY:
                 continue
-            # EMPTY inputs = skeleton only; craft is impossible until filled.
+            m_item = material_item[mat]
+            qty = material_qty[mat]
+            inputs: List[Tuple[str, int]] = []
+            pat: Optional[List[Tuple[str, int, int]]] = None
+            if m_item == "gold_ingot" or m_item == "steel_ingot":
+                # Material chain chưa có (không obtainable) — recipe skeleton.
+                desc = (f"Công cụ {mats[mat]} bậc "
+                        f"{"wood iron gold steel".split().index(mat) + 1} — "
+                        f"chờ dây chuyền nung (thỏi {mats[mat]}).")
+            else:
+                inputs = [(m_item, qty), ("stick", 2)]
+                pat = _pattern(fam, m_item)
+                desc = {
+                    "pickaxe": "3 nguyên liệu hàng trên + 2 gậy cột giữa (wiki Mine).",
+                    "axe": "2 nguyên liệu hàng trên + 1 dưới + 2 gậy cột phải (wiki Mine).",
+                    "shovel": "1 nguyên liệu trên + 2 gậy cột giữa (wiki Mine).",
+                    "sword": "2 nguyên liệu + 1 gậy xếp thành cột (wiki Mine).",
+                }[fam]
             RECIPE_REGISTRY[rid] = RecipeDef(
                 rid,
                 f"{names[fam]} {mats[mat]}",
                 emojis[fam],
-                inputs=[],  # TODO: fill when the material chain lands
+                inputs=inputs,
                 output=(rid, 1),
                 requires_table=True,
                 group="tool",
-                description=f"Công cụ {mats[mat]} bậc {"wood iron gold steel".split().index(mat) + 1} — công thức chưa mở.",
+                description=desc,
+                pattern=pat,
             )
 
 
@@ -158,18 +206,51 @@ def get_recipe(recipe_id: str) -> Optional[RecipeDef]:
     return RECIPE_REGISTRY.get(recipe_id)
 
 
-def find_recipe_by_inputs(inputs: List[Tuple[str, int]]) -> Optional[RecipeDef]:
-    """Match an exact input multiset ("place materials in the grid") to a
-    recipe — the web craft-grid model: the placed materials ARE the recipe.
+def find_recipe_by_inputs(inputs: List[Tuple[str, int]],
+                          pattern: Optional[List[Tuple[str, int, int]]] = None,
+                          ) -> Optional[RecipeDef]:
+    """Match placed materials to a recipe — the web craft-grid model.
 
-    A recipe matches when its input multiset equals the placed multiset
-    exactly (same items, same quantities, nothing extra). Pure: no state.
+    Two modes:
+    - ``pattern`` is None: multiset match (old behaviour — same items, same
+      quantities, nothing extra, any layout).
+    - ``pattern`` given ([(item_id, col, row), ...] on the 3x3 grid): match
+      the LAYOUT exactly, mirror allowed (Minecraft parity). Extra materials
+      anywhere on the grid break the match.
+
+    Pure: no state.
     """
+    if pattern is not None:
+        for recipe in RECIPE_REGISTRY.values():
+            if recipe.pattern and _pattern_matches(recipe.pattern, pattern):
+                return recipe
+        return None
     want = sorted((iid, qty) for iid, qty in inputs if qty > 0)
     for recipe in RECIPE_REGISTRY.values():
         if sorted(recipe.inputs) == want:
             return recipe
     return None
+
+
+def _pattern_matches(want: List[Tuple[str, int, int]],
+                     placed: List[Tuple[str, int, int]]) -> bool:
+    """Exact-layout comparison of two 3x3 patterns; the mirror (cols
+    flipped) counts as a match — Minecraft parity for the axe. Pure."""
+    def norm(cells: List[Tuple[str, int, int]]) -> frozenset:
+        return frozenset(cells)
+
+    def mirror(cells: List[Tuple[str, int, int]]) -> List[Tuple[str, int, int]]:
+        return [(iid, 2 - col, row) for (iid, col, row) in cells]
+
+    p = norm(placed)
+    return p == norm(want) or p == norm(mirror(want))
+
+
+def pattern_mirror(pattern: List[Tuple[str, int, int]]) -> List[Tuple[str, int, int]]:
+    """Public helper: mirror a pattern across the vertical axis (the client
+    uses it to offer the mirrored quick-fill when the direct layout fails
+    the bag layout). Pure."""
+    return [(iid, 2 - col, row) for (iid, col, row) in pattern]
 
 
 def can_craft(recipe: RecipeDef, inventory, near_table: bool) -> Tuple[bool, str]:
