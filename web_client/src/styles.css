@@ -234,6 +234,17 @@ html, body {
   from { opacity: 1; transform: none; }
   to { opacity: 0; transform: scale(0.86) translateY(-6px); }
 }
+/* Grid upgrade (4 -> 9 cells) when walking into a crafting table's range:
+   a quick expand-from-center pulse on the craft wrap. */
+.grid-up {
+  animation: grid-up-pulse 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes grid-up-pulse {
+  0% { transform: scale(0.88); }
+  55% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
 /* Slide-up: when the craft panel closes on the craft tab, the inventory
    panel glides up into the freed space (class toggled per layout). */
 #inv-panel.slide-up { animation: panel-slide-up 0.22s ease-out; }

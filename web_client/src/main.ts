@@ -232,7 +232,12 @@ const net = new Net({
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
-    hud.setNearStation(!!frame.near_station);
+    // near_station lives INSIDE self on snapshots (top-level only on
+    // welcome) — reading the wrong spot meant the 20 Hz station state was
+    // permanently false: no grid upgrade, no auto-close on range exit.
+    hud.setNearStation(
+      !!(frame.self as { near_station?: boolean }).near_station,
+    );
     // Death veil: server ignores our inputs while dead; the scene freezes
     // prediction and this overlay explains why (5s respawn).
     hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);

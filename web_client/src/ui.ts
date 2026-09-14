@@ -26,7 +26,7 @@ import {
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
-  PURSE_COIN_X, PURSE_CRYSTAL_X,
+  PURSE_COIN_X, PURSE_CRYSTAL_X, PURSE_DIGIT,
   itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
 
@@ -1829,19 +1829,35 @@ export class Hud {
     const sig = `${this.purseCoins}:${this.purseCrystals}`;
     if (sig === this.purseLastSig) return;
     this.purseLastSig = sig;
-    for (const el of this.purseDigitEls) el.remove();
-    this.purseDigitEls = [
-      ...makeDigitRun(this.purseCoins, PURSE_COIN_X),
-      ...makeDigitRun(this.purseCrystals, PURSE_CRYSTAL_X),
+    // SMOOTH COUNTERS: in-place digit <img> SWAP (update src of the
+    // existing elements, add/remove only the tail) instead of tearing the
+    // whole run down every change — that rebuild was the visible jank.
+    const runs: [number, number, number][] = [
+      [this.purseCoins, PURSE_COIN_X, 0],
+      [this.purseCrystals, PURSE_CRYSTAL_X, 1],
     ];
-    this.invItemsWrap.append(...this.purseDigitEls);
-    this.invItemsCraftWrap.append(...this.purseDigitEls.map((im) => {
-      const c = im.cloneNode() as HTMLImageElement;
-      return c;
-    }));
-    // clones need appending too (append of an already-parented node moves it)
-    const clones = this.invItemsCraftWrap.querySelectorAll("img.purse-digit");
-    this.purseDigitEls.push(...(clones as NodeListOf<HTMLImageElement>));
+    for (const [value, leftPx, runIdx] of runs) {
+      const text = String(Math.max(0, Math.floor(value)));
+      const perRun = this.purseDigitEls.length / 2;
+      const base = runIdx * perRun;
+      // Grow the run when the number gained digits.
+      while (this.purseDigitEls.length < (runIdx + 1) * text.length) {
+        const im = makeDigitRun(0, leftPx)[0];
+        if (!im) break;
+        this.purseDigitEls.push(im);
+        this.invItemsWrap.append(im);
+        const c = im.cloneNode() as HTMLImageElement;
+        this.invItemsCraftWrap.append(c);
+        this.purseDigitEls.push(c);
+      }
+      for (let i = 0; i < text.length; i++) {
+        const im = this.purseDigitEls[base + i];
+        if (!im) continue;
+        const want = `${PURSE_DIGIT.dir}/n${text[i]}.png`;
+        if (!im.src.endsWith(want)) im.src = want; // only real changes
+        im.style.left = `${(leftPx + i * (PURSE_DIGIT.advance + 1)) * PIXEL_SCALE}px`;
+      }
+    }
   }
 
   /** Purse drag: ghost icon follows the mouse; release outside = withdraw 1. */
@@ -2139,10 +2155,26 @@ export class Hud {
   setNearStation(near: boolean): void {
     if (near === this.nearTable) return;
     this.nearTable = near;
-    // Leaving the range only DOWNGRADES the grid (9 -> 4) and returns any
-    // overflow stacks — the panel STAYS OPEN (user rule 15/09).
     if (near === false) {
       this.overflowMatToBag(); // 3x3 -> 2x2: cells 4..8 go home
+      // Left the station's range while its pinned window is open: close
+      // the whole window (also fires onPanelWindowClosed -> bubble back).
+      if (this.stationWindowOpen) {
+        this.stationOpen = false;
+        this.animateHide(this.invPanel);
+        this.onPanelWindowClosed?.();
+      }
+    } else {
+      // Walked INTO range: the material grid upgrades 4 -> 9 cells. If the
+      // craft panel is visible, play an expand-from-center pulse so the
+      // flip reads as the table "unlocking" the bigger grid.
+      if (this.inventoryOpen && this.craftTab.classList.contains("active")) {
+        this.renderInventory();
+        const wrap = this.invCraftWrap;
+        wrap.classList.remove("grid-up");
+        void wrap.offsetWidth; // restart the keyframes
+        wrap.classList.add("grid-up");
+      }
     }
     if (this.inventoryOpen) this.renderInventory();
   }
