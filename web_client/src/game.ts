@@ -693,28 +693,24 @@ export class WorldScene extends Phaser.Scene {
     canvas.height = map.height * th;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    // Tiles that belong to a LIVE resource node must be excluded (the node
-    // is drawn as a choppable sprite, and a baked copy would stay visible
-    // after felling). But the lobbytrade tree layer uses Pipoya gids that are
-    // NOT registered nodes — those tiles were previously dropped ENTIRELY,
-    // leaving 1000+ collision-blocking trees with NO art (the "block vô
-    // hình" wall). Bake them instead: only baked tiles whose coordinates are
-    // part of an actual node (from the server's res_progress bboxes) are
-    // skipped.
-    const isNodeTile = (x: number, y: number): boolean => {
-      for (const bbox of this.lastProgressBbox.values()) {
-        for (const [bx, by] of bbox) {
-          if (bx === x && by === y) return true;
-        }
-      }
-      return false;
-    };
+    // Resource-layer tiles must bake ONLY when the server lists them as a
+    // visible resource tile (welcome.resources). That list ALREADY excludes
+    // chopped nodes' tiles (visible_tiles drops chopped anchors), so a felled
+    // tree's tiles never enter the base bake (the "đập rồi vẫn dính đất" bug:
+    // the old isNodeTile check keyed off res_progress, which only covers
+    // IN-PROGRESS nodes — after felling the bbox vanished and the baked copy
+    // reappeared). Tiles on resource layers WITHOUT a server node (lobbytrade's
+    // Pipoya trees — no registered node, not in the payload) still bake, so
+    // they never become the "block vô hình" invisible wall again.
+    const resourceTileSet = new Set(
+      (welcome.resources ?? []).map(([x, y]) => `${x},${y}`),
+    );
     for (const layer of map.layers) {
-      // Resource layers ARE baked too — except tiles that belong to a live
-      // choppable node (those render as node sprites; a baked copy stayed
-      // visible after felling). Tiles without a node (lobbytrade's Pipoya
-      // trees have no registered node) MUST bake, or they become invisible
-      // walls (the "block vô hình" bug).
+      // Resource layers ARE baked too — but ONLY tiles the server reports as
+      // visible resource nodes (those render as choppable sprites; a baked
+      // copy stayed visible after felling). Tiles without a server node
+      // (lobbytrade's Pipoya trees have no registered node) MUST bake, or
+      // they become invisible walls (the "block vô hình" bug).
       const isResourceLayer = RESOURCE_LAYERS.has(foldName(layer.name || ""));
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
@@ -722,7 +718,7 @@ export class WorldScene extends Phaser.Scene {
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
-          if (isResourceLayer && isNodeTile(x, y)) continue;
+          if (isResourceLayer && !resourceTileSet.has(`${x},${y}`)) continue;
           // GID -> tileset: the entry with the LARGEST firstgid <= gid.
           // The old range test (gid < firstgid + columns*1000) was a bogus
           // heuristic that broke twice on lobbytrade: the FIRST tileset
@@ -3044,8 +3040,16 @@ export class WorldScene extends Phaser.Scene {
     // actions) — so only refresh the layer when the arrays are PRESENT. The
     // signature guard inside updateResourceLayer also keeps this idempotent.
     if (snap.resources !== undefined) {
+      // Keep the welcome payload's resource list fresh too: bakeMapIfReady
+      // reads it to decide which resource-layer tiles belong to LIVE nodes
+      // (felled nodes' tiles must never re-enter the base bake).
+      if (this.welcome) this.welcome.resources = snap.resources;
       this.updateResourceLayer(snap.resources);
       this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
+      // Re-bake: a felled node's tiles just left the server's visible list,
+      // so the base bake must drop them (else the tree stays glued to the
+      // ground via its baked copy).
+      this.bakeMapIfReady();
     }
     this.syncProgressBars(snap.res_progress, {
       x: Math.floor(snap.self.x),
