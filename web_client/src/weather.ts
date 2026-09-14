@@ -968,8 +968,23 @@ export class WeatherFx {
   private drawProcedural(slot: WeatherSlot, intensity: number): void {
     const ctx = this.ctx;
     const kind = slot.proceduralKind!;
-    const drawLayer = (layer: Particle[]): void => {
+    // WORLD-SPACE for snow/rain flakes + streaks (fog stays screen-space —
+    // it's atmosphere): each particle's screen position = world position −
+    // camera scroll × zoom × layer parallax, so the field anchors to the map
+    // exactly like the tiled sheets. Particles carry their own world offset
+    // (p.wOffset) added to the shared parallax offset.
+    const worldSpace = kind === "flake" || kind === "streak";
+    const z = this.camScroll.zoom;
+    const worldOff = worldSpace
+      ? { x: this.camScroll.x * z * NEAR_CAM_PARALLAX, y: this.camScroll.y * z * NEAR_CAM_PARALLAX }
+      : { x: 0, y: 0 };
+    const farWorldOff = worldSpace
+      ? { x: this.camScroll.x * z * FAR_CAM_PARALLAX, y: this.camScroll.y * z * FAR_CAM_PARALLAX }
+      : { x: 0, y: 0 };
+    const drawLayer = (layer: Particle[], off: { x: number; y: number }): void => {
       for (const p of layer) {
+        const px = p.x - off.x;
+        const py = p.y - off.y;
         ctx.globalAlpha = p.alpha * intensity;
         if (kind === "streak") {
           const vlen = Math.hypot(p.vx, p.vy) || 1;
@@ -978,8 +993,8 @@ export class WeatherFx {
           ctx.strokeStyle = p.color;
           ctx.lineWidth = p.width;
           ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(p.x - ux, p.y - uy);
+          ctx.moveTo(px, py);
+          ctx.lineTo(px - ux, py - uy);
           ctx.stroke();
         } else if (kind === "flake") {
           // Organic flakes: soft circle for small ones, faceted diamond for
@@ -990,15 +1005,15 @@ export class WeatherFx {
           if (p.len < 2.6) {
             ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.len * 0.9, 0, TAU);
+            ctx.arc(px, py, p.len * 0.9, 0, TAU);
             ctx.fill();
           } else {
             ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.moveTo(p.x, p.y - p.len);
-            ctx.lineTo(p.x + p.len * 0.8, p.y);
-            ctx.lineTo(p.x, p.y + p.len);
-            ctx.lineTo(p.x - p.len * 0.8, p.y);
+            ctx.moveTo(px, py - p.len);
+            ctx.lineTo(px + p.len * 0.8, py);
+            ctx.lineTo(px, py + p.len);
+            ctx.lineTo(px - p.len * 0.8, py);
             ctx.closePath();
             ctx.fill();
           }
@@ -1012,7 +1027,7 @@ export class WeatherFx {
           ctx.ellipse(p.x, p.y, p.len, p.width, 0, 0, TAU);
           ctx.fill();
         } else {
-          // Wind dash + faint tail trailing left.
+          // Wind dash + faint tail trailing left (screen-space gusts).
           ctx.strokeStyle = p.color;
           ctx.lineWidth = p.width;
           ctx.beginPath();
@@ -1028,8 +1043,8 @@ export class WeatherFx {
       }
       ctx.globalAlpha = 1;
     };
-    drawLayer(slot.farP);
-    drawLayer(slot.nearP);
+    drawLayer(slot.farP, farWorldOff);
+    drawLayer(slot.nearP, worldOff);
   }
 }
 
