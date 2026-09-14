@@ -761,6 +761,69 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Erase just the felled node's tiles from the base bake (O(bbox)).
+   *  A full rebake costs thousands of drawImage calls — a visible stall
+   *  on every felling — while the only thing that changed is a handful of
+   *  32px tiles. res_felled carries [x, y, anchor_x, anchor_y]; the tile
+   *  rect is all we need to clear (the ground under it was never baked —
+   *  resource LAYERS were skipped wholesale at bake time... except tiles
+   *  listed in welcome.resources. Both cases: clearing the rect reveals
+   *  the ground baked from the NON-resource layers beneath... which the
+   *  bake flattened into one canvas. So re-draw the ground for that rect
+   *  from the non-resource layers, then it looks identical to pre-chop.) */
+  private clearFelledTilesFromBake(
+    felled: [number, number, number, number][],
+  ): void {
+    const welcome = this.welcome;
+    if (!welcome || !this.mapBake) return;
+    const map = welcome.map;
+    const tw = map.tile_width;
+    const th = map.tile_height;
+    const tex = this.textures.get("map-bake");
+    if (!tex || !tex.getSourceImage()) return;
+    const canvas = tex.getSourceImage() as HTMLCanvasElement;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Non-resource layer names (folded) — mirrors bakeMapIfReady's set.
+    const RESOURCE_LAYERS = new Set([
+      "cay", "tree", "trees", "resources",
+      "vat pham ko lien quan", "ore", "ores", "mine",
+      "tang da nho", "tang da lon",
+      "nam nau", "nam tim", "co", "hoa trang", "hoa xanh", "hoa tim", "hoa vang",
+    ]);
+    const foldName = (s: string): string =>
+      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+    const groundLayers = map.layers.filter(
+      (l) => !RESOURCE_LAYERS.has(foldName(l.name || "")),
+    );
+    for (const [x, y] of felled) {
+      // Wipe the tile rect, then redraw the GROUND tiles (non-resource
+      // layers) for that cell — flattened bake means the ground pixels for
+      // this cell live only here.
+      ctx.clearRect(x * tw, y * th, tw, th);
+      for (const layer of groundLayers) {
+        const row = layer.data[y];
+        if (!row) continue;
+        const gid = row[x];
+        if (!gid) continue;
+        const ts = this.tilesetForGid(map, gid);
+        if (!ts || ts.image == null) continue;
+        const texKey = this.tileTextures.get(ts.image);
+        if (!texKey || !this.textures.exists(texKey)) continue;
+        const src = this.textures.get(texKey).getSourceImage() as HTMLImageElement;
+        if (!src || !src.width) continue;
+        const local = gid - ts.firstgid;
+        const col = local % ts.columns;
+        const rowIdx = Math.floor(local / ts.columns);
+        ctx.drawImage(
+          src, col * (ts.tilewidth ?? tw), rowIdx * th, ts.tilewidth ?? tw, th,
+          x * tw, y * th, tw, th,
+        );
+      }
+    }
+  }
+
   private buildBlocks(blocks: [number, number, string][]): void {
     if (!this.blockLayer) this.blockLayer = this.add.layer();
     const seen = new Set<string>();
@@ -3052,17 +3115,19 @@ export class WorldScene extends Phaser.Scene {
       if (this.welcome) this.welcome.resources = snap.resources;
       this.updateResourceLayer(snap.resources);
       this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
-      // Re-bake ONLY when the visible resource list actually CHANGED (the
-      // bake is thousands of drawImage calls — running it on every snapshot
-      // that merely CARRIED a resources payload stalled the message handler
-      // 500+ ms each time). Cheapest correct signal: the tile count. A chop
-      // removes tiles; a regrow adds them; carrying an unchanged list never
-      // crosses this threshold.
+      // Felled node's tiles must also leave the BASE BAKE (else the baked
+      // copy keeps the tree glued to the ground). Re-baking the whole map is
+      // thousands of drawImage calls (a 300ms+ stall on every felling), so
+      // instead CLEAR just the felled tiles' rectangles from the bake canvas
+      // — O(bbox) instead of O(map). Regrow takes the slow path (a tile
+      // APPEARED -> count grew -> one full rebake, rare and acceptable).
       const rc = snap.resources.length;
-      if (rc !== this.lastBakedResourceCount) {
-        this.lastBakedResourceCount = rc;
+      if (rc < this.lastBakedResourceCount) {
+        this.clearFelledTilesFromBake(snap.res_felled ?? []);
+      } else if (rc > this.lastBakedResourceCount) {
         this.bakeMapIfReady();
       }
+      this.lastBakedResourceCount = rc;
     }
     this.syncProgressBars(snap.res_progress, {
       x: Math.floor(snap.self.x),
