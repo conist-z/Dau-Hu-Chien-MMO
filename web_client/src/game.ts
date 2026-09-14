@@ -547,6 +547,10 @@ export class WorldScene extends Phaser.Scene {
       // mineable rocks (tảng đá nhỏ / tảng đá lớn) — choppable nodes, must
       // NOT bake into the base or they'd stay visible after being felled
       "tang da nho", "tang da lon",
+      // field forage (nấm/cỏ/hoa) — same rule: baked copies would stay
+      // visible forever after the node is felled (the "đập rồi vẫn còn"
+      // bug)
+      "nam nau", "nam tim", "co", "hoa trang", "hoa xanh", "hoa tim", "hoa vang",
     ]);
     const foldName = (s: string): string =>
       s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
