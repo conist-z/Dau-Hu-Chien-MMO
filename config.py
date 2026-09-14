@@ -84,6 +84,9 @@ WEB_TICK_HZ = float(os.getenv("WEB_TICK_HZ", "20"))
 # Halved (15/09: user report — movement feels desynced at high speed; slower
 # pace halves the per-tick step so prediction/server divergence shrinks).
 # +10% restored (15/09 later: halve felt too sluggish at 2x zoom).
+# 15/09 later: idle-converge shipped (heartbeat position is applied on the
+# idle branch too), so desync decays within ~1 s even when standing — speeds
+# can stay gameplay-friendly instead of being tuned around desync.
 WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "2.5"))   # tiles/sec
 WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "4.15"))    # tiles/sec (Shift)
 # ---- Stamina (generous by design: a long sprint before it runs out, and

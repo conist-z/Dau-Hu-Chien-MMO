@@ -659,10 +659,14 @@ class GameManager:
         tgt_x = max(0.0, float(sess.report_x))
         tgt_y = max(0.0, float(sess.report_y))
         step_total = math.hypot(tgt_x - player.x_f, tgt_y - player.y_f)
-        max_speed = WEB_RUN_SPEED
+        # CONVERGE faster than run speed (1.6x, user 15/09 "siết chặt, update
+        # nhanh hơn"): residual desync decays in ~1-2 ticks instead of
+        # trailing behind at walk pace. A hacked client still can't teleport
+        # — the cap is finite and swept collision holds.
+        max_speed = WEB_RUN_SPEED * 1.6
         if player.eating_until > now:
             max_speed *= EAT_SPEED_MULT
-        max_step = max_speed * max(step_budget, 1.0 / WEB_TICK_HZ)
+        max_step = max_speed * max(step_budget, 2.0 / WEB_TICK_HZ)
         moved_any = False
         if step_total > 1e-6:
             moved = min(step_total, max_step)
