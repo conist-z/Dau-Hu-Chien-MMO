@@ -242,7 +242,8 @@ export class Hud {
   private dragGhost: HTMLDivElement | null = null;
   private activeSlot = 0;
   private onCommand: ((text: string) => void) | null = null;
-  private onCraftGrid: ((inputs: { id: string; qty: number }[]) => void) | null = null;
+  private onCraftGrid: ((inputs: { id: string; qty: number }[],
+                         layout?: { id: string; col: number; row: number }[]) => void) | null = null;
   private onSplit: ((slot: number) => void) | null = null;
   private onCollect: ((slot: number | null) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
@@ -454,9 +455,12 @@ export class Hud {
   }
 
   /** Extra craft hooks: grid craft + split (all optional). The material
-   *  grid is a LOCAL buffer — no per-move network op exists anymore. */
+   *  grid is a LOCAL buffer — no per-move network op exists anymore.
+   *  ``onCraftGrid`` receives (inputs multiset, layout) — layout is the
+   *  exact 3x3 placement when the selected recipe has a grid pattern. */
   setCraftHooks(
-    onCraftGrid: (inputs: { id: string; qty: number }[]) => void,
+    onCraftGrid: (inputs: { id: string; qty: number }[],
+                  layout?: { id: string; col: number; row: number }[]) => void,
     _onQuickFill: (grid: { id: string; qty: number }[]) => void,
     onSplit: (slot: number) => void,
   ): void {
@@ -1368,7 +1372,12 @@ export class Hud {
   /** QUICK CRAFT: return the current grid to the bag view, then pull each
    *  recipe input out of the bag stacks (LOCAL view edit only — the server
    *  validates + consumes the real bag at CREATE time). Missing inputs stay
-   *  partial: the red-hatched quick slot + the desc rows say what's short. */
+   *  partial: the hatched quick slot + the desc rows say what's short.
+   *
+   *  When the recipe has a grid ``pattern`` (Minecraft-style), the stacks
+   *  are auto-arranged into the EXACT layout — the pickaxe fills the top
+   *  row, sticks the middle column, etc. (user: "click nhanh vào công thức
+   *  thì nó tự sắp dùm"). Multiset-only recipes keep the compact fill. */
   private fillMatGridFromBag(rec: RecipePayload): void {
     // 1) Put back whatever sits on the grid (bag view first).
     for (let i = 0; i < this.matGrid.length; i++) {
@@ -1382,9 +1391,28 @@ export class Hud {
       }
       this.matGrid[i] = null;
     }
-    // 2) Pull each ingredient out of the bag view (multi-stack aware).
-    // Only up to the VISIBLE cell count (4 without a table, 9 near one).
-    const cellCap = this.nearTable ? 9 : 4;
+    if (rec.pattern && rec.pattern.length > 0) {
+      // PATTERN fill: one unit per pattern cell, at its exact (col,row).
+      // Every pattern cell needs 1 unit; the recipe's ``inputs`` totals must
+      // equal the pattern totals (server-side guarantee for pattern recipes).
+      for (const cell of rec.pattern) {
+        if (cell.col > 2 || cell.row > 2) continue; // defensive: 3x3 only
+        const idx = cell.row * 3 + cell.col;
+        const src = this.inventory.bag.find(
+          (b) => b && b.id === cell.id && b.qty > 0);
+        if (!src) continue; // bag short: leave the cell empty (partial)
+        this.matGrid[idx] = { id: cell.id, qty: 1 };
+        src.qty -= 1;
+        if (src.qty <= 0) {
+          this.inventory.bag[this.inventory.bag.indexOf(src)] = null;
+        }
+      }
+      return;
+    }
+    // 2) COMPACT fill (multiset recipes): pull each ingredient out of the
+    // bag view (multi-stack aware). Only up to the VISIBLE cell count
+    // (4 without a table, 9 near one).
+    const cellCap = this.nearTable || this.stationOpen ? 9 : 4;
     let cell = 0;
     for (const inp of rec.inputs) {
       let need = inp.qty;
@@ -1406,10 +1434,14 @@ export class Hud {
   /** CREATE pressed: send the material grid's multiset to the server.
    *  Optimistic: the grid clears AT ONCE (local); the server's craft_result
    *  verdict parks the output in the result slot. A FAILED craft restores
-   *  the grid (nothing was consumed server-side). */
+   *  the grid (nothing was consumed server-side).
+   *  When the material grid currently mirrors a recipe PATTERN (the
+   *  quick-fill arranged it), the exact layout rides along so the server
+   *  matches the arrangement, not just the multiset. */
   private pressCreate(): void {
     const inputs = this.compactMatGrid();
     if (inputs.length === 0) return;
+    const layout = this.currentGridLayout();
     const snapshot = this.matGrid.map((s) => (s ? { ...s } : null));
     this.matGrid = Array(9).fill(null);
     if (this.craftTab.classList.contains("active")) {
@@ -1417,7 +1449,20 @@ export class Hud {
       this.renderCraftPanel();
     }
     this.pendingCraftSnapshot = snapshot;
-    this.onCraftGrid?.(inputs);
+    this.onCraftGrid?.(inputs, layout ?? undefined);
+  }
+
+  /** The material grid as an exact [(id, col, row)] 3x3 layout (row-major
+   *  index = row*3+col). Empty cells are skipped — the server treats any
+   *  material NOT in the layout as breaking the pattern match. */
+  private currentGridLayout(): { id: string; col: number; row: number }[] {
+    const out: { id: string; col: number; row: number }[] = [];
+    for (let i = 0; i < this.matGrid.length && i < 9; i++) {
+      const st = this.matGrid[i];
+      if (!st) continue;
+      out.push({ id: st.id, col: i % 3, row: Math.floor(i / 3) });
+    }
+    return out;
   }
 
   private pendingCraftSnapshot: (Stack | null)[] | null = null;
