@@ -289,6 +289,14 @@ const net = new Net({
   onChat: (_uid, name, color, text) => {
     hud.chatPlayerLine(name, color, text);
   },
+  onRemoteSwing: (uid, tx, ty) => {
+    // Exact player id — play their arc wherever they stand.
+    if (tx === null || ty === null) {
+      scene.swingRemoteHand(uid);
+    } else {
+      scene.swingRemoteHandAt(uid, tx, ty);
+    }
+  },
   onError: (code, message) => {
     // SESSION DESYNC RECOVERY: the client thinks it is joined but the
     // server disagrees (bot restarted, registry dropped, relay re-hub).

@@ -19,6 +19,8 @@ export interface NetHandlers {
   onPush: (message: string) => void;
   /** Cross-player chat line (server broadcast, colored name). */
   onChat?: (uid: number, name: string, color: string, text: string) => void;
+  /** Another player swung (attack/chop/break) — play their arm arc. */
+  onRemoteSwing?: (uid: number, tx: number | null, ty: number | null) => void;
   onError: (code: string, message?: string) => void;
   onAssetData: (name: string, b64: string | null) => void;
   onLoginOk: (token: string, displayName: string, avatarUrl: string) => void;
@@ -429,6 +431,9 @@ export class Net {
         break;
       case "chat":
         this.handlers.onChat?.(frame.uid, frame.name, frame.color, frame.text);
+        break;
+      case "swing":
+        this.handlers.onRemoteSwing?.(frame.uid, frame.tx, frame.ty);
         break;
       case "error":
         this.handlers.onError(frame.code, frame.message);

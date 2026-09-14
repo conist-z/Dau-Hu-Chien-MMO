@@ -540,6 +540,27 @@ class WebHub:
             )
             return
         _, result = await self.manager.dispatch(sess.channel_id, action)
+        # OBSERVER SWING ECHO: every attack lands as a "swing" broadcast so
+        # OTHER clients play the attacker's arm arc (swingSelf was already
+        # client-optimistic; remote viewers had no signal at all).
+        if name in ("attack", "chop", "break", "place"):
+            swing_frame = {
+                "type": "swing",
+                "uid": uid,
+                "tx": result.pos[0] if result and result.pos else None,
+                "ty": result.pos[1] if result and result.pos else None,
+            }
+            for conn in list(self.connections.values()):
+                if (
+                    conn.session is not None
+                    and conn.joined
+                    and conn.session.channel_id == sess.channel_id
+                    and conn.session.user_id != uid
+                ):
+                    try:
+                        await self.send_to_client(conn.cid, swing_frame)
+                    except Exception:  # noqa: BLE001
+                        pass
         # Echo the action outcome so the client can show progress/failures.
         # Zombie kills ride here too: target_id/defeated drive the death
         # animation + loot pop on web (same pack as Discord).
@@ -865,11 +886,19 @@ class WebHub:
                 "text": text[:200],
             }
             if rt is not None:
-                for other in list(rt.web_sessions.values()):
-                    try:
-                        await self.send_to_client_conn(other, chat_frame)
-                    except Exception:  # noqa: BLE001 — one dead conn can't block chat
-                        pass
+                # Broadcast by CONNECTION channel (the registry sessions are a
+                # different WebSession class than rt.web_sessions entries —
+                # identity matching silently matched nothing and chat died).
+                for conn in list(self.connections.values()):
+                    if (
+                        conn.session is not None
+                        and conn.joined
+                        and conn.session.channel_id == sess.channel_id
+                    ):
+                        try:
+                            await self.send_to_client(conn.cid, chat_frame)
+                        except Exception:  # noqa: BLE001 — one dead conn can't block chat
+                            pass
             return
         parts = text[1:].split()
         cmd, args = parts[0].lower(), parts[1:]

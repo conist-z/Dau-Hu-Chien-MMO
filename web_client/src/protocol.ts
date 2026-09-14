@@ -243,6 +243,7 @@ export type ServerFrame =
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
   | { type: "chat"; uid: number; name: string; color: string; text: string }
+  | { type: "swing"; uid: number; tx: number | null; ty: number | null }
   | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }
   | { type: "held"; slot: number; item_id: string | null }
   | { type: "error"; code: string; message?: string }

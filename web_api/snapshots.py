@@ -325,6 +325,7 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "self": {
             "id": user_id,
             "name": player.display_name if player else "",
+            "color": (player.name_color if player else "") or "",
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
             "hp": player.hp if player else 0,

@@ -1081,6 +1081,11 @@ export class WorldScene extends Phaser.Scene {
     rp.buf.push([now, p.x * 32, p.y * 32]);
     if (rp.buf.length > 12) rp.buf.shift();
     rp.dir = p.dir;
+    // Role color can arrive after the body is created (minted server-side on
+    // first join) — live-update the label so every viewer sees the SAME color.
+    if (p.color && rp.label.style.color !== p.color) {
+      rp.label.setColor(p.color);
+    }
     // Held item changed -> refresh the tool icon (empty = bare hand dot).
     const held = p.held ?? null;
     if (held !== rp.held) {
@@ -1795,6 +1800,24 @@ export class WorldScene extends Phaser.Scene {
     this.remoteDolls.get(id)?.swing(performance.now());
   }
 
+  /** Remote swing keyed by the ACTOR's id (server "swing" echo): the arc
+   *  plays on the attacker's own body — direction from the acted tile. */
+  swingRemoteHandAt(id: number, tx: number, ty: number): void {
+    const rp = this.players.get(id);
+    if (rp) {
+      rp.swingT0 = performance.now();
+      // Face the acted tile so the arc points where the swing went.
+      const dx = tx * 32 + 16 - rp.container.x;
+      const dy = ty * 32 + 16 - rp.container.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        rp.dir = dx > 0 ? "EAST" : "WEST";
+      } else {
+        rp.dir = dy > 0 ? "SOUTH" : "NORTH";
+      }
+    }
+    this.remoteDolls.get(id)?.swing(performance.now());
+  }
+
   /**
    * Swing the remote hand standing closest to a tile (chop/break confirm).
    * The harvester is whoever works that node — no server id needed.
@@ -1811,7 +1834,13 @@ export class WorldScene extends Phaser.Scene {
         best = rp;
       }
     }
-    if (best) best.swingT0 = performance.now();
+    if (best) {
+      best.swingT0 = performance.now();
+      // Paperdoll arc too — swingT0 alone only pushed the plan-A hand dot;
+      // the doll body never played the animation, so other players' swings
+      // were invisible (bug 15/09).
+      this.remoteDolls.get(best.container.getData("pid"))?.swing(performance.now());
+    }
   }
 
   // -------------------------------------------------- hostiles (zombies)
@@ -2768,6 +2797,12 @@ export class WorldScene extends Phaser.Scene {
     // the server's run-at-walk-speed cap once it empties).
     const st = (snap.self as { stamina?: number }).stamina;
     if (typeof st === "number") this.selfStamina = st;
+    // Role color live-update (minted server-side; welcome may have arrived
+    // before it existed).
+    const sc = (snap.self as { color?: string }).color;
+    if (sc && this.selfLabel && this.selfLabel.style.color !== sc) {
+      this.selfLabel.setColor(sc);
+    }
     // Eating state: chew particles while the flag is on; heal burst when a
     // completed eat is announced (server monotonic timestamp gates replays).
     const eat = snap.self as { eating?: boolean; eating_item?: string | null; heal_eat?: { item: string; at: number } | null };
