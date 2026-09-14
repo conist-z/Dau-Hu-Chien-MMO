@@ -310,7 +310,9 @@ export function makeDigitRun(
       `top:${PURSE_DIGIT.baselineY * PIXEL_SCALE}px;` +
       `width:${8 * PIXEL_SCALE}px;height:${16 * PIXEL_SCALE}px;`;
     out.push(im);
-    x += PURSE_DIGIT.advance;
+    // Inter-digit gap +1px (user-tuned: in "19" the 9 sits 1px further
+    // from the 1 than the font's natural advance).
+    x += PURSE_DIGIT.advance + 1;
   }
   return out;
 }
