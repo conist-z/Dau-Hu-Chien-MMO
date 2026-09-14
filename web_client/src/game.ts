@@ -181,6 +181,9 @@ export class WorldScene extends Phaser.Scene {
   private inputLog: { seq: number; dx: number; dy: number; running: boolean; dt: number }[] = [];
   /** Highest seq acknowledged by the server. */
   private lastAckedSeq = -1;
+  // performance.now() of the last ack increase — the dead-report snap only
+  // arms after 3 s WITHOUT progress (a live ack stream = never).
+  private lastAckProgressAt = 0;
   // ---- desync debug (F3 toggle, see getDebugInfo) ----
   debugEnabled = false;
   private lastConvergeMoveAt = 0;
@@ -2761,6 +2764,7 @@ export class WorldScene extends Phaser.Scene {
       this.seqReplayActive = true;
       if (acked > this.lastAckedSeq) {
         this.lastAckedSeq = acked;
+        this.lastAckProgressAt = performance.now();
         // Drop everything the server already integrated.
         while (this.inputLog.length > 0 && this.inputLog[0].seq <= acked) {
           this.inputLog.shift();
@@ -2803,20 +2807,29 @@ export class WorldScene extends Phaser.Scene {
         }
       }
     }
-    // DRIFT RECOVERY (every snapshot, not gated on ack progress): the old
-    // version lived inside the ack branch, so a stalled/frozen session —
-    // server stopped acking, socket half-dead — NEVER recovered and the
-    // player stayed as a ghost far from their true tile ("hồn ở đây xác ở
-    // kia"). If we are idle and far from authority, trust the server:
-    // glide home at 30%/snapshot (~0.15s for a 2-tile offset).
+    // DRIFT RECOVERY — client-authoritative edition. The old 30%/snapshot
+    // glide here WAS the visible rubber band: it dragged the player's avatar
+    // backwards to srv while the server was merely catching up to pred (the
+    // heartbeat makes srv converge server-side within ~0.5 s). Never fight
+    // the model: pred stays put. The ONLY justified correction is a truly
+    // dead report channel — no ack progress for 3 s AND still far — then a
+    // single snap (rare orphan case), never a slide.
     if (
       this.seqReplayActive &&
       !this.selfDead &&
       this.inputLog.length === 0 &&
-      this.driftIdleMs > 1500
+      this.driftIdleMs > 3000 &&
+      performance.now() - this.lastAckProgressAt > 3000
     ) {
-      this.selfX += (this.selfServerPos.x - this.selfX) * 0.3;
-      this.selfY += (this.selfServerPos.y - this.selfY) * 0.3;
+      const dead = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
+      if (dead > 2) {
+        this.selfX = this.selfServerPos.x;
+        this.selfY = this.selfServerPos.y;
+        this.inputLog = [];
+        console.warn("[DESYNC] dead-report snap", dead.toFixed(2));
+      } else {
+        this.driftIdleMs = 0; // close enough; don't re-arm every frame
+      }
     }
     // Death state: on dead, HARD-snap the prediction to the authority (the
     // server teleported/hid us — any predicted position is fiction). stepSelf
