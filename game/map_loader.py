@@ -83,10 +83,13 @@ def _spawn_from_layers(
     return None
 
 
-def _resolve_tilesets(tilesets, assets_dir: Path) -> List[Dict]:
+def _resolve_tilesets(tilesets, assets_dir: Path,
+                      map_dir: Optional[Path] = None) -> List[Dict]:
     """Resolve EVERY Tiled tileset entry (multi-tileset maps like lobbytrade
     use one sheet per art pack). GID -> sheet lookup happens at render time by
-    firstgid range."""
+    firstgid range. ``map_dir`` is the map file's own subfolder (e.g.
+    ekonia/dungeon.json -> ekonia) — Tiled writes tileset paths relative to
+    the map JSON, so try that first."""
     resolved: List[Dict] = []
     for ts in tilesets or []:
         img = ts.get("image")
@@ -94,6 +97,7 @@ def _resolve_tilesets(tilesets, assets_dir: Path) -> List[Dict]:
             continue
         rel = Path(img)
         candidates = [
+            *([assets_dir / map_dir / rel] if map_dir else []),
             assets_dir / rel,
             assets_dir / rel.name,
             assets_dir / "tilesets" / rel.name,
@@ -394,7 +398,33 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
     _apply_walkable_overrides(collision, stair_overrides)
-    tilesets = _resolve_tilesets(data.get("tilesets"), assets_dir)
+    # FORAGE CARVE (user 15/09): tiles that host a registered forage node
+    # (grass/flower/mushroom art — checked against TILE_NODE_PARTS) must be
+    # WALKABLE even though a blocking layer (the lobbytrade tree layer also
+    # carries decor grass/flowers) covers them. The node itself decides
+    # walkability while alive via Collision.is_walkable (FORAGE_KINDS =
+    # walk-through) and fells to walkable — the static grid must not
+    # pre-block what the node layer owns. Layer names reuse game.resources
+    # RESOURCE_LAYER_NAMES via a local import (no cycle: resources imports
+    # state, not map_loader).
+    from game.resources import RESOURCE_LAYER_NAMES, TILE_NODE_PARTS, _FORAGE_NODE_KINDS
+
+    for name, grid in tile_layers:
+        if (name or "").strip().lower() not in RESOURCE_LAYER_NAMES:
+            continue
+        for gy, row in enumerate(grid):
+            if gy >= height:
+                break
+            for gx, gid in enumerate(row):
+                if not gid or gx >= width:
+                    continue
+                part = TILE_NODE_PARTS.get(gid)
+                if part is not None and part[0] in _FORAGE_NODE_KINDS:
+                    collision[gy][gx] = 0
+    tilesets = _resolve_tilesets(
+        data.get("tilesets"), assets_dir,
+        map_dir=Path(map_id).parent if "/" in map_id or "\\" in map_id else None,
+    )
     tileset = tilesets[0] if tilesets else None
     spawn_raw = data.get("spawn")
     if isinstance(spawn_raw, dict):

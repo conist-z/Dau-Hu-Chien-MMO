@@ -39,6 +39,13 @@ RESOURCE_LAYER_NAMES = {
 }
 
 # Data-driven tile registry: resource-layer GID -> (kind, dx, dy from anchor).
+# _FORAGE_NODE_KINDS: node kinds the map loader CARVES as walkable in the
+# static collision grid (the lobbytrade tree layer carries decor plants on
+# tiles the "tree" layer marks solid; the node layer owns those tiles).
+_FORAGE_NODE_KINDS = frozenset({
+    "mushroom_brown", "mushroom_purple", "grass", "flower",
+})
+
 TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     9: ("tree", 0, 0),
     10: ("tree", 1, 0),
@@ -57,6 +64,23 @@ TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     54: ("flower", 0, 0),
     55: ("flower", 0, 0),
     56: ("flower", 0, 0),
+    # ---- lobbytrade decor plants (user 15/09: "mấy cái cỏ, hoa, nấm đấy
+    # là đập được" — same forage rules as the bigmap field). Pixel-audit
+    # of [Base]BaseChip_pipo (firstgid 577): small floating blobs with a
+    # transparent bottom row = waist-high plants; green hue = grass,
+    # grey/white = flowers, 643/648 = taller flower bushes. The FULL-height
+    # Pipoya gids (585/586/593/594/609/610/617) stay unmapped: they are the
+    # forest trees (solid, not harvestable here).
+    625: ("grass", 0, 0),
+    630: ("grass", 0, 0),
+    641: ("grass", 0, 0),
+    642: ("grass", 0, 0),
+    621: ("grass", 0, 0),
+    629: ("mushroom_brown", 0, 0),
+    626: ("flower", 0, 0),
+    640: ("flower", 0, 0),
+    643: ("flower", 0, 0),
+    648: ("flower", 0, 0),
     # Ore/rock vein tiles ("vật phẩm ko liên quan" layer on the bigmap):
     # mined with the ⛏️ pickaxe morph instead of the axe.
     # Gids 47/48 also draw dead-tree tiles on the "cây chết" layer (same
