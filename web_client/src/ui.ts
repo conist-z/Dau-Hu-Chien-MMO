@@ -1395,9 +1395,15 @@ export class Hud {
       // PATTERN fill: one unit per pattern cell, at its exact (col,row).
       // Every pattern cell needs 1 unit; the recipe's ``inputs`` totals must
       // equal the pattern totals (server-side guarantee for pattern recipes).
+      // Grid mode: 9 cells near a table (idx = row*3+col); 2x2 without one
+      // (idx = row*2+col, the top-left 2x2 of the same 3x3 region).
+      const big = this.nearTable || this.stationOpen;
+      const idxOf = (col: number, row: number): number =>
+        big ? row * 3 + col : row * 2 + col;
       for (const cell of rec.pattern) {
         if (cell.col > 2 || cell.row > 2) continue; // defensive: 3x3 only
-        const idx = cell.row * 3 + cell.col;
+        if (!big && (cell.col > 1 || cell.row > 1)) continue; // 2x2 can't
+        const idx = idxOf(cell.col, cell.row);
         const src = this.inventory.bag.find(
           (b) => b && b.id === cell.id && b.qty > 0);
         if (!src) continue; // bag short: leave the cell empty (partial)
@@ -1452,15 +1458,18 @@ export class Hud {
     this.onCraftGrid?.(inputs, layout ?? undefined);
   }
 
-  /** The material grid as an exact [(id, col, row)] 3x3 layout (row-major
-   *  index = row*3+col). Empty cells are skipped — the server treats any
-   *  material NOT in the layout as breaking the pattern match. */
+  /** The material grid as an exact [(id, col, row)] 3x3 layout. Index
+   *  mapping mirrors the fill: 9-cell grid = row*3+col; 2x2 grid = row*2+col
+   *  (the compact top-left 2x2 of the same 3x3 region — same (col,row)
+   *  coords either way, so the server's pattern match is mode-agnostic). */
   private currentGridLayout(): { id: string; col: number; row: number }[] {
+    const big = this.nearTable || this.stationOpen;
     const out: { id: string; col: number; row: number }[] = [];
-    for (let i = 0; i < this.matGrid.length && i < 9; i++) {
+    const n = big ? 9 : 4;
+    for (let i = 0; i < n && i < this.matGrid.length; i++) {
       const st = this.matGrid[i];
       if (!st) continue;
-      out.push({ id: st.id, col: i % 3, row: Math.floor(i / 3) });
+      out.push({ id: st.id, col: big ? i % 3 : i % 2, row: big ? Math.floor(i / 3) : Math.floor(i / 2) });
     }
     return out;
   }

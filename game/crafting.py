@@ -67,14 +67,18 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         "stick", "Gậy", "🥢",
         inputs=[("plank", 2)],
         output=("stick", 4),
-        description="Chuẩn bị cho mọi công cụ.",
+        # Mine parity: 2 ván xếp thành CỘT giữa (dọc).
+        pattern=[("plank", 1, 0), ("plank", 1, 1)],
+        description="Chuẩn bị cho mọi công cụ — 2 ván xếp dọc.",
     ),
     "crafting_table": RecipeDef(
         "crafting_table", "Bàn chế tạo", "🛠️",
         inputs=[("plank", 4)],
         output=("crafting_table", 1),
         group="decor",
-        description="Đặt ra đất, đứng gần để mở khóa công thức phức tạp.",
+        # Mine parity: 2x2 ván kín ô.
+        pattern=[("plank", 0, 0), ("plank", 1, 0), ("plank", 0, 1), ("plank", 1, 1)],
+        description="2x2 ván gỗ — đặt ra đất, đứng gần để mở khóa công thức phức tạp.",
     ),
     # --- near a placed crafting table ---
     "wood_axe": RecipeDef(
@@ -105,7 +109,9 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
         inputs=[("stick", 1), ("coal", 1)],
         output=("torch", 4),
         group="decor",
-        description="Ánh sáng giữa đêm tối.",
+        # Mine parity: than TRÊN gậy, cùng cột giữa.
+        pattern=[("coal", 1, 0), ("stick", 1, 1)],
+        description="Than trên gậy, xếp dọc — ánh sáng giữa đêm tối.",
     ),
 }
 
@@ -229,7 +235,17 @@ def find_recipe_by_inputs(inputs: List[Tuple[str, int]],
     """
     if pattern is not None:
         for recipe in RECIPE_REGISTRY.values():
-            if recipe.pattern and _pattern_matches(recipe.pattern, pattern):
+            # Layout mode: PATTERN recipes must match the arrangement; recipes
+            # WITHOUT a pattern (plank/stick/torch/furnace/table) keep the
+            # multiset match — the client only sends a layout when the quick
+            # fill arranged a patterned recipe, otherwise layout is empty and
+            # we must NOT exclude unpatterned recipes.
+            if recipe.pattern:
+                if _pattern_matches(recipe.pattern, pattern):
+                    return recipe
+            elif sorted(recipe.inputs) == sorted(
+                    (iid, qty) for iid, qty in
+                    _multiset_of(pattern) if qty > 0):
                 return recipe
         return None
     want = sorted((iid, qty) for iid, qty in inputs if qty > 0)
@@ -251,6 +267,15 @@ def _pattern_matches(want: List[Tuple[str, int, int]],
 
     p = norm(placed)
     return p == norm(want) or p == norm(mirror(want))
+
+
+def _multiset_of(pattern: List[Tuple[str, int, int]]) -> List[Tuple[str, int]]:
+    """Aggregate a cell layout [(id, col, row)] into a multiset [(id, qty)].
+    Pure."""
+    totals: Dict[str, int] = {}
+    for iid, _c, _r in pattern:
+        totals[iid] = totals.get(iid, 0) + 1
+    return list(totals.items())
 
 
 def pattern_mirror(pattern: List[Tuple[str, int, int]]) -> List[Tuple[str, int, int]]:
