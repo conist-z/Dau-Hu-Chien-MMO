@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-iG_g2T4T.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BGviU89t.css">
+    <title>Discord Map — Web Client</title>
+    <script type="module" crossorigin src="./assets/index-CM53Z6IM.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BOB200tZ.css">
   </head>
   <body>
     <div id="game-root">
@@ -46,10 +46,14 @@
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>
-        <!-- Player profile popup (click another player in the world) -->
+        <!-- Player profile popup (click another player in the world) —
+             styled with the SAME V5 pixel kit as the inventory panel -->
         <div id="profile-popup" class="hidden">
           <div class="pp-card">
-            <div class="pp-head">
+            <img class="pp-frame" src="./ui/v5/layers/inv_frame.png" alt="" />
+            <button id="pp-close" class="pp-close-btn" type="button" title="Đóng"></button>
+            <div class="pp-title">Hồ sơ người chơi</div>
+            <div class="pp-body">
               <div class="pp-avatar">
                 <img id="pp-avatar" src="" alt="" />
               </div>
@@ -57,16 +61,15 @@
                 <div id="pp-name" class="pp-name">?</div>
                 <div id="pp-sub" class="pp-sub">Cấp 1</div>
               </div>
-              <button id="pp-close" class="pp-close" type="button">✕</button>
             </div>
             <div class="pp-stats">
-              <div class="pp-stat"><span class="pp-ico heart"></span><span class="pp-label">HP</span><span id="pp-hp" class="pp-val red">?</span></div>
-              <div class="pp-stat"><span class="pp-ico gem"></span><span class="pp-label">Cấp</span><span id="pp-level" class="pp-val cyan">?</span></div>
-              <div class="pp-stat"><span class="pp-ico sword"></span><span class="pp-label">Chế độ</span><span id="pp-mode" class="pp-val">?</span></div>
+              <div class="pp-stat"><span class="pp-label">HP</span><span id="pp-hp" class="pp-val red">?</span></div>
+              <div class="pp-stat"><span class="pp-label">Cấp</span><span id="pp-level" class="pp-val cyan">?</span></div>
+              <div class="pp-stat"><span class="pp-label">Nền</span><span id="pp-mode" class="pp-val">?</span></div>
             </div>
             <div class="pp-actions">
-              <button id="pp-msg" class="pp-btn" type="button">💬 Nhắn tin</button>
-              <button id="pp-trade" class="pp-btn dim" type="button" disabled>🤝 Trao đổi <small>(sắp có)</small></button>
+              <button id="pp-msg" class="pp-btn" type="button">Nhắn tin</button>
+              <button id="pp-trade" class="pp-btn dim" type="button" disabled>Trao đổi (sắp có)</button>
             </div>
           </div>
         </div>
@@ -179,6 +182,6 @@
           </div>
         </div>
       </div>
-    </div>
+    </div>
   </body>
 </html>

@@ -243,6 +243,31 @@ export class WorldScene extends Phaser.Scene {
   /** Set by main.ts: opens the profile popup for the clicked player. */
   onPlayerClick: ((p: PlayerPayload) => void) | null = null;
 
+  /** True when the given normalized screen pos sits on a remote body
+   *  (profile-clickable). Called from the canvas hover hook to swap the
+   *  cursor icon (like the craft-table hover). */
+  pointerOverRemotePlayerAt(nx: number, ny: number): boolean {
+    const p = this.screenToWorldPx(nx, ny);
+    if (!p) return false;
+    const R = 20; // px hit radius around each body center
+    for (const rp of this.players.values()) {
+      const c = rp.container;
+      if (Math.abs(c.x - p.x) <= R && Math.abs(c.y - p.y) <= R) return true;
+    }
+    return false;
+  }
+
+  /** Normalized (0..1) screen pos -> world px, or null off-map. */
+  private screenToWorldPx(nx: number, ny: number): { x: number; y: number } | null {
+    const cam = this.cameras.main;
+    const dw = this.scale.displaySize.width || 1;
+    const dh = this.scale.displaySize.height || 1;
+    return {
+      x: cam.scrollX + (nx * dw) / cam.zoom,
+      y: cam.scrollY + (ny * dh) / cam.zoom,
+    };
+  }
+
   /** True when the base paperdoll sheet is registered (portrait available). */
   hasPaperdollTexture(): boolean {
     return this.paperdollReady && this.textures.exists("pd-base");
@@ -594,6 +619,20 @@ export class WorldScene extends Phaser.Scene {
     this.updateResourceLayer(this.welcome.resources);
   }
 
+  /** GID -> tileset: the entry with the LARGEST firstgid <= gid (the
+   * correct Tiled rule — see bakeMapIfReady for why the old range test
+   * produced a fully black canvas on lobbytrade). */
+  private tilesetForGid(
+    map: WelcomePayload["map"], gid: number,
+  ): WelcomePayload["map"]["tilesets"][number] | null {
+    let best: WelcomePayload["map"]["tilesets"][number] | null = null;
+    for (const t of map.tilesets) {
+      if (t.image && t.firstgid <= gid &&
+          (best === null || t.firstgid > best.firstgid)) best = t;
+    }
+    return best;
+  }
+
   private bakeMapIfReady(): void {
     const welcome = this.welcome;
     if (!welcome) return;
@@ -640,10 +679,15 @@ export class WorldScene extends Phaser.Scene {
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
-          const ts = map.tilesets.find(
-            (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
-          );
-          if (!ts?.image) continue;
+          // GID -> tileset: the entry with the LARGEST firstgid <= gid.
+          // The old range test (gid < firstgid + columns*1000) was a bogus
+          // heuristic that broke twice on lobbytrade: the FIRST tileset
+          // matched every gid (its 32000-tile synthetic range swallowed the
+          // whole map -> wrong crops), and the BaseChip sheet registered at
+          // TWO firstgids (577 + 5337) so a range test can never pick the
+          // right one. Largest-firstgid-below is the correct Tiled rule.
+          const ts = this.tilesetForGid(map, gid);
+          if (!ts || ts.image === null || ts.image === undefined) continue;
           const texKey = this.tileTextures.get(ts.image);
           if (!texKey || !this.textures.exists(texKey)) continue;
           const src = this.textures.get(texKey).getSourceImage() as HTMLImageElement;
@@ -2319,9 +2363,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.textures.exists(cacheKey)) return cacheKey;
     const tw = map.tile_width;
     const th = map.tile_height;
-    const ts = map.tilesets.find(
-      (t) => gid >= t.firstgid && gid < t.firstgid + t.columns * 1000,
-    );
+    const ts = this.tilesetForGid(map, gid);
     if (!ts?.image) return null;
     const sheetKey = this.tileTextures.get(ts.image);
     if (!sheetKey || !this.textures.exists(sheetKey)) return null;
