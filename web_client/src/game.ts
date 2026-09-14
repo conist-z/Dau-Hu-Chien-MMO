@@ -2669,8 +2669,12 @@ export class WorldScene extends Phaser.Scene {
     if (!row || tx < 0 || tx >= row.length || row[tx] === 1) return true;
     // Placed blocks block movement (server mirrors this via BlockGrid).
     if (this.blockSet.has(`${tx},${ty}`)) return true;
-    // Standing resource nodes (trees/bushes/ore) block until felled.
-    if (this.resourceTiles.has(`${tx},${ty}`)) return true;
+    // Standing resource nodes (trees/bushes/ore) block until felled — EXCEPT
+    // field forage (mushrooms/grass/flowers): waist-high decor, the player
+    // walks straight through (server parity via game/collision.py).
+    if (this.resourceTiles.has(`${tx},${ty}`)) {
+      return !FORAGE_GIDS.has(this.gidOf(this.resourceTiles.get(`${tx},${ty}`)!));
+    }
     return false;
   }
 
