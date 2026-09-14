@@ -441,8 +441,9 @@ hud.onPurseWithdraw = (itemId, slot) => {
 // Purse deposit: dragging a currency stack into the bag grid banks it —
 // sent as a reorder (the server's reorder path converts currency to the
 // purse counters server-side).
-hud.onPurseDeposit = (itemId, qty) => {
-  net.inventoryOp("purse_deposit", { item_id: itemId, qty });
+hud.onPurseDeposit = (itemId, qty, fromIndex) => {
+  net.inventoryOp("purse_deposit",
+    { item_id: itemId, qty, slot: fromIndex });
 };
 
 hud.onThrow = (itemId, qty) => {

@@ -197,7 +197,7 @@ export class Hud {
    * (slot = target bag slot when dropped onto one, else undefined). */
   onPurseWithdraw: ((itemId: string, slot?: number) => void) | null = null;
   /** Set by main.ts: deposit a currency stack into the purse. */
-  onPurseDeposit: ((itemId: string, qty: number) => void) | null = null;
+  onPurseDeposit: ((itemId: string, qty: number, fromIndex: number) => void) | null = null;
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
@@ -686,8 +686,14 @@ export class Hud {
   /** Deposit a currency stack into the purse.
    *  OPTIMISTIC: clear the source stack + bump the counter locally, do NOT
    *  syncBagOrder (the order we'd send contradicts server truth until
-   *  purse_deposit lands → tolerant rebuild reshuffles the layout). */
-  private depositCurrency(itemId: string, fromIndex: number, qty: number): void {
+   *  purse_deposit lands → tolerant rebuild reshuffles the layout). The
+   *  exact source slot rides along so the server drains THAT cell — when
+   *  two layouts differ, draining "the first coin stack in slot order"
+   *  instead would leave a ghost coin on screen and trigger the wholesale
+   *  reload + resort. */
+  private depositCurrency(
+    itemId: string, fromIndex: number, qty: number,
+  ): void {
     if (this.inventory.bag[fromIndex]?.id !== itemId) return;
     this.inventory.bag[fromIndex] = null;
     if (itemId === "coin") this.purseCoins += qty;
@@ -696,7 +702,7 @@ export class Hud {
     this.renderHotbar();
     this.renderInventory();
     this.toast(`Đã nạp ${qty} ${itemId === "coin" ? "xu" : "tinh thể"} vào ví`);
-    if (this.onPurseDeposit) this.onPurseDeposit(itemId, qty);
+    if (this.onPurseDeposit) this.onPurseDeposit(itemId, qty, fromIndex);
   }
 
   /** Drop the currently dragged currency stack onto a purse icon. */
