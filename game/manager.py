@@ -396,7 +396,12 @@ class GameManager:
             await asyncio.sleep(self.session_check_interval)
             now = _time.monotonic()
             timeout = self.session_timeout_minutes * 60.0
-            for channel_id, user_id in self.sessions.due(now, timeout):
+            try:
+                due = list(self.sessions.due(now, timeout))
+            except Exception:  # noqa: BLE001 — the watchdog must survive
+                log.exception("[SESSION] due() scan failed (loop survives)")
+                continue
+            for channel_id, user_id in due:
                 rt = self.runtimes.get(channel_id)
                 if rt is None:
                     self.discard_session(channel_id, user_id)
@@ -581,8 +586,25 @@ class GameManager:
             # can stand in any of them.
             for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
                 sessions = getattr(rt, "web_sessions", None)
-                if sessions:
+                if not sessions:
+                    continue
+                try:
                     await self._web_tick_runtime(rt, sessions, now)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # CRASH-PROOF LOOP (the "đơ phải reload" root cause): any
+                    # exception used to escape the while-body and KILL the
+                    # shared tick task forever (the earlier
+                    # "Task exception was never retrieved ... _web_tick_loop"
+                    # death). Every web client then froze server-side — no
+                    # integration, no bites — until a manual reload restarted
+                    # the loop via rejoin. Isolate per-runtime: one bad world
+                    # logs loudly and the loop lives on.
+                    log.exception(
+                        "[WEB] tick failed for channel %s (loop survives)",
+                        getattr(rt, "channel_id", "?"),
+                    )
             if not any(
                 getattr(r, "web_sessions", None)
                 for r in list(self.runtimes.values()) + list(self.side_runtimes.values())
@@ -1566,28 +1588,38 @@ class GameManager:
             started = asyncio.get_running_loop().time()
             now = _time.time()
             for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
-                if not rt.state.furnaces:
-                    continue
-                changed_any = False
-                async with rt.lock:
-                    for f in list(rt.state.furnaces.values()):
-                        # A broken furnace block kills its state (persisted
-                        # row deleted below, outside the lock).
+                # CRASH-PROOF: one bad runtime must not kill the smelting
+                # task (same freeze-at-restart death as _web_tick_loop).
+                try:
+                    if not rt.state.furnaces:
+                        continue
+                    changed_any = False
+                    async with rt.lock:
+                        for f in list(rt.state.furnaces.values()):
+                            # A broken furnace block kills its state (persisted
+                            # row deleted below, outside the lock).
+                            if rt.state.blocks.get(f.x, f.y) != "furnace":
+                                continue
+                            if smelting.tick(f, now):
+                                changed_any = True
+                    # Drop states whose block was removed; persist completions.
+                    for key, f in list(rt.state.furnaces.items()):
                         if rt.state.blocks.get(f.x, f.y) != "furnace":
-                            continue
-                        if smelting.tick(f, now):
-                            changed_any = True
-                # Drop states whose block was removed; persist completions.
-                for key, f in list(rt.state.furnaces.items()):
-                    if rt.state.blocks.get(f.x, f.y) != "furnace":
-                        rt.state.furnaces.pop(key, None)
-                        if self.db is not None:
-                            from persistence.repositories import delete_furnace
+                            rt.state.furnaces.pop(key, None)
+                            if self.db is not None:
+                                from persistence.repositories import delete_furnace
 
-                            await delete_furnace(self.db, rt.channel_id, f.x, f.y)
-                if changed_any and self.db is not None:
-                    for f in list(rt.state.furnaces.values()):
-                        await self._persist_furnace(rt.channel_id, f)
+                                await delete_furnace(self.db, rt.channel_id, f.x, f.y)
+                    if changed_any and self.db is not None:
+                        for f in list(rt.state.furnaces.values()):
+                            await self._persist_furnace(rt.channel_id, f)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — the loop must survive
+                    log.exception(
+                        "[SMELT] tick failed for channel %s (loop survives)",
+                        getattr(rt, "channel_id", "?"),
+                    )
             elapsed = asyncio.get_running_loop().time() - started
             await asyncio.sleep(max(0.05, 1.0 - elapsed))
 
@@ -1807,23 +1839,36 @@ class GameManager:
                 darkness = 0.15                                  # 06:00-12:00 day floor
             area_cap = max(1, round(ZOMBIE_AREA_MAX_COUNT * darkness))
             for rt in list(self.runtimes.values()):
-                async with rt.lock:
-                    # Population upkeep ONLY (spawn/despawn/off-screen wander).
-                    # Visible zombies are FROZEN here — they take one turn per
-                    # player action in dispatch(), never from this loop.
-                    result = tick_zombies(
-                        rt.state,
-                        rt.collision,
-                        self.zombie_view_rects(rt),
-                        night,
-                        rng=self.zombie_rng,
-                        max_count=area_cap,
-                        spawn_chance=ZOMBIE_SPAWN_CHANCE,
+                # CRASH-PROOF: a raised exception here used to escape the
+                # while-body and kill the shared zombie task forever — night
+                # mobs then never spawned/moved/bited again until restart.
+                # Isolate per-runtime like _web_tick_loop.
+                try:
+                    async with rt.lock:
+                        # Population upkeep ONLY (spawn/despawn/off-screen
+                        # wander). Visible zombies are FROZEN here — they take
+                        # one turn per player action in dispatch(), never from
+                        # this loop.
+                        result = tick_zombies(
+                            rt.state,
+                            rt.collision,
+                            self.zombie_view_rects(rt),
+                            night,
+                            rng=self.zombie_rng,
+                            max_count=area_cap,
+                            spawn_chance=ZOMBIE_SPAWN_CHANCE,
+                        )
+                    # Off-screen wandering does not need an upload. Refresh
+                    # only when a creature becomes visible or is removed.
+                    if result.visible_changed:
+                        self._schedule_zombie_updates(rt, zombie_result=result)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — the loop must survive
+                    log.exception(
+                        "[ZOMBIE] tick failed for channel %s (loop survives)",
+                        getattr(rt, "channel_id", "?"),
                     )
-                # Off-screen wandering does not need an upload. Refresh only
-                # when a creature becomes visible or is removed from a view.
-                if result.visible_changed:
-                    self._schedule_zombie_updates(rt, zombie_result=result)
             elapsed = asyncio.get_running_loop().time() - tick_started
             await asyncio.sleep(max(0.05, WORLD_TICK_SECONDS - elapsed))
 
@@ -2331,20 +2376,28 @@ class GameManager:
         import time
 
         while True:
-            ws = await self.weather_service.fetch(time.time())
-            # Cache the freshest snapshot: new scenarios seed from it so they
-            # open on live weather instead of the sun_clouds placeholder.
-            self._latest_weather = ws
-            for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
-                async with rt.lock:
-                    rt.weather_state = ws
-                    # Only adopt the fresh auto key when the scenario is NOT
-                    # manually pinned by an admin override.
-                    if not getattr(rt, "weather_manual", False):
-                        rt.weather_key = ws.weather_key
+            try:
+                ws = await self.weather_service.fetch(time.time())
+                # Cache the freshest snapshot: new scenarios seed from it so
+                # they open on live weather instead of the sun_clouds
+                # placeholder.
+                self._latest_weather = ws
                 hub = getattr(self, "hub_coalescer", None)
-                if hub is not None:
-                    hub.schedule(rt.channel_id, {"type": "weather"})
+                for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
+                    async with rt.lock:
+                        rt.weather_state = ws
+                        # Only adopt the fresh auto key when the scenario is
+                        # NOT manually pinned by an admin override.
+                        if not getattr(rt, "weather_manual", False):
+                            rt.weather_key = ws.weather_key
+                    if hub is not None:
+                        hub.schedule(rt.channel_id, {"type": "weather"})
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — one bad fetch must not kill
+                # the weather task (all scenarios would freeze on the last
+                # snapshot forever after).
+                log.exception("[WEATHER] fetch/fanout failed (loop survives)")
             await asyncio.sleep(self.weather_service.refresh_interval)
 
     async def _lightning_loop(self) -> None:
@@ -2356,25 +2409,38 @@ class GameManager:
 
         while True:
             await asyncio.sleep(random.uniform(5.0, 13.0))
-            # Skip entirely while the screen FX gate is OFF (default): the
-            # bolt lives in the screen GIF, so there is nothing to re-render.
-            storm_rts = [
-                rt for rt in self.runtimes.values()
-                if rt.weather_key == "storm" and getattr(rt, "weather_fx_enabled", False)
-            ]
-            if not storm_rts:
-                continue
-            hub = getattr(self, "hub_coalescer", None)
-            co = getattr(self, "coalescer", None)
-            for rt in storm_rts:
-                async with rt.lock:
-                    rt.lightning_seed = random.randrange(1, 10**6)
-                if hub is not None:
-                    hub.schedule(rt.channel_id, {"type": "weather"})
-                if co is not None:
-                    for uid, screen in rt.screens.items():
-                        if screen.message_id is not None:
-                            co.schedule((rt.channel_id, uid), {"user_id": uid})
+            try:
+                # Skip entirely while the screen FX gate is OFF (default): the
+                # bolt lives in the screen GIF, so there is nothing to re-render.
+                storm_rts = [
+                    rt for rt in self.runtimes.values()
+                    if rt.weather_key == "storm" and getattr(rt, "weather_fx_enabled", False)
+                ]
+                if not storm_rts:
+                    continue
+                hub = getattr(self, "hub_coalescer", None)
+                co = getattr(self, "coalescer", None)
+                for rt in storm_rts:
+                    try:
+                        async with rt.lock:
+                            rt.lightning_seed = random.randrange(1, 10**6)
+                        if hub is not None:
+                            hub.schedule(rt.channel_id, {"type": "weather"})
+                        if co is not None:
+                            for uid, screen in rt.screens.items():
+                                if screen.message_id is not None:
+                                    co.schedule((rt.channel_id, uid), {"user_id": uid})
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # noqa: BLE001 — per-runtime isolation
+                        log.exception(
+                            "[WEATHER] lightning refresh failed for channel %s",
+                            getattr(rt, "channel_id", "?"),
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — the loop must survive
+                log.exception("[WEATHER] lightning pass failed (loop survives)")
 
     def _schedule_save(self, rt: ScenarioRuntime, player: Player) -> None:
         """Debounce DB writes: at most one save task per channel in flight.
