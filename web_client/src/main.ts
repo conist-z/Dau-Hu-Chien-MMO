@@ -20,10 +20,17 @@ let pendingRejoinChannel: string | null = null;
 // so the same browser keeps the same identity/bag across sessions.
 const hud = new Hud();
 const scene = new WorldScene();
-// Animated weather overlay (rain/snow/storm...) — plain canvas above the
-// Phaser canvas, below the HUD. Mounts once; the weather key arrives in
 // every snapshot (and the welcome default below).
 weatherFx.mount(document.getElementById("game-root")!);
+// WORLD-SPACE weather: feed the overlay the LIVE Phaser camera scroll each
+// frame so rain/snow/wind particles stay anchored to the MAP (they slide
+// across the viewport as the player walks) instead of being glued to the
+// screen. The hard-coded /2 matches the game's camera zoom (2.0) — the
+// canvas is in screen px while the camera scroll is world px.
+weatherFx.setCameraHook(() => {
+  const cam = scene.cameras.main;
+  return { x: cam.scrollX, y: cam.scrollY };
+});
 // Day/night lighting overlay — full-screen multiply tint sampled from the
 // same 24h gradient as the Discord client; the clock arrives per snapshot.
 dayNightFx.mount(document.getElementById("game-root")!);

@@ -28,6 +28,15 @@
 // phase-shifted and fainter (parallax), exactly like the Discord renderer's
 // two master fields (near alpha 0.72 / far alpha 0.34).
 //
+// WORLD-SPACE WEATHER (user rule 14/09 — "mưa phải đè lên map chứ không dán
+// lên màn hình"): the overlay is CAMERA-AWARE. Each frame the tiled sheets
+// are offset by the Phaser camera's world scroll × a per-layer parallax
+// factor, on top of their own falling motion. Walking east makes the whole
+// rain field slide WEST across the viewport (near layer at 0.72× camera
+// speed, far layer at 0.5×) — the particles read as anchored to the map, not
+// glued to the player's screen. The tint/veil/gust/bolt layers stay
+// screen-space (sky + flashes are atmosphere, not particles).
+//
 // If the sheets fail to load (missing files) we fall back to the old
 // procedural canvas particles so weather never silently disappears.
 //
@@ -92,6 +101,13 @@ export const ANIMATED_WEATHER_KEYS = new Set(Object.keys(STYLES));
 // (_get_masters scales near 0.72, far 0.34).
 const NEAR_ALPHA = 0.72;
 const FAR_ALPHA = 0.34;
+// World-space parallax: how much of the CAMERA SCROLL the particle layers
+// inherit per frame. 1.0 = perfectly anchored to the map (rain column stays
+// over the same tree as you walk); 0.0 = the old screen-glued behaviour.
+// Slightly below 1.0 keeps a touch of "distant weather" depth and avoids the
+// far layer moving identically to the near one.
+const NEAR_CAM_PARALLAX = 0.72;
+const FAR_CAM_PARALLAX = 0.5;
 
 // ---- transition tuning (user rule 14/09) -----------------------------------
 const TRANSITION_MS = 3200;   // full staged transition duration
@@ -333,6 +349,12 @@ export class WeatherFx {
   private running = false;
   private last = 0;
   private dt = 1 / 60;
+  // Camera coupling (world-space weather): a hook installed by main.ts that
+  // returns the Phaser camera's current world scroll in CSS pixels. null =
+  // not yet in a world (pre-welcome) — the overlay then degrades gracefully
+  // to the old screen-space behaviour.
+  private cameraHook: (() => { x: number; y: number } | null) | null = null;
+  private camScroll = { x: 0, y: 0 };
 
   constructor() {
     const canvas = document.createElement("canvas");
@@ -385,6 +407,13 @@ export class WeatherFx {
   /** True while any weather overlay renders (HUD could dim the icon). */
   get active(): boolean {
     return this.current !== null || this.outgoing !== null;
+  }
+
+  /** Install the camera-scroll hook (called once from main.ts after the
+   *  Phaser game exists). The hook reads the LIVE camera each frame so the
+   *  particle field slides with the map as the player walks. */
+  setCameraHook(hook: () => { x: number; y: number } | null): void {
+    this.cameraHook = hook;
   }
 
   /** Load the sheets for a slot (async; draws the fallback until ready). */
@@ -492,6 +521,19 @@ export class WeatherFx {
       // every particle across the screen when the tab returns.
       this.dt = Math.min(0.05, (t - this.last) / 1000) || 1 / 60;
       this.last = t;
+      // WORLD-SPACE: sample the camera scroll every frame (cheap read) so
+      // the particle field inherits camera movement at the layer parallax.
+      // Scaled by PARALLAX×ZOOM: the camera scroll is in world px while this
+      // canvas is in screen px, so zoom (2.0) must divide it back out; the
+      // parallax factor then keeps a touch of "distant weather" depth.
+      const cam = this.cameraHook?.() ?? null;
+      if (cam) {
+        this.camScroll.x = cam.x / 2 * NEAR_CAM_PARALLAX;
+        this.camScroll.y = cam.y / 2 * NEAR_CAM_PARALLAX;
+      } else {
+        this.camScroll.x = 0;
+        this.camScroll.y = 0;
+      }
       this.step(t);
       this.draw(t);
       // Idle shutdown: transition finished and no live weather left.
@@ -711,18 +753,23 @@ export class WeatherFx {
     };
 
     if (style.horizontal) {
-      const ox = dist;
+      // Wind drifts RIGHT; the camera scroll slides BOTH layers sideways.
+      const ox = dist - this.camScroll.x;
       // Far layer drifts slower (0.6x parallax) phase-shifted 512px — same
       // numbers as the Discord _scroll_overlays wind branch. Both layers tile
       // the full viewport; the 96px far offset just de-correlates the rows.
-      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512, 96);
+      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512 - this.camScroll.x * 0.4, 96);
       drawLayer(slot.near!, NEAR_ALPHA, ox, 0);
     } else {
       // Falling particles scroll DOWN (the paste origin grows with the
-      // offset, exactly like the Discord _tile_paste).
+      // offset, exactly like the Discord _tile_paste); the camera scroll is
+      // subtracted so the field stays put in WORLD space while the viewport
+      // moves across it. The far layer inherits LESS of the scroll (deeper
+      // parallax) and keeps its 137px x phase shift.
       const oy = dist;
-      drawLayer(slot.far!, FAR_ALPHA, 137, oy + slot.far!.h / 3);
-      drawLayer(slot.near!, NEAR_ALPHA, 0, oy);
+      drawLayer(slot.far!, FAR_ALPHA, 137 - this.camScroll.x * (FAR_CAM_PARALLAX / NEAR_CAM_PARALLAX),
+        oy + slot.far!.h / 3 - this.camScroll.y * (FAR_CAM_PARALLAX / NEAR_CAM_PARALLAX));
+      drawLayer(slot.near!, NEAR_ALPHA, -this.camScroll.x, oy - this.camScroll.y);
     }
   }
 
