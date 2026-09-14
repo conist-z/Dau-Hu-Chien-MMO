@@ -200,6 +200,10 @@ function rand(a: number, b: number): number {
 const CLOUD_SHADOW = {
   // NOT readonly: the admin /clouds N test command writes the live count.
   count: 4,               // ekonia: amount 3 (we use 4 to cover wider screens)
+  // Rain keys make the sky 5-6x CLOUDIER than the baseline 4 (user rule):
+  // storm/heavy_rain blanket the ground, plain rain sits between.
+  countRain: 20,
+  countHeavyRain: 24,
   lifeMs: 28000,          // ekonia: lifetime 28.0
   windPx: 9,              // ekonia: wind 8 px/s (constant, never accelerates)
   fallPx: 2,              // ekonia: fall_speed 2 px/s
@@ -210,6 +214,15 @@ const CLOUD_SHADOW = {
   scaleMin: 9.0,
   scaleMax: 16.0,
 };
+
+/** Blob count for a weather style: rain keys get the 5-6x dense field. */
+function cloudCountFor(style: WeatherStyle | undefined): number {
+  if (!style?.cloudShadow) return 0;
+  if (style.bolt) return CLOUD_SHADOW.countHeavyRain;   // storm: 24
+  if ((style.speedPx ?? 0) >= 300) return CLOUD_SHADOW.countHeavyRain; // heavy_rain
+  if ((style.speedPx ?? 0) >= 200) return CLOUD_SHADOW.countRain;      // rain
+  return CLOUD_SHADOW.count;                            // /clouds test key
+}
 
 interface CloudBlob {
   wx: number; wy: number;       // world-space anchor (px, incl. cam offset)
@@ -458,8 +471,7 @@ export class WeatherFx {
       if (cloudCount > 0 && this.current.style?.cloudShadow) {
         // Admin override: seed with the requested blob count instead of the
         // style default (re-seeding on every snapshot keeps it authoritative).
-        CLOUD_SHADOW.count = Math.min(8, cloudCount);
-        this.seedClouds(this.current);
+        this.seedClouds(this.current, Math.min(8, cloudCount));
       }
       void this.loadFor(this.current);
     } else {
@@ -503,7 +515,8 @@ export class WeatherFx {
     }
     // Cloud shadows (ekonia parity): scatter blobs across the view + drift.
     if (style.cloudShadow) {
-      this.seedClouds(slot);
+      // Rain keys blanket the ground (5-6x the baseline 4 blobs).
+      this.seedClouds(slot, cloudCountFor(style));
       if (!this.cloudImg) {
         const img = new Image();
         img.onload = () => { this.cloudImg = img; };
@@ -688,14 +701,14 @@ export class WeatherFx {
    *  camera view (with margin) — never screen px, or the scroll×zoom offset
    *  pushes every blob off-screen the moment the player moves (the "mây biến
    *  mất" bug). Births staggered so fade cycles never sync. */
-  private seedClouds(slot: WeatherSlot): void {
+  private seedClouds(slot: WeatherSlot, count = CLOUD_SHADOW.count): void {
     const now = performance.now();
-    slot.clouds = Array.from({ length: CLOUD_SHADOW.count }, (_, i) => ({
+    slot.clouds = Array.from({ length: count }, (_, i) => ({
       ...this.randomCloudAnchor(),
       vx: CLOUD_SHADOW.windPx * rand(0.8, 1.25),
       vy: CLOUD_SHADOW.fallPx * rand(0.6, 1.4),
       scale: rand(CLOUD_SHADOW.scaleMin, CLOUD_SHADOW.scaleMax),
-      bornAt: now - (i / CLOUD_SHADOW.count) * CLOUD_SHADOW.lifeMs * rand(0.3, 0.95),
+      bornAt: now - (i / count) * CLOUD_SHADOW.lifeMs * rand(0.3, 0.95),
     }));
   }
 
