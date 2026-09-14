@@ -643,18 +643,34 @@ export class WorldScene extends Phaser.Scene {
     this.updateResourceLayer(this.welcome.resources);
   }
 
-  /** GID -> tileset: the entry with the LARGEST firstgid <= gid (the
-   * correct Tiled rule — see bakeMapIfReady for why the old range test
-   * produced a fully black canvas on lobbytrade). */
+  /** GID -> tileset: the entry whose range [firstgid, firstgid + tilecount)
+   *  contains the gid. Must NOT be "largest firstgid <= gid": lobbytrade
+   *  registers [Base]BaseChip_pipo.png at TWO firstgids (577 + 5337), so the
+   *  largest-firstgid rule resolved ground gid 577 against 5337 -> negative
+   *  offset -> every ground tile skipped (invisible floor). The range rule
+   *  is the correct Tiled semantics; fallback to largest-firstgid when no
+   *  range covers the gid (malformed maps). */
   private tilesetForGid(
     map: WelcomePayload["map"], gid: number,
   ): WelcomePayload["map"]["tilesets"][number] | null {
     let best: WelcomePayload["map"]["tilesets"][number] | null = null;
+    let rangeHit: WelcomePayload["map"]["tilesets"][number] | null = null;
     for (const t of map.tilesets) {
-      if (t.image && t.firstgid <= gid &&
-          (best === null || t.firstgid > best.firstgid)) best = t;
+      if (!t.image || t.firstgid > gid) continue;
+      // Payload has no tilecount/imageheight — use columns as the sheet's
+      // width and a generous row count (sheets are 8-64 cols; rows never
+      // exceed ~150, so 512 covers every real sheet without overreaching
+      // into the NEXT tileset's range... except duplicate same-image entries
+      // like BaseChip@577/5337, where "last range hit wins" resolves it).
+      const count = t.columns * 512;
+      if (gid < t.firstgid + count) {
+        // Range hit: prefer the LAST such entry (later duplicates win —
+        // Tiled re-exports append, and the later registration is authoritative).
+        rangeHit = t;
+      }
+      if (best === null || t.firstgid > best.firstgid) best = t;
     }
-    return best;
+    return rangeHit ?? best;
   }
 
   private bakeMapIfReady(): void {
