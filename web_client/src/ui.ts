@@ -536,7 +536,8 @@ export class Hud {
   toggleInventory(force?: boolean): void {
     const show = force ?? this.invPanel.classList.contains("hidden");
     if (show) {
-      // Opening resets the per-panel close state (fresh pair of panels).
+      // Plain open (B key / tab): back to the range-based grid size.
+      this.stationOpen = false;
       this.invClosed = false;
       this.craftClosed = false;
       this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
@@ -548,6 +549,9 @@ export class Hud {
     }
   }
 
+  /** Station-opened override: force the 9-cell grid until a plain open. */
+  private stationOpen = false;
+
   get inventoryOpen(): boolean {
     return !this.invPanel.classList.contains("hidden");
   }
@@ -558,6 +562,7 @@ export class Hud {
   openCraftPanel(): void {
     this.invClosed = false;
     this.craftClosed = false;
+    this.stationOpen = true; // force the 9-cell grid (interacted at a table)
     this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
     if (this.invPanel.classList.contains("hidden")) {
       this.applyTabLayout(false);
@@ -1244,7 +1249,7 @@ export class Hud {
     // NO table nearby: a 2x2 (4-cell) grid, centered in the 3x3 region;
     // near a table: the full 3x3. Cells beyond the visible size are hidden
     // (overflowMatToBag already drained them on the 3x3 -> 2x2 flip).
-    const matGrid = this.nearTable ? CRAFT_MAT_GRID : CRAFT_MAT_GRID_SMALL;
+    const matGrid = this.nearTable || this.stationOpen ? CRAFT_MAT_GRID : CRAFT_MAT_GRID_SMALL;
     const matCells = matGrid.cols * matGrid.rows;
     for (let i = 0; i < matCells; i++) {
       const [x, y] = slotXY(matGrid, i);

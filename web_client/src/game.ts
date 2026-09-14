@@ -1493,12 +1493,32 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Per-frame: recompute the nearest station, show/hide + bob the "E"
-   *  bubble, and swap the CSS cursor while hovering the station tile. */
+   *  bubble, and swap the CSS cursor while hovering the station tile.
+   *  The bubble FADES in/out (appear/disappear) instead of popping. */
   private updateStationPrompt(): void {
     this.nearestStation = this.findNearestStation();
     const st = this.nearestStation;
-    if (!st) {
+    if (st) this.lastPromptPos = st;
+    const target = st ? 1 : 0;
+    // Exponential fade toward the target (~0.25s in/out), plus a slight
+    // upward drift while disappearing.
+    this.promptAlpha += (target - this.promptAlpha) * Math.min(1, this.frameDtSec * 9);
+    if (this.promptAlpha < 0.015) {
+      this.promptAlpha = 0;
       this.stationPrompt?.setVisible(false);
+    } else if (this.stationPrompt) {
+      const p = this.lastPromptPos ?? { x: 0, y: 0 };
+      const now = performance.now();
+      const bob = Math.sin(now / 300) * 2; // gentle 2px float
+      const rise = (1 - this.promptAlpha) * 8; // drifts up while fading out
+      const sincePunch = now - this.promptPunchAt;
+      const punch = sincePunch < 160 ? 1 + 0.35 * (1 - sincePunch / 160) : 1;
+      this.stationPrompt.setPosition(p.x * 32 + 16, p.y * 32 - 24 + bob + rise);
+      this.stationPrompt.setScale(punch);
+      this.stationPrompt.setAlpha(this.promptAlpha);
+      this.stationPrompt.setVisible(true).setDepth(150);
+    }
+    if (!st) {
       if (this.hoverStationCursor) {
         this.hoverStationCursor = false;
         this.game.canvas.style.cursor = "";
@@ -1507,13 +1527,6 @@ export class WorldScene extends Phaser.Scene {
     }
     // Bubble (lazy-built): pixel "E" in a dark rounded box + tail.
     if (!this.stationPrompt) this.stationPrompt = this.buildStationPrompt();
-    const now = performance.now();
-    const bob = Math.sin(now / 300) * 2; // gentle 2px float
-    const sincePunch = now - this.promptPunchAt;
-    const punch = sincePunch < 160 ? 1 + 0.35 * (1 - sincePunch / 160) : 1;
-    this.stationPrompt.setPosition(st.x * 32 + 16, st.y * 32 - 24 + bob);
-    this.stationPrompt.setScale(punch);
-    this.stationPrompt.setVisible(true).setDepth(150);
     // Hover cursor (Kaetram parity): crafting cursor over the station tile.
     const hovering = !!this.mouseTile &&
       this.mouseTile.x === st.x && this.mouseTile.y === st.y;
@@ -1526,6 +1539,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private hoverStationCursor = false;
+  /** Bubble fade alpha (0..1) — eased per frame. */
+  private promptAlpha = 0;
+  /** Last tile that had a bubble (fades out in place when out of range). */
+  private lastPromptPos: { x: number; y: number } | null = null;
 
   /** Build the pixel "E" prompt bubble (dark box + tail + letter). */
   private buildStationPrompt(): Phaser.GameObjects.Container {
@@ -1547,11 +1564,48 @@ export class WorldScene extends Phaser.Scene {
     return this.add.container(0, 0, [g, label]);
   }
 
-  /** E pressed (or station clicked): punch the bubble + open the panel. */
+  /** E pressed (or station clicked): explosion burst + punch + open. */
   stationInteract(): void {
     if (!this.nearestStation) return;
     this.promptPunchAt = performance.now();
+    const p = this.nearestStation;
+    this.spawnPromptExplosion(p.x * 32 + 16, p.y * 32 - 24);
     this.onStationInteract?.();
+  }
+
+  /** Golden spark EXPLOSION at the bubble position (E press): radial
+   *  particles + an expanding ring flash. Pure cosmetic, self-cleaning. */
+  private spawnPromptExplosion(x: number, y: number): void {
+    const N = 12;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + Math.random() * 0.6;
+      const dist = 16 + Math.random() * 16;
+      const size = 2 + Math.random() * 2;
+      const spark = this.add.rectangle(x, y, size, size,
+        i % 3 === 0 ? 0xfff2c4 : 0xd8b46a).setDepth(151);
+      this.tweens.add({
+        targets: spark,
+        x: x + Math.cos(a) * dist,
+        y: y + Math.sin(a) * dist - 8,
+        alpha: 0,
+        scale: { from: 1.6, to: 0.3 },
+        duration: 380 + Math.random() * 160,
+        ease: "Cubic.Out",
+        onComplete: () => spark.destroy(),
+      });
+    }
+    // Expanding ring flash.
+    const ring = this.add.circle(x, y, 8)
+      .setStrokeStyle(2, 0xd8b46a, 1)
+      .setDepth(151);
+    this.tweens.add({
+      targets: ring,
+      scale: 3.2,
+      alpha: 0,
+      duration: 360,
+      ease: "Cubic.Out",
+      onComplete: () => ring.destroy(),
+    });
   }
 
   /** True when a station is within interact range (E-key gate). */
