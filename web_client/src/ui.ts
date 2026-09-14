@@ -21,7 +21,8 @@ const CURRENCY_IDS = new Set(["coin", "crystal"]);
 const isCurrency = (id: string) => CURRENCY_IDS.has(id);
 import {
   CRAFT_BTN, CRAFT_BUTTON, CRAFT_DESC, CRAFT_LAYERS, CRAFT_MAT_CELL,
-  CRAFT_MAT_GRID, CRAFT_PANEL, CRAFT_QUICK_CELL, CRAFT_QUICK_GRID,
+  CRAFT_MAT_GRID, CRAFT_MAT_GRID_SMALL, CRAFT_PANEL, CRAFT_QUICK_CELL,
+  CRAFT_QUICK_GRID,
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
@@ -1219,11 +1220,16 @@ export class Hud {
     // an all-fits catalog never shows a useless bar.
     this.invCraftWrap.appendChild(this.makeCraftScrollbar(scroll, totalRecipes, gridCells));
 
-    // --- MATERIAL grid (dark 3×3, top right; draggable) — local buffer.
-    for (let i = 0; i < CRAFT_MAT_GRID.cols * CRAFT_MAT_GRID.rows; i++) {
-      const [x, y] = slotXY(CRAFT_MAT_GRID, i);
+    // --- MATERIAL grid (dark, top right; draggable) — local buffer.
+    // NO table nearby: a 2x2 (4-cell) grid, centered in the 3x3 region;
+    // near a table: the full 3x3. Cells beyond the visible size are hidden
+    // (overflowMatToBag already drained them on the 3x3 -> 2x2 flip).
+    const matGrid = this.nearTable ? CRAFT_MAT_GRID : CRAFT_MAT_GRID_SMALL;
+    const matCells = matGrid.cols * matGrid.rows;
+    for (let i = 0; i < matCells; i++) {
+      const [x, y] = slotXY(matGrid, i);
       const st = this.matGrid[i] ?? null;
-      const slot = makeSlot(CRAFT_MAT_GRID.slotW, x, y, CRAFT_MAT_CELL, {
+      const slot = makeSlot(matGrid.slotW, x, y, CRAFT_MAT_CELL, {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
         qty: st ? String(st.qty) : "",
@@ -1335,10 +1341,12 @@ export class Hud {
       this.matGrid[i] = null;
     }
     // 2) Pull each ingredient out of the bag view (multi-stack aware).
+    // Only up to the VISIBLE cell count (4 without a table, 9 near one).
+    const cellCap = this.nearTable ? 9 : 4;
     let cell = 0;
     for (const inp of rec.inputs) {
       let need = inp.qty;
-      while (need > 0 && cell < 9) {
+      while (need > 0 && cell < cellCap) {
         const src = this.inventory.bag.find((b) => b && b.id === inp.id && b.qty > 0);
         if (!src) break; // bag short — partial fill, desc shows the lack
         const take = Math.min(src.qty, need);

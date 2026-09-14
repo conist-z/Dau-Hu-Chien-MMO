@@ -95,6 +95,13 @@ export const CRAFT_MAT_GRID: GridLayout = {
   firstX: 74, firstY: 17, stepX: 16, stepY: 16,
   cols: 3, rows: 3, slotW: 14, slotH: 14,
 };
+// 2x2 MATERIAL grid (NO crafting table nearby): 4 cells CENTERED inside the
+// 3x3 region above — 3x3 spans x[74..120] y[17..63] (46x46 px), 2x2 spans
+// 30x30 px, so the offset is (46-30)/2 = 8 px both axes.
+export const CRAFT_MAT_GRID_SMALL: GridLayout = {
+  firstX: 82, firstY: 25, stepX: 16, stepY: 16,
+  cols: 2, rows: 2, slotW: 14, slotH: 14,
+};
 // Result (output) slot next to the anvil: [108,90] 16×16.
 export const CRAFT_RESULT = { x: 108, y: 90, w: 16, h: 16 };
 export const CRAFT_RESULT_ATOM = "ui/v5/atoms/craft_result.png";
