@@ -9,6 +9,12 @@ from game.state import Direction
 # movement can slip through 1-tile gaps the same way Discord players do).
 FLOAT_BOX_HALF = 0.3
 
+# Field-forage node kinds (game/resources.py NODE_DEFS): non-solid decor —
+# the player walks through living mushrooms/grass/flowers.
+FORAGE_KINDS = {
+    "mushroom_brown", "mushroom_purple", "grass", "flower",
+}
+
 
 class Collision:
     def __init__(self, map_data: MapData, blocks: BlockGrid = None,
@@ -32,7 +38,11 @@ class Collision:
                 # A FELLED node's tile is walkable: the tree is gone, the
                 # player walks over the grass (the static "cây" blocker
                 # must not keep the stump solid). While alive the node is
-                # solid regardless of the static layers.
+                # solid regardless of the static layers — EXCEPT field
+                # forage (mushrooms/grass/flowers, user 15/09): those are
+                # waist-high decor the player walks straight through.
+                if node.kind in FORAGE_KINDS:
+                    return self.map_data.is_walkable(x, y)
                 return self.resources.is_chopped(node.anchor) or (
                     self.map_data.is_walkable(x, y)
                 )

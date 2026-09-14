@@ -2095,12 +2095,13 @@ export class WorldScene extends Phaser.Scene {
         ease: "Quad.In",
         onComplete: () => img.destroy(),
       });
-      // Sparse grains: 6 per tile, varied arcs, gravity settle.
-      const N = 6;
+      // Sparse grains (+40% over the first pass): 8 per tile, wider arcs,
+      // slightly bigger grains — still far from eat-particle spam.
+      const N = 8;
       for (let i = 0; i < N; i++) {
-        const a = -Math.PI / 2 + (i - (N - 1) / 2) * 0.42; // fan upward
-        const dist = 8 + Math.random() * 10;
-        const size = 1.5 + Math.random() * 1.5;
+        const a = -Math.PI / 2 + (i - (N - 1) / 2) * 0.5; // fan upward
+        const dist = 11 + Math.random() * 14;
+        const size = 2 + Math.random() * 2;
         const grain = this.add.rectangle(gx + (Math.random() - 0.5) * 10,
           gy + (Math.random() - 0.5) * 8 - 4, size, size, tint ?? 0xb9a27a)
           .setDepth(9);
