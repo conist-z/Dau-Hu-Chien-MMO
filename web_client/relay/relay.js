@@ -92,17 +92,20 @@ function serveStatic(req, res) {
     }
     return;
   }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(resolved)] || "application/octet-stream" });
   // index.html must NEVER be cached: after each deploy the old hashed bundle
   // is deleted, so a cached shell would reference a 404 asset and (via the
   // SPA fallback) load HTML as JavaScript — the "black map after deploy"
   // reports that survived Ctrl+F5-less reloads. Hashed assets are safe to
-  // cache forever (content-addressed filenames).
-  if (file === "/index.html") {
-    res.setHeader("Cache-Control", "no-store");
-  } else if (/^\/assets\//.test(file)) {
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-  }
+  // cache forever (content-addressed filenames). NOTE: headers go INTO
+  // writeHead — setHeader after writeHead throws ERR_HTTP_HEADERS_SENT
+  // (that crash took the whole relay down on Railway).
+  const cacheControl = file === "/index.html"
+    ? "no-store"
+    : /^\/assets\//.test(file) ? "public, max-age=31536000, immutable" : null;
+  res.writeHead(200, {
+    "Content-Type": MIME[path.extname(resolved)] || "application/octet-stream",
+    ...(cacheControl ? { "Cache-Control": cacheControl } : {}),
+  });
   res.end(fs.readFileSync(resolved));
 }
 
