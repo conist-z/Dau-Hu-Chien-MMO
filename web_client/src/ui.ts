@@ -219,6 +219,8 @@ export class Hud {
   private purseCoins = 0;
   private purseCrystals = 0;
   private purseDigitEls: HTMLImageElement[] = [];
+  /** Per-counter digit runs (main img + craft-tab clone per digit). */
+  private purseRuns: { img: HTMLImageElement; clone: HTMLImageElement }[][] = [];
   private purseLastSig = "";
   /** Active purse drag: currency item id, or null. */
   private purseDrag: string | null = null;
@@ -1151,7 +1153,7 @@ export class Hud {
   /** Craft panel: QUICK-CRAFT 3×5 (light, left), MATERIAL 3×3 (dark, top
    *  right), RESULT slot by the anvil, CREATE button, description region. */
   private renderCraftPanel(): void {
-    this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager").forEach((n) => n.remove());
+    this.invCraftWrap.querySelectorAll(".slot-pix,.pix-btn,.pix-desc,.pix-pager,.craft-scroll-rail").forEach((n) => n.remove());
     const sel = this.selectedQuick != null ? this.recipes[this.selectedQuick] ?? null : null;
 
     // --- Category tabs: the FRAME ITSELF is the tab state. The kit ships
@@ -1832,30 +1834,43 @@ export class Hud {
     // SMOOTH COUNTERS: in-place digit <img> SWAP (update src of the
     // existing elements, add/remove only the tail) instead of tearing the
     // whole run down every change — that rebuild was the visible jank.
+    // Runs are tracked as SEPARATE arrays (img + its craft-tab clone per
+    // digit): the old flat array mixed the two and its /2 sizing math
+    // froze every counter past its first growth (the "kẹt ở 9" bug).
     const runs: [number, number, number][] = [
       [this.purseCoins, PURSE_COIN_X, 0],
       [this.purseCrystals, PURSE_CRYSTAL_X, 1],
     ];
     for (const [value, leftPx, runIdx] of runs) {
       const text = String(Math.max(0, Math.floor(value)));
-      const perRun = this.purseDigitEls.length / 2;
-      const base = runIdx * perRun;
-      // Grow the run when the number gained digits.
-      while (this.purseDigitEls.length < (runIdx + 1) * text.length) {
+      let run = this.purseRuns[runIdx];
+      if (!run) run = this.purseRuns[runIdx] = [];
+      // Grow: one img per digit + a clone for the craft-tab panel.
+      while (run.length < text.length) {
         const im = makeDigitRun(0, leftPx)[0];
         if (!im) break;
-        this.purseDigitEls.push(im);
         this.invItemsWrap.append(im);
         const c = im.cloneNode() as HTMLImageElement;
         this.invItemsCraftWrap.append(c);
-        this.purseDigitEls.push(c);
+        run.push({ img: im, clone: c });
       }
-      for (let i = 0; i < text.length; i++) {
-        const im = this.purseDigitEls[base + i];
-        if (!im) continue;
-        const want = `${PURSE_DIGIT.dir}/n${text[i]}.png`;
-        if (!im.src.endsWith(want)) im.src = want; // only real changes
-        im.style.left = `${(leftPx + i * (PURSE_DIGIT.advance + 1)) * PIXEL_SCALE}px`;
+      for (let i = 0; i < run.length; i++) {
+        const d = run[i]!;
+        if (i < text.length) {
+          const want = `${PURSE_DIGIT.dir}/n${text[i]}.png`;
+          if (!d.img.src.endsWith(want)) {
+            d.img.src = want; // only real changes
+            d.clone.src = want;
+          }
+          const x = (leftPx + i * (PURSE_DIGIT.advance + 1)) * PIXEL_SCALE;
+          d.img.style.left = `${x}px`;
+          d.clone.style.left = `${x}px`;
+          d.img.style.display = "";
+          d.clone.style.display = "";
+        } else {
+          d.img.style.display = "none";
+          d.clone.style.display = "none";
+        }
       }
     }
   }
@@ -2208,7 +2223,18 @@ export class Hud {
     return this.recipes;
   }
 
+  private lastHotbarSig = "";
   private renderHotbar(): void {
+    // Repaint guard: the hotbar mirrors BAG slots 0..N positionally — rebuild
+    // the DOM only when the mirrored stacks / active slot actually changed.
+    // Without this, every inventory delta (20 Hz ack bursts during loot)
+    // tore the hotbar down and re-decoded every icon (visible jank).
+    const slotCount = Math.max(this.inventory.hotbar.length, 6);
+    const sig = this.inventory.bag.slice(0, slotCount)
+      .map((s) => (s ? `${s.id}:${s.qty}` : "-")).join(",") +
+      `|${this.activeSlot}|${Object.keys(this.itemEmojis).length}`;
+    if (sig === this.lastHotbarSig) return;
+    this.lastHotbarSig = sig;
     this.hotbarEl.innerHTML = "";
     // LOCAL PROJECTION: hotbar slot N mirrors BAG SLOT N (positional, same
     // rule as the server) — dragging the stack OUT of the first N bag slots
@@ -2216,7 +2242,6 @@ export class Hud {
     // hotbar slot. Computed from the bag the client already holds, so every
     // local edit (drag/split/take-out) echoes INSTANTLY without waiting for
     // the server's inventory delta.
-    const slotCount = Math.max(this.inventory.hotbar.length, 6);
     for (let idx = 0; idx < slotCount; idx++) {
       const stack = this.inventory.bag[idx] ?? null;
       const itemId = stack?.id ?? null;
