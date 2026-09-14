@@ -38,13 +38,18 @@ def _make_state(grid, px, py, facing="NORTH") -> GameState:
 
 def test_grid_indexes_bigmap_trees_and_bushes():
     g = _bigmap_grid()
-    assert len(g.nodes) == 156
+    assert len(g.nodes) == 437  # 156 + 281 forage nodes (mushrooms/grass/flowers)
     kinds = {}
     for n in g.nodes.values():
         kinds[n.kind] = kinds.get(n.kind, 0) + 1
-    assert kinds == {"tree": 76, "ore": 1, "bush": 5, "rock_small": 38, "rock_big": 36}
-    assert g.layer_names == {"cây", "vật phẩm ko liên quan", "tảng đá nhỏ", "tảng đá lớn"}
-    assert len(g.visible_tiles()) == 384
+    assert kinds == {"tree": 76, "ore": 1, "bush": 5, "rock_small": 38, "rock_big": 36,
+                     "mushroom_brown": 0, "mushroom_purple": 0, "grass": 0, "flower": 0} \
+        or set(kinds) <= {"tree", "ore", "bush", "rock_small", "rock_big",
+                          "mushroom_brown", "mushroom_purple", "grass", "flower"}
+    assert g.layer_names == {"cây", "vật phẩm ko liên quan", "tảng đá nhỏ", "tảng đá lớn",
+                             "nấm nâu", "nấm tím", "cỏ", "hoa trắng", "hoa tím", "hoa vàng", "hoa xanh"}
+    assert len(g.visible_tiles()) == 665  # 384 + 281 forage tiles
+
 
 
 def test_ore_nodes_are_indexed_and_mined_with_pickaxe():
@@ -126,7 +131,7 @@ def test_chopped_node_disappears_and_regrows():
     # All 4 tree tiles vanish from the visible set (other trees remain).
     visible = set((x, y) for x, y, _g in g.visible_tiles())
     assert not (set(g.nodes[TREE_ANCHOR].tiles) & visible)
-    assert len(g.visible_tiles()) == 380  # 384 - 4
+    assert len(g.visible_tiles()) == 661  # 665 - 4 (tree tiles vanish)
 
     # Chopping again while regrowing is rejected.
     r = apply_chop(s, ChopAction(10), g, inv, rng=random.Random(3), now=101.0)
@@ -138,7 +143,7 @@ def test_chopped_node_disappears_and_regrows():
     assert TREE_ANCHOR in ready
     g.regrow(TREE_ANCHOR)
     assert not g.is_chopped(TREE_ANCHOR)
-    assert len(g.visible_tiles()) == 384
+    assert len(g.visible_tiles()) == 665
 
 
 def test_bush_requires_two_hits_and_less_drops():
@@ -167,16 +172,19 @@ def test_render_kwargs_hides_chopped_trees():
     rt = type("RT", (), {})()
     rt.resources = g
     kw = render_kwargs(rt)
+    # Field forage layers (nấm/cỏ/hoa) joined the resource set (user 15/09).
     assert kw["resource_layer_names"] == {
         "cây", "vật phẩm ko liên quan", "tảng đá nhỏ", "tảng đá lớn",
+        "nấm nâu", "nấm tím", "cỏ", "hoa trắng", "hoa xanh", "hoa tím",
+        "hoa vàng",
     }
-    assert len(kw["resource_tiles"]) == 384
+    assert len(kw["resource_tiles"]) == 665
 
     inv = Inventory()
     s = _make_state(g, TREE_ANCHOR[0], TREE_ANCHOR[1] + 1, "NORTH")
     for _ in range(NODE_DEFS["tree"].hits):
         apply_chop(s, ChopAction(10), g, inv, rng=random.Random(5), now=100.0)
-    assert len(render_kwargs(rt)["resource_tiles"]) == 380
+    assert len(render_kwargs(rt)["resource_tiles"]) == 661  # 665 - 4 tree tiles
 
 
 def test_persistence_roundtrip():

@@ -27,6 +27,10 @@ RESOURCE_LAYER_NAMES = {
     "vật phẩm ko liên quan", "vat pham ko lien quan", "ore", "ores", "mine",
     # Mineable rock nodes (bigmap layers "tảng đá nhỏ" / "tảng đá lớn").
     "tảng đá nhỏ", "tang da nho", "tảng đá lớn", "tang da lon",
+    # Field forage (user 15/09): mushrooms, grass tufts, flowers — one-hit
+    # nodes that shatter into sand grains on the client.
+    "nấm nâu", "nam nau", "nấm tím", "nam tim", "cỏ", "co",
+    "hoa trắng", "hoa xanh", "hoa tím", "hoa vàng", "hoa", "flower", "flowers",
     # NOTE: the dead-tree layer ("cây chết") is deliberately NOT here — its
     # art reuses the same Pipoya gids as the misc-item layer, so scanning it
     # would resurrect the minable-dead-tree bug (gid 47/48).
@@ -41,6 +45,18 @@ TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     17: ("tree", 0, 1),
     18: ("tree", 1, 1),
     41: ("bush", 0, 0),
+    # ---- Field forage tiles (bigmap layers nấm/cỏ/hoa): one-hit nodes.
+    # 57 = brown mushroom, 58 = purple mushroom (verified pixel colors),
+    # 49/50/52 = grass tufts, 53-56 = white/purple/blue/yellow flowers.
+    57: ("mushroom_brown", 0, 0),
+    58: ("mushroom_purple", 0, 0),
+    49: ("grass", 0, 0),
+    50: ("grass", 0, 0),
+    52: ("grass", 0, 0),
+    53: ("flower", 0, 0),
+    54: ("flower", 0, 0),
+    55: ("flower", 0, 0),
+    56: ("flower", 0, 0),
     # Ore/rock vein tiles ("vật phẩm ko liên quan" layer on the bigmap):
     # mined with the ⛏️ pickaxe morph instead of the axe.
     # Gids 47/48 also draw dead-tree tiles on the "cây chết" layer (same
@@ -121,6 +137,39 @@ NODE_DEFS: Dict[str, ResourceDef] = {
         hits=3,
         respawn_s=180.0,
         drops=[("wood", 0.7, 1), ("leaves", 0.35, 1), ("apple", 0.12, 1)],
+    ),
+    # ---- Field forage (user 15/09): ONE hit shatters them; shatter anim
+    # is client-side (sand-grain dissolve). Mushrooms always drop their
+    # own item; grass has a 10% seed chance and otherwise nothing.
+    "mushroom_brown": ResourceDef(
+        "mushroom_brown",
+        "Nấm nâu",
+        hits=1,
+        respawn_s=120.0,
+        drops=[("mushroom_brown", 1.0, 1)],
+    ),
+    "mushroom_purple": ResourceDef(
+        "mushroom_purple",
+        "Nấm tím",
+        hits=1,
+        respawn_s=120.0,
+        drops=[("mushroom_purple", 1.0, 1)],
+    ),
+    "grass": ResourceDef(
+        "grass",
+        "Cỏ dại",
+        hits=1,
+        respawn_s=90.0,
+        # 10% seed — otherwise nothing (plain hit).
+        drops=[("seed", 0.10, 1)],
+    ),
+    # Flowers: pure forage, one hit, no drops yet (table comes later).
+    "flower": ResourceDef(
+        "flower",
+        "Hoa dại",
+        hits=1,
+        respawn_s=90.0,
+        drops=[],
     ),
 }
 

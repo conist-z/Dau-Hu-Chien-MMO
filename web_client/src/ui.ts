@@ -218,7 +218,6 @@ export class Hud {
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
-  private purseDigitEls: HTMLImageElement[] = [];
   /** Per-counter digit runs (main img + craft-tab clone per digit). */
   private purseRuns: { img: HTMLImageElement; clone: HTMLImageElement }[][] = [];
   private purseLastSig = "";

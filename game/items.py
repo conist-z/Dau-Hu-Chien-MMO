@@ -49,6 +49,12 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "cooked_meat": ItemDef(
         "cooked_meat", "Thịt nướng", "🍗", "consumable", {"heal_hp": 30}, "Hồi 30 HP"
     ),
+    # Foraged from the field nodes (game/resources.py): mushrooms and the
+    # rare grass seed. Icons come from the Kaetram sprite set via
+    # scripts/make_item_icons.py (mushroom6/1 + seed).
+    "mushroom_purple": ItemDef("mushroom_purple", "Nấm tím", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
+    "mushroom_brown": ItemDef("mushroom_brown", "Nấm nâu", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
+    "seed": ItemDef("seed", "Hạt giống", "🌱", "material", {}, "Có thể trồng (sắp tới)"),
 }
 
 # --- Tool tiers (game/tools.py): dirt/wood/stone x shovel/pickaxe/axe/sword

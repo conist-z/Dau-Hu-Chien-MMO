@@ -64,6 +64,10 @@ const DIR_VECTORS: Record<string, [number, number]> = {
 // 13/09): damage drains at 1/s after the 3.5 s idle — the client mirrors
 // that pace between 20 Hz samples so the crack rewinds smoothly.
 const BLOCK_HEAL_RATE = 1.0;
+// Field-forage resource gids (bigmap nấm/cỏ/hoa layers): these SHATTER into
+// sand grains when felled instead of the tree tip-over fall (mirrors
+// game/resources.py TILE_NODE_PARTS one-hit forage nodes).
+const FORAGE_GIDS = new Set([49, 50, 52, 53, 54, 55, 56, 57, 58]);
 // Station blocks the E-prompt/hover/click interact flow targets (mirrors
 // game/crafting.py STATION_BLOCK_IDS).
 const STATION_BLOCK_IDS = new Set(["crafting_table", "furnace"]);
@@ -2009,11 +2013,17 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // Felled nodes: their tiles were present before, gone now -> animate.
+    // Field forage (mushrooms/grass/flowers — small 1-tile gids) SHATTER
+    // into sand grains; trees/bushes/rocks keep the tip-over fall.
     const nowKeys = new Set([...this.resourceTiles.keys()]);
     for (const [, imgs] of prevNodes) {
       const stillThere = imgs.every((img) => nowKeys.has(this.keyOf(img)));
       if (imgs.length > 0 && !stillThere) {
-        this.playFallAnimation(imgs);
+        if (imgs.every((i) => FORAGE_GIDS.has(this.gidOf(i)))) {
+          this.playShatterAnimation(imgs);
+        } else {
+          this.playFallAnimation(imgs);
+        }
       }
     }
     // Progress bars of vanished nodes are stale.
@@ -2023,6 +2033,12 @@ export class WorldScene extends Phaser.Scene {
   /** World key of a resource image ("x,y" from its centre position). */
   private keyOf(img: Phaser.GameObjects.Image): string {
     return `${Math.round((img.x - 16) / 32)},${Math.round((img.y - 16) / 32)}`;
+  }
+
+  /** Gid the resource image was cropped from ("res-<gid>" texture). */
+  private gidOf(img: Phaser.GameObjects.Image): number {
+    const m = /^res-(\d+)$/.exec(img.texture.key);
+    return m ? Number(m[1]) : 0;
   }
 
   /**
@@ -2055,6 +2071,71 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     return out;
+  }
+
+  /**
+   * Field-forage shatter: the sprite crumbles into a few sand grains that
+   * puff outward and settle — deliberately SPARSE (5-7 grains) and short
+   * (~0.5s) so rapid foraging never floods the screen (user rule: don't
+   * repeat the eat-particle spam). Grains take the node's own color.
+   */
+  private playShatterAnimation(imgs: Phaser.GameObjects.Image[]): void {
+    if (imgs.length === 0) return;
+    for (const img of imgs) {
+      const gx = img.x;
+      const gy = img.y;
+      const tint = this.sampleTextureTint(img.texture.key);
+      // The sprite itself: quick shrink + slight downward puff (crumbles).
+      this.tweens.add({
+        targets: img,
+        scaleY: 0.4,
+        scaleX: 1.12,
+        alpha: 0,
+        duration: 200,
+        ease: "Quad.In",
+        onComplete: () => img.destroy(),
+      });
+      // Sparse grains: 6 per tile, varied arcs, gravity settle.
+      const N = 6;
+      for (let i = 0; i < N; i++) {
+        const a = -Math.PI / 2 + (i - (N - 1) / 2) * 0.42; // fan upward
+        const dist = 8 + Math.random() * 10;
+        const size = 1.5 + Math.random() * 1.5;
+        const grain = this.add.rectangle(gx + (Math.random() - 0.5) * 10,
+          gy + (Math.random() - 0.5) * 8 - 4, size, size, tint ?? 0xb9a27a)
+          .setDepth(9);
+        this.tweens.add({
+          targets: grain,
+          x: grain.x + Math.cos(a) * dist,
+          y: grain.y + Math.abs(Math.sin(a)) * dist + 10, // pop up, settle down
+          alpha: { from: 1, to: 0 },
+          duration: 380 + Math.random() * 140,
+          ease: "Quad.Out",
+          onComplete: () => grain.destroy(),
+        });
+      }
+    }
+  }
+
+  /** Dominant opaque color of a cropped "res-<gid>" canvas texture (the
+   *  grain tint), or null when unreadable. */
+  private sampleTextureTint(key: string): number | null {
+    if (!this.textures.exists(key)) return null;
+    const src = this.textures.get(key).getSourceImage() as HTMLCanvasElement;
+    if (!src || !src.width) return null;
+    const c = document.createElement("canvas");
+    c.width = src.width; c.height = src.height;
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(src, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+    }
+    if (n === 0) return null;
+    return ((r / n) << 16) | ((g / n) << 8) | (b / n);
   }
 
   /**
