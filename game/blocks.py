@@ -42,7 +42,7 @@ BLOCK_REGISTRY: Dict[str, BlockDef] = {
 # (min 1/hit) → bare-hand hits = hardness*2 cho gỗ (4 -> 8 phát tay không).
 # Tuned 13/09: toàn bộ khối được nâng độ bền (gỗ phải chịu 4 hit đúng tool).
     "stone": BlockDef("stone", "Đá", "🪨", (128, 128, 136), solid=True, hardness=6),
-    "wood": BlockDef("wood", "Gỗ", "🪵", (150, 104, 58), solid=True, hardness=4),
+    "wood": BlockDef("wood", "Khúc gỗ", "🪵", (150, 104, 58), solid=True, hardness=4),
     "leaves": BlockDef("leaves", "Lá", "🌿", (72, 150, 74), solid=True, hardness=2),
     "torch": BlockDef(
         "torch", "Đuốc", "🕯️", (255, 196, 84), solid=True, hardness=1,
@@ -51,6 +51,9 @@ BLOCK_REGISTRY: Dict[str, BlockDef] = {
     # Floor overlay — user rule: EVERY placed block blocks movement (no
     # walk-through), so the floor is solid like everything else now.
     "floor": BlockDef("floor", "Sàn gỗ", "🟫", (176, 128, 80), solid=True, hardness=4),
+    # Ván gỗ: placeable block (user 14/09 — Minecraft parity: plank đặt ra
+    # được). Brightened floor texture (docs/icon_pipeline.md).
+    "plank": BlockDef("plank", "Ván gỗ", "🟫", (196, 152, 100), solid=True, hardness=4),
     # Crafting station: placed like any block; standing within STATION_RANGE
     # unlocks the table recipes in game/crafting.py (checked at craft time).
     "crafting_table": BlockDef(
