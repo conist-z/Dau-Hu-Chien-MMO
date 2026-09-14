@@ -85,7 +85,7 @@ function serveStatic(req, res) {
     // SPA fallback: unknown paths get the shell (client routes by hash/URL).
     const shell = path.join(DIST_DIR, "index.html");
     if (fs.existsSync(shell)) {
-      res.writeHead(200, { "Content-Type": MIME[".html"] });
+      res.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-store" });
       res.end(fs.readFileSync(shell));
     } else {
       res.writeHead(404).end();
@@ -93,6 +93,16 @@ function serveStatic(req, res) {
     return;
   }
   res.writeHead(200, { "Content-Type": MIME[path.extname(resolved)] || "application/octet-stream" });
+  // index.html must NEVER be cached: after each deploy the old hashed bundle
+  // is deleted, so a cached shell would reference a 404 asset and (via the
+  // SPA fallback) load HTML as JavaScript — the "black map after deploy"
+  // reports that survived Ctrl+F5-less reloads. Hashed assets are safe to
+  // cache forever (content-addressed filenames).
+  if (file === "/index.html") {
+    res.setHeader("Cache-Control", "no-store");
+  } else if (/^\/assets\//.test(file)) {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  }
   res.end(fs.readFileSync(resolved));
 }
 
