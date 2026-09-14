@@ -29,7 +29,7 @@ weatherFx.mount(document.getElementById("game-root")!);
 // canvas is in screen px while the camera scroll is world px.
 weatherFx.setCameraHook(() => {
   const cam = scene.cameras.main;
-  return { x: cam.scrollX, y: cam.scrollY };
+  return { x: cam.scrollX, y: cam.scrollY, zoom: cam.zoom };
 });
 // Day/night lighting overlay — full-screen multiply tint sampled from the
 // same 24h gradient as the Discord client; the clock arrives per snapshot.

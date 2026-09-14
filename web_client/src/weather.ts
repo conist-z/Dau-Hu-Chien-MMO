@@ -420,8 +420,8 @@ export class WeatherFx {
   // returns the Phaser camera's current world scroll in CSS pixels. null =
   // not yet in a world (pre-welcome) — the overlay then degrades gracefully
   // to the old screen-space behaviour.
-  private cameraHook: (() => { x: number; y: number } | null) | null = null;
-  private camScroll = { x: 0, y: 0 };
+  private cameraHook: (() => { x: number; y: number; zoom?: number } | null) | null = null;
+  private camScroll = { x: 0, y: 0, zoom: CAM_ZOOM };
   // cloud.png sprite (lazy-loaded once; null until ready, retry each slot).
   private cloudImg: HTMLImageElement | null = null;
   // Pre-tinted DARK copy (built once from cloudImg — see buildCloudShadow).
@@ -615,9 +615,11 @@ export class WeatherFx {
       if (cam) {
         this.camScroll.x = cam.x;
         this.camScroll.y = cam.y;
+        this.camScroll.zoom = cam.zoom && cam.zoom > 0 ? cam.zoom : CAM_ZOOM;
       } else {
         this.camScroll.x = 0;
         this.camScroll.y = 0;
+        this.camScroll.zoom = CAM_ZOOM;
       }
       this.step(t);
       this.draw(t);
@@ -715,8 +717,8 @@ export class WeatherFx {
   /** A random cloud anchor in WORLD px across the camera view + margin. */
   private randomCloudAnchor(): { wx: number; wy: number } {
     // Camera view in world px: scroll..scroll + innerWidth/zoom.
-    const vw = this.w / CAM_ZOOM;
-    const vh = this.h / CAM_ZOOM;
+    const vw = this.w / this.camScroll.zoom;
+    const vh = this.h / this.camScroll.zoom;
     const margin = vw * 0.5;
     return {
       wx: this.camScroll.x - margin + rand(0, vw + margin * 2),
@@ -865,8 +867,8 @@ export class WeatherFx {
       const age = (now - c.bornAt) / CLOUD_SHADOW.lifeMs;
       const fade = Math.min(1, Math.min(age, 1 - age) / 0.12);
       if (fade <= 0) continue;
-      const x = (c.wx - this.camScroll.x) * CAM_ZOOM;
-      const y = (c.wy - this.camScroll.y) * CAM_ZOOM;
+      const x = (c.wx - this.camScroll.x) * this.camScroll.zoom;
+      const y = (c.wy - this.camScroll.y) * this.camScroll.zoom;
       // Cull blobs far off-screen (cheap; seeds can land just outside).
       const w = img.width * c.scale;
       const h = img.height * c.scale;
@@ -939,13 +941,14 @@ export class WeatherFx {
       ctx.globalAlpha = 1;
     };
 
+    const z = this.camScroll.zoom;
     if (style.horizontal) {
       // Wind drifts RIGHT; the camera scroll slides BOTH layers sideways.
-      const ox = dist - this.camScroll.x * CAM_ZOOM * NEAR_CAM_PARALLAX;
+      const ox = dist - this.camScroll.x * z * NEAR_CAM_PARALLAX;
       // Far layer drifts slower (0.6x parallax) phase-shifted 512px — same
       // numbers as the Discord _scroll_overlays wind branch. Both layers tile
       // the full viewport; the 96px far offset just de-correlates the rows.
-      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512 - this.camScroll.x * CAM_ZOOM * FAR_CAM_PARALLAX, 96);
+      drawLayer(slot.far!, FAR_ALPHA, ox * 0.6 + 512 - this.camScroll.x * z * FAR_CAM_PARALLAX, 96);
       drawLayer(slot.near!, NEAR_ALPHA, ox, 0);
     } else {
       // Falling particles scroll DOWN (the paste origin grows with the
@@ -954,10 +957,10 @@ export class WeatherFx {
       // moves across it. The far layer inherits LESS of the scroll (deeper
       // parallax) and keeps its 137px x phase shift.
       const oy = dist;
-      drawLayer(slot.far!, FAR_ALPHA, 137 - this.camScroll.x * CAM_ZOOM * FAR_CAM_PARALLAX,
-        oy + slot.far!.h / 3 - this.camScroll.y * CAM_ZOOM * FAR_CAM_PARALLAX);
-      drawLayer(slot.near!, NEAR_ALPHA, -this.camScroll.x * CAM_ZOOM * NEAR_CAM_PARALLAX,
-        oy - this.camScroll.y * CAM_ZOOM * NEAR_CAM_PARALLAX);
+      drawLayer(slot.far!, FAR_ALPHA, 137 - this.camScroll.x * z * FAR_CAM_PARALLAX,
+        oy + slot.far!.h / 3 - this.camScroll.y * z * FAR_CAM_PARALLAX);
+      drawLayer(slot.near!, NEAR_ALPHA, -this.camScroll.x * z * NEAR_CAM_PARALLAX,
+        oy - this.camScroll.y * z * NEAR_CAM_PARALLAX);
     }
   }
 
