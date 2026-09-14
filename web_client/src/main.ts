@@ -507,6 +507,11 @@ const input = new KeyboardInput({
   },
   onToggleInventory: () => hud.toggleInventory(),
   onSlot: (index) => hud.selectSlot(index),
+  onThrowHeld: () => {
+    // Q: toss the full active-slot stack (the server removes + spawns the
+    // drop with NO_COLLECT window so it isn't instantly re-magnetized).
+    hud.throwHeldStack();
+  },
   onChatFocus: () => document.activeElement === document.getElementById("chat-input"),
   onCanvasAction: (kind, sx, sy) => {
     // Resolve the tile from the CLICK's own coordinates — always the cell

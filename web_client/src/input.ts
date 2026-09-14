@@ -8,6 +8,8 @@ export interface InputHooks {
   onAttack: () => void;
   onToggleInventory: () => void;
   onSlot: (index: number) => void;
+  /** Q: throw the stack in the active hotbar slot into the world. */
+  onThrowHeld?: () => void;
   onChatFocus: () => boolean; // true while the chat input has focus
   /** Canvas clicks: "primary" = chop/break/mine, "secondary" = place block. */
   onCanvasAction?: (kind: "primary" | "secondary", sx: number, sy: number) => void;
@@ -71,6 +73,11 @@ export class KeyboardInput {
     if (e.code === "KeyF") {
       e.preventDefault();
       this.hooks.onAttack();
+      return;
+    }
+    if (e.code === "KeyQ") {
+      e.preventDefault();
+      this.hooks.onThrowHeld?.();
       return;
     }
     if (/^Digit[1-8]$/.test(e.code)) {

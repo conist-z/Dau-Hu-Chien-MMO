@@ -217,6 +217,7 @@ export class Hud {
       inRect(this.invItemsWrap) ||
       inRect(this.invCraftWrap) ||
       inRect(this.invItemsCraftWrap) ||
+      inRect(this.hotbarEl) || // release over the hotbar = move/cancel, NEVER a throw
       inRect(this.invPanel)
     );
   }
@@ -1978,8 +1979,33 @@ export class Hud {
       div.addEventListener("click", () => {
         this.selectSlot(idx);
       });
+      // Hotbar drag parity with the bag: LEFT-drag lifts the stack (ghost
+      // follows the mouse) — releasing over another hotbar slot MOVES it
+      // there (hotbar slot N mirrors bag slot N, so this is moveBag),
+      // releasing outside every panel THROWS it into the world (same path
+      // as dragging out of the bag grid). Plain click still selects.
+      div.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        const st = this.inventory.bag[idx];
+        if (!st) return;
+        e.preventDefault();
+        this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
+      });
+      div.addEventListener("mouseup", (e) => {
+        if (this.drag) {
+          e.stopPropagation();
+          this.dropOn("bag", idx);
+        }
+      });
       this.hotbarEl.appendChild(div);
     }
+  }
+
+  /** Q-key throw: toss the FULL stack in the active hotbar slot into the
+   *  world (same server op as the drag-out throw). */
+  throwHeldStack(): void {
+    const st = this.inventory.bag[this.activeSlot];
+    if (st && this.onThrow) this.onThrow(st.id, st.qty);
   }
 
   // ----- chat + toasts -----
