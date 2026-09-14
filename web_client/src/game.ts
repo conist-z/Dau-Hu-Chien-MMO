@@ -181,6 +181,14 @@ export class WorldScene extends Phaser.Scene {
   private inputLog: { seq: number; dx: number; dy: number; running: boolean; dt: number }[] = [];
   /** Highest seq acknowledged by the server. */
   private lastAckedSeq = -1;
+  // ---- desync debug (F3 toggle, see getDebugInfo) ----
+  debugEnabled = false;
+  private lastConvergeMoveAt = 0;
+  private convergeEvents = 0;
+  private snapCount = 0;
+  private snapRateT0 = 0;
+  private snapRateCount = 0;
+  private snapRate = 0;
   /** dt accumulated since the last seq'd input was flushed (replay needs
    * per-input real dt; see setLocalInput / recordInputDt). */
   private pendingDt = 0;
@@ -201,6 +209,27 @@ export class WorldScene extends Phaser.Scene {
    *  server-side, so it stays fair) instead of integrating time itself. */
   getSelfPos(): { x: number; y: number } {
     return { x: this.selfX, y: this.selfY };
+  }
+
+  /** Server-side truth (last snapshot self pos) — debug overlay reads this. */
+  getServerPos(): { x: number; y: number } {
+    return { x: this.selfServerPos.x, y: this.selfServerPos.y };
+  }
+
+  /** One-shot debug line: everything needed to diagnose "hitbox bên kia".
+   *  Called by the F3 overlay in main.ts (10 Hz). */
+  getDebugInfo(): string {
+    const d = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
+    const idle = this.inputLog.length === 0;
+    return [
+      `pred (${this.selfX.toFixed(2)}, ${this.selfY.toFixed(2)})`,
+      `srv (${this.selfServerPos.x.toFixed(2)}, ${this.selfServerPos.y.toFixed(2)})`,
+      `d=${d.toFixed(2)}`, d > 1 ? "⚠DIFY>1" : "ok",
+      `ack=${this.lastAckedSeq}`, `log=${this.inputLog.length}`,
+      idle ? "idle" : "moving",
+      `snap=${this.snapRate.toFixed(0)}/s`,
+      `cvg=${this.convergeEvents}`,
+    ].join("  ");
   }
   private frameDtSec = 1 / 60; // real Phaser frame delta (set each update)
   // True while hp == 0 (server-authoritative): prediction frozen, overlay on.
@@ -2682,6 +2711,29 @@ export class WorldScene extends Phaser.Scene {
     // Authoritative self position for reconciliation. Self is NOT in the
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
+    // Debug telemetry: snapshot cadence + a console tracer that fires ONLY on
+    // divergence > 1.5 tiles (no spam — the event itself is the signal).
+    this.snapCount++;
+    this.snapRateCount++;
+    const nowT0 = performance.now();
+    if (this.snapRateT0 === 0) this.snapRateT0 = nowT0;
+    if (nowT0 - this.snapRateT0 >= 1000) {
+      this.snapRate = this.snapRateCount * 1000 / (nowT0 - this.snapRateT0);
+      this.snapRateT0 = nowT0;
+      this.snapRateCount = 0;
+    }
+    const dbgD = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
+    if (dbgD > 1.5 && nowT0 - this.lastConvergeMoveAt > 2000) {
+      this.lastConvergeMoveAt = nowT0;
+      this.convergeEvents++;
+      console.warn(
+        "[DESYNC]", `d=${dbgD.toFixed(2)}`, // tiles
+        `pred=(${this.selfX.toFixed(2)},${this.selfY.toFixed(2)})`,
+        `srv=(${this.selfServerPos.x.toFixed(2)},${this.selfServerPos.y.toFixed(2)})`,
+        `ack=${this.lastAckedSeq}`, `pendingInputs=${this.inputLog.length}`,
+        this.inputLog.length === 0 ? "IDLE" : "MOVING",
+      );
+    }
     // Stamina: the tired gate reads this in stepSelf (prediction mirrors
     // the server's run-at-walk-speed cap once it empties).
     const st = (snap.self as { stamina?: number }).stamina;

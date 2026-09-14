@@ -447,6 +447,33 @@ const net = new Net({
 // the player sees — the "đứng yên mà hitbox ở chỗ khác" fix.
 net.idlePosHook = () => scene.getSelfPos();
 
+// ---- DESYNC DEBUG (F3 toggle) -------------------------------------------
+// On-screen panel (10 Hz): predicted vs server position, divergence, ack seq,
+// pending inputs, snapshot rate. PLUS a console tracer (in game.ts) that fires
+// only on divergence > 1.5 tiles. Purpose: catch "hitbox bên kia" red-handed —
+// read pred vs srv the moment the user feels the mismatch.
+{
+  const dbg = document.createElement("div");
+  dbg.id = "desync-debug";
+  dbg.style.cssText = [
+    "position:fixed", "top:8px", "left:8px", "z-index:50",
+    "background:rgba(0,0,0,0.75)", "color:#7fff9f", "padding:6px 9px",
+    "font:12px/1.5 monospace", "white-space:pre", "border-radius:6px",
+    "pointer-events:none", "display:none",
+  ].join(";");
+  document.body.appendChild(dbg);
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "F3") {
+      e.preventDefault();
+      scene.debugEnabled = !scene.debugEnabled;
+      dbg.style.display = scene.debugEnabled ? "block" : "none";
+    }
+  });
+  window.setInterval(() => {
+    if (scene.debugEnabled) dbg.textContent = scene.getDebugInfo();
+  }, 100);
+}
+
 // Consumable ids the right-click EAT applies to (server re-validates type
 // + stock; this set only routes the click so tools still place nothing).
 const EDIBLE_IDS = new Set([
