@@ -766,7 +766,13 @@ export class WorldScene extends Phaser.Scene {
     // next snapshot (its sig-guard would otherwise skip the refresh).
     this.resourceSig = "";
     this.updateResourceLayer(welcome.resources ?? []);
+    // REGISTER the canvas as a Phaser texture — without this the image
+    // below references a nonexistent "map-bake" texture and the whole
+    // ground stays invisible (trees still showed because they come from
+    // the server resource list, a separate path — which masked this).
     const key = "map-bake";
+    if (this.textures.exists(key)) this.textures.remove(key);
+    this.textures.addCanvas(key, canvas);
     if (this.mapBake) {
       this.mapBake.setTexture(key);
     } else {
