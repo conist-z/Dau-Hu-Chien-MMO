@@ -329,6 +329,9 @@ export class WorldScene extends Phaser.Scene {
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
+  // Tile count at the last base-map bake: the rebake trigger (chop/regrow
+  // changes the count; an unchanged carried payload must not re-bake).
+  private lastBakedResourceCount = -1;
   // --- night zombies (Kaetram-style mob, SEPARATE realtime web pack) ---
   // One entry per live zombie id: interpolated 20 Hz -> 60 fps like players.
   // The sprite is ONE frame cut from the local sheet copy (Kaetram zombie
@@ -638,6 +641,7 @@ export class WorldScene extends Phaser.Scene {
     // Resource layer was skipped at build time (no textures yet) — rebuild
     // it now and clear the sig cache so snapshots can refresh it again.
     this.resourceSig = "";
+    this.lastBakedResourceCount = (this.welcome.resources ?? []).length;
     this.updateResourceLayer(this.welcome.resources);
   }
 
@@ -748,6 +752,8 @@ export class WorldScene extends Phaser.Scene {
     const key = "map-bake";
     if (this.textures.exists(key)) this.textures.remove(key);
     this.textures.addCanvas(key, canvas);
+    // Sync the rebake trigger with what was just baked.
+    this.lastBakedResourceCount = (welcome.resources ?? []).length;
     if (this.mapBake) {
       this.mapBake.setTexture(key);
     } else {
@@ -3046,10 +3052,17 @@ export class WorldScene extends Phaser.Scene {
       if (this.welcome) this.welcome.resources = snap.resources;
       this.updateResourceLayer(snap.resources);
       this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
-      // Re-bake: a felled node's tiles just left the server's visible list,
-      // so the base bake must drop them (else the tree stays glued to the
-      // ground via its baked copy).
-      this.bakeMapIfReady();
+      // Re-bake ONLY when the visible resource list actually CHANGED (the
+      // bake is thousands of drawImage calls — running it on every snapshot
+      // that merely CARRIED a resources payload stalled the message handler
+      // 500+ ms each time). Cheapest correct signal: the tile count. A chop
+      // removes tiles; a regrow adds them; carrying an unchanged list never
+      // crosses this threshold.
+      const rc = snap.resources.length;
+      if (rc !== this.lastBakedResourceCount) {
+        this.lastBakedResourceCount = rc;
+        this.bakeMapIfReady();
+      }
     }
     this.syncProgressBars(snap.res_progress, {
       x: Math.floor(snap.self.x),
