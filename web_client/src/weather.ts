@@ -200,8 +200,10 @@ const CLOUD_SHADOW = {
   fallPx: 2,              // ekonia: fall_speed 2 px/s
   alpha: 0.16,            // ekonia: Color(0.13, 0.14, 0.2, 0.16)
   color: "rgb(33,36,51)", // ekonia tint 0.13/0.14/0.2
-  scaleMin: 3.0,          // ekonia: scale_min/max (x 80px sheet = 240-440 px)
-  scaleMax: 5.5,
+  // Big clouds (user rule: "gấp 3-4 lần đám mây bạn làm"): 80px sheet ×
+  // ~10-16 = 800-1280 px wide soft shadows drifting over the ground.
+  scaleMin: 9.0,
+  scaleMax: 16.0,
 };
 
 interface CloudBlob {
@@ -653,9 +655,11 @@ export class WeatherFx {
         c.wx += c.vx * this.dt;
         c.wy += c.vy * this.dt;
         if (nowMs - c.bornAt >= CLOUD_SHADOW.lifeMs) {
-          // Respawn: fresh scatter + size (random per cycle, ekonia parity).
-          c.wx = rand(-this.w, this.w * 2);
-          c.wy = rand(-this.h * 0.5, this.h * 1.5);
+          // Respawn INSIDE the current camera view (world px) + fresh size —
+          // otherwise new blobs materialise off-screen and never appear.
+          const a = this.randomCloudAnchor();
+          c.wx = a.wx;
+          c.wy = a.wy;
           c.scale = rand(CLOUD_SHADOW.scaleMin, CLOUD_SHADOW.scaleMax);
           c.bornAt = nowMs;
         }
@@ -668,19 +672,31 @@ export class WeatherFx {
     }
   }
 
-  /** Seed the cloud-shadow blobs: scattered across the viewport (staggered
-   *  life phases so they never all fade together) — ekonia AREA_DRIFT. */
+  /** Seed the cloud-shadow blobs. Anchors are WORLD px inside the CURRENT
+   *  camera view (with margin) — never screen px, or the scroll×zoom offset
+   *  pushes every blob off-screen the moment the player moves (the "mây biến
+   *  mất" bug). Births staggered so fade cycles never sync. */
   private seedClouds(slot: WeatherSlot): void {
     const now = performance.now();
     slot.clouds = Array.from({ length: CLOUD_SHADOW.count }, (_, i) => ({
-      wx: rand(-this.w, this.w * 2),
-      wy: rand(-this.h * 0.5, this.h * 1.5),
+      ...this.randomCloudAnchor(),
       vx: CLOUD_SHADOW.windPx * rand(0.8, 1.25),
       vy: CLOUD_SHADOW.fallPx * rand(0.6, 1.4),
       scale: rand(CLOUD_SHADOW.scaleMin, CLOUD_SHADOW.scaleMax),
-      // Stagger births so the fade cycles never sync up (natural rhythm).
       bornAt: now - (i / CLOUD_SHADOW.count) * CLOUD_SHADOW.lifeMs * rand(0.3, 0.95),
     }));
+  }
+
+  /** A random cloud anchor in WORLD px across the camera view + margin. */
+  private randomCloudAnchor(): { wx: number; wy: number } {
+    // Camera view in world px: scroll..scroll + innerWidth/zoom.
+    const vw = this.w / CAM_ZOOM;
+    const vh = this.h / CAM_ZOOM;
+    const margin = vw * 0.5;
+    return {
+      wx: this.camScroll.x - margin + rand(0, vw + margin * 2),
+      wy: this.camScroll.y - margin + rand(0, vh + margin * 2),
+    };
   }
 
   private spawnBolt(slot: WeatherSlot, now: number): Bolt {
@@ -817,17 +833,19 @@ export class WeatherFx {
     const img = this.cloudImg;
     if (!img || slot.clouds.length === 0) return;
     const ctx = this.ctx;
-    // FULL world anchoring (user rule: "player di chuyển thì nó mặt kệ"):
-    // render pos = world anchor − camera scroll × zoom (screen px per world
-    // px at zoom 2.0) — the blob moves 1:1 with the ground, zero parallax.
+    // FULL world anchoring: screen pos = (world − camera scroll) × zoom —
+    // the exact Phaser camera transform, so the blob moves 1:1 with the
+    // ground while the player walks (only its own 9 px/s wind drifts it).
     for (const c of slot.clouds) {
       const age = (now - c.bornAt) / CLOUD_SHADOW.lifeMs;
       const fade = Math.min(1, Math.min(age, 1 - age) / 0.12);
       if (fade <= 0) continue;
-      const x = c.wx - this.camScroll.x * CAM_ZOOM;
-      const y = c.wy - this.camScroll.y * CAM_ZOOM;
+      const x = (c.wx - this.camScroll.x) * CAM_ZOOM;
+      const y = (c.wy - this.camScroll.y) * CAM_ZOOM;
+      // Cull blobs far off-screen (cheap; seeds can land just outside).
       const w = img.width * c.scale;
       const h = img.height * c.scale;
+      if (x < -w || x > this.w + w || y < -h || y > this.h + h) continue;
       // DARK SHADOW SPRITE: the source cloud.png is WHITE — painting it raw
       // reads as a white blob. A pre-tinted offscreen copy (recolors only the
       // sprite's own opaque pixels to the ekonia shadow color, alpha shape
