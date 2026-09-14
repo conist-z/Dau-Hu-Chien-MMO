@@ -126,6 +126,10 @@ class WebSession:
     report_at: float = 0.0
     # Stamp of the last consumed convergence: a report is applied once.
     last_converge: float = 0.0
+    # Highest input seq seen (mirrored from web_api's WebSession — snapshots
+    # read THIS object for last_seq; the two classes were disconnected so the
+    # ack was permanently -1 and the client's seq-replay never armed).
+    input_seq: int = -1
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -545,7 +549,8 @@ class GameManager:
 
     def web_input(self, channel_id: int, user_id: int,
                   dx: float, dy: float, running: bool = False,
-                  report_x: object = None, report_y: object = None) -> bool:
+                  report_x: object = None, report_y: object = None,
+                  input_seq: int = None) -> bool:
         """Store one input vector (called from the WS handler).
 
         Client-authoritative position: when the (web) client reports its
@@ -563,6 +568,12 @@ class GameManager:
         sess.dx = max(-1.0, min(1.0, float(dx)))
         sess.dy = max(-1.0, min(1.0, float(dy)))
         sess.running = bool(running)
+        # SEQ MIRROR: snapshots read last_seq from THIS session object, but
+        # the seq arrived on web_api's session — without this mirror the ack
+        # was permanently -1, the client's seq-replay never armed, and every
+        # position correction degraded to the slow drift-glide.
+        if input_seq is not None and input_seq > getattr(sess, "input_seq", -1):
+            sess.input_seq = int(input_seq)
         try:
             rx = float(report_x) if report_x is not None else None
             ry = float(report_y) if report_y is not None else None

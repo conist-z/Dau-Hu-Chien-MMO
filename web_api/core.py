@@ -580,6 +580,10 @@ class WebHub:
             # for its own body — user's design choice). Absent = old client.
             report_x=frame.get("x"),
             report_y=frame.get("y"),
+            # SEQ MIRROR: snapshots ack from the manager-side session object
+            # (a different class) — pass the seq through or last_seq stays -1
+            # and the client's rewind+replay reconciliation never arms.
+            input_seq=raw_seq if isinstance(raw_seq, int) else None,
         )
 
     async def _handle_inventory_op(self, sess: WebSession, frame: dict) -> None:
