@@ -844,6 +844,26 @@ class GameManager:
                     player.sync_int_from_float()
                     player.float_moved = True
                     self._schedule_save(rt, player)
+                # PORTAL CHECK for WEB movement (user 15/09: web clients could
+                # never teleport through the lobby doors — the old check ran
+                # only in the Discord dispatch path). The web tick moves the
+                # body via converge/integration, so this is the correct hook:
+                # side worlds only, latch prevents instant bounce-back
+                # (move_player_between_runtimes arms it on arrival).
+                if moved_any and self.side_runtimes.get(
+                    (rt.channel_id, rt.map_data.map_id)
+                ) is rt:
+                    from game.travel import check_portal_after_move
+
+                    fired = check_portal_after_move(rt, self.portals, user_id)
+                    if fired is not None:
+                        link, portal_player = fired
+                        await self._teleport_through_link(
+                            rt.channel_id, rt, user_id, link
+                        )
+                        # The player object moved runtime — skip further
+                        # per-tick work against the old rt this iteration.
+                        continue
             # SEPARATE realtime web pack (state.web_zombies, float positions):
             # driven by this same 20 Hz tick with the tick dt — movement
             # integrates smoothly every frame like a player, bites are gated
@@ -855,11 +875,23 @@ class GameManager:
 
                 from rendering.daynight import ingame_seconds as _ingame_s
 
-                tick_dt = 1.0 / max(1.0, WEB_TICK_HZ)
-                zres = _z_web_tick(
-                    rt.state, rt.collision, _is_night(_ingame_s()),
-                    tick_dt, rng=self.zombie_rng,
-                )
+                # TRADE ZONES ARE MOB-FREE (user 15/09: "tắt quái khi ở trong
+                # chợ"): skip the web pack tick entirely there — web_tick
+                # despawns the existing pack on its next pass when night goes
+                # false, so force that state instead of running the spawn.
+                from game.travel import is_trade_zone
+
+                if is_trade_zone(rt):
+                    zres = _z_web_tick(
+                        rt.state, rt.collision, False, 0.0,
+                        rng=self.zombie_rng,
+                    )
+                else:
+                    tick_dt = 1.0 / max(1.0, WEB_TICK_HZ)
+                    zres = _z_web_tick(
+                        rt.state, rt.collision, _is_night(_ingame_s()),
+                        tick_dt, rng=self.zombie_rng,
+                    )
                 if zres.changed:
                     zombie_touched = True
                 # Bite damage persists like any other HP change.
@@ -1815,6 +1847,13 @@ class GameManager:
         rt.collision = Collision(map_data, blocks, resources=resources)
         # Mirror inventories with the main world (same bag everywhere).
         rt.inventories = main_rt.inventories
+        # A side world created BEFORE this session starts with a stale mob
+        # pack (spawned when it was briefly eligible): clear it — trade zones
+        # are mob-free by rule.
+        from game.travel import is_trade_zone
+
+        if is_trade_zone(rt) and rt.state.web_zombies:
+            rt.state.web_zombies.clear()
         return rt
 
     async def web_travel_trade(self, channel_id: int, user_id: int,
@@ -2047,6 +2086,13 @@ class GameManager:
                 darkness = 0.15                                  # 06:00-12:00 day floor
             area_cap = max(1, round(ZOMBIE_AREA_MAX_COUNT * darkness))
             for rt in list(self.runtimes.values()):
+                # TRADE ZONES ARE MOB-FREE (user 15/09): the lobby/interior
+                # worlds are skipped entirely — no spawn upkeep, no wandering,
+                # no bites from the Discord turn pack either.
+                from game.travel import is_trade_zone
+
+                if is_trade_zone(rt):
+                    continue
                 # CRASH-PROOF: a raised exception here used to escape the
                 # while-body and kill the shared zombie task forever — night
                 # mobs then never spawned/moved/bited again until restart.

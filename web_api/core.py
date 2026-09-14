@@ -922,6 +922,34 @@ class WebHub:
             })
             if rt is not None:
                 await self._maybe_teleport_welcome(sess, rt)
+        elif cmd == "npc":
+            # NPC dialogue lookup: the client sends "npc <id>" when the
+            # player presses E next to an NPC (or clicks the token). The
+            # adjacency rule mirrors Discord's npc_adjacent (Manhattan == 1).
+            npc_id = (args[0].lower() if args else "")
+            rt = self.manager.runtime_of(sess.channel_id, sess.user_id) \
+                or self.manager.get_runtime(sess.channel_id)
+            player = rt.state.get_player(sess.user_id) if rt else None
+            npc = None
+            if rt is not None and player is not None:
+                for n in rt.npc_map.npcs:
+                    if n.id.lower() == npc_id and (
+                        abs(n.x - player.x) + abs(n.y - player.y) == 1
+                    ):
+                        npc = n
+                        break
+            if npc is None or npc.dialogue is None:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH,
+                    "message": "Không có NPC nào ở cạnh đó.",
+                })
+                return
+            node = rt.npc_map.dialogues.get(npc.dialogue)
+            text = node.text if node else "…"
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH,
+                "message": f"{npc.emoji} {npc.name}: {text}",
+            })
         elif cmd == "weather":
             rt = self.manager.get_runtime(sess.channel_id)
             key = rt.weather_key if rt is not None else "?"

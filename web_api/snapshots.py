@@ -311,6 +311,9 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # Paperdoll manifest: frame grid + animation rows for the player
         # sheets (assets/players). Static data — read once per welcome.
         "players_manifest": _players_manifest_payload(),
+        # Interactive NPCs of this map (lobbytrade doors/stalls/etc.): the
+        # web client draws them as emoji tokens and chats on E/click.
+        "npcs": _npcs_payload(rt),
         "map": {
             "id": md.map_id,
             "name": md.display_name or md.map_id,
@@ -413,6 +416,21 @@ def _blocks_catalog_payload() -> List[dict]:
             "name": BLOCK_REGISTRY[bid].name,
         }
         for bid in PLACEABLE_BLOCK_IDS
+    ]
+
+
+def _npcs_payload(rt: ScenarioRuntime) -> List[dict]:
+    """Interactive NPCs of this map for the web client (id/name/emoji/pos)."""
+    npc_map = getattr(rt, "npc_map", None)
+    return [
+        {
+            "id": n.id,
+            "name": n.name,
+            "emoji": n.emoji,
+            "x": n.x,
+            "y": n.y,
+        }
+        for n in (npc_map.npcs if npc_map else [])
     ]
 
 

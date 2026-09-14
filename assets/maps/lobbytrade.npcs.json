@@ -1,0 +1,76 @@
+{
+  "npcs": [
+    {
+      "id": "cho_den",
+      "name": "Chợ đen",
+      "emoji": "🏪",
+      "x": 3,
+      "y": 26,
+      "dialogue": "cho_den_intro"
+    },
+    {
+      "id": "bang_thong_bao",
+      "name": "Bảng thông báo",
+      "emoji": "📋",
+      "x": 11,
+      "y": 24,
+      "dialogue": "thong_bao_intro"
+    },
+    {
+      "id": "tuong_thien_than",
+      "name": "Tượng thiên thần",
+      "emoji": "🗿",
+      "x": 15,
+      "y": 25,
+      "dialogue": "thien_than_intro"
+    },
+    {
+      "id": "cua_ngoi_nha_cu",
+      "name": "Cửa ngôi nhà cũ",
+      "emoji": "🚪",
+      "x": 13,
+      "y": 10,
+      "dialogue": "cua_nha_intro"
+    },
+    {
+      "id": "cua_quan_ruou",
+      "name": "Cửa quán rượu",
+      "emoji": "🍺",
+      "x": 57,
+      "y": 43,
+      "dialogue": "cua_ruou_intro"
+    }
+  ],
+  "dialogues": {
+    "cho_den_intro": {
+      "text": "Chợ đen — mọi giao dịch đều ở đây. Nơi này cấm phá/block, cứ yên tâm buôn bán.",
+      "options": [
+        {"label": "Được thôi, thôi xong", "next": null, "effect": {}}
+      ]
+    },
+    "thong_bao_intro": {
+      "text": "📌 BẢNG THÔNG BÁO — Chào mừng đến khu trao đổi! Dùng /khutraodoi out để quay về. Cấm phá block trong chợ. Quái không vào được đây.",
+      "options": [
+        {"label": "Đã đọc", "next": null, "effect": {}}
+      ]
+    },
+    "thien_than_intro": {
+      "text": "Tượng thiên thần lặng lẽ canh chừng khu trao đổi… như thể đang chờ ai đó.",
+      "options": [
+        {"label": "(Cầu nguyện)", "next": null, "effect": {}}
+      ]
+    },
+    "cua_nha_intro": {
+      "text": "Cửa ngôi nhà cũ — khóa rồi, bên trong dường như đã lâu không ai ra vào.",
+      "options": [
+        {"label": "Đi tiếp", "next": null, "effect": {}}
+      ]
+    },
+    "cua_ruou_intro": {
+      "text": "Quán rượu — mùi bia nồng nặc thoang thoảng qua khe cửa.",
+      "options": [
+        {"label": "Đi tiếp", "next": null, "effect": {}}
+      ]
+    }
+  }
+}
