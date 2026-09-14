@@ -643,6 +643,12 @@ const input = new KeyboardInput({
   // E near a station: open the craft panel (bubble punch effect plays in
   // the scene). Returns true when handled; false falls back to inventory.
   onStationKey: () => {
+    // NPC FIRST: standing next to an NPC (chợ đen, bảng thông báo, cửa…)
+    // E chats with it instead of opening the inventory/craft panel.
+    if (scene.nearNpc()) {
+      scene.requestNpcDialogue();
+      return true;
+    }
     if (!scene.nearStation()) return false;
     scene.stationInteract();
     return true;
@@ -750,6 +756,11 @@ const input = new KeyboardInput({
 // receives events (clicks dead, browser context menu leaked through).
 game.events.once("ready", () => {
   input.bindCanvas(game.canvas);
+  // NPC dialogue: ask the SERVER for the NPC's dialogue text (it owns the
+  // npcs.json data) — the reply rides the "push" toast lane.
+  scene.onNpcInteract = (npc) => {
+    net.chatCommand(`npc ${npc.id}`);
+  };
   // Station interact pipeline. TOGGLE: if the station window is already
   // open, E closes it (bubble fades back); otherwise open + suppress the
   // bubble. The explosion only plays on the OPEN press.

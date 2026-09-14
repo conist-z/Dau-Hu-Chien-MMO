@@ -875,15 +875,21 @@ html, body {
   white-space: nowrap;
 }
 .pp-close-btn {
+  /* Cover the X painted INTO the inv_frame sprite exactly: glyph bbox
+     kit-px (87..93, 3..9), center (90, 6) -> screen (270, 18) @3x. Same
+     pattern as the inventory .panel-close (close_small 5x5 -> 15px glyph,
+     21px hit box centered on the painted X). */
   position: absolute;
-  top: 12px; right: 12px;
-  width: 27px; height: 27px; /* close_big 9x9 x 3 */
-  background: url("/ui/v5/atoms/close_big.png") no-repeat center / contain;
+  top: calc(18px - 10.5px);  /* center 18 minus half hit box */
+  left: calc(270px - 10.5px);
+  width: 21px; height: 21px;
+  background: url("/ui/v5/atoms/close_small.png") no-repeat center;
+  background-size: 15px 15px; /* 5x5 glyph x 3 */
   image-rendering: pixelated;
   border: none; cursor: pointer;
   padding: 0;
 }
-.pp-close-btn:hover { filter: brightness(1.5); }
+.pp-close-btn:hover { filter: brightness(1.6); }
 .pp-body {
   position: absolute;
   top: 40px; left: 16px; right: 16px;
@@ -929,10 +935,10 @@ html, body {
 }
 .pp-btn {
   flex: 1;
-  height: 39px; /* kit button 43x13 x 3 — matches create_btn sprite */
+  height: 45px; /* kit Button preset_003 State1: 42x15 x 3 */
   background: url("/ui/v5/atoms/btn_normal.png") no-repeat center / 100% 100%;
   image-rendering: pixelated;
-  color: #110b00; /* the kit's baked text color */
+  color: #110b00; /* the kit's baked text ink */
   border: none;
   font-family: "PixelTahoma", Tahoma, monospace;
   font-weight: 700; font-size: 13px;

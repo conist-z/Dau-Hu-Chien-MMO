@@ -69,6 +69,9 @@ export interface WelcomePayload {
   // Item id currently held by self (hotbar slot -> item). Null = empty hand
   // (the hand dot still renders — plan A — just without a tool icon).
   held: string | null;
+  // Interactive NPCs of this map (emoji tokens; E/click chats). Absent on
+  // older servers — client renders nothing extra then.
+  npcs?: { id: string; name: string; emoji: string; x: number; y: number }[];
   // Paperdoll manifest (frame grid + animation rows/speeds) for the player
   // sheets in assets/players/. Absent on older servers — client falls back
   // to the plan-A square body in that case.

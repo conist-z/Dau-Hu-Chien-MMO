@@ -134,6 +134,24 @@ export class WorldScene extends Phaser.Scene {
   /** Tile keys of STATION blocks from the latest snapshot (crafting table,
    *  furnace...). Rebuilt with the block sig — same cost class. */
   private stationTiles = new Set<string>();
+  // ----- NPC tokens (welcome.npcs): emoji sprite + name label per NPC -----
+  private npcSprites = new Map<
+    string, { container: Phaser.GameObjects.Container; x: number; y: number }
+  >();
+  /** Set by main.ts: opens the NPC dialogue toast (E / click near an NPC). */
+  onNpcInteract: ((npc: { id: string; name: string }) => void) | null = null;
+  /** Nearest NPC within interact range (E-key gate). */
+  private nearestNpc: { id: string; name: string } | null = null;
+
+  /** True when an NPC is within interact range of self (E-key gate). */
+  nearNpc(): boolean {
+    return this.nearestNpc !== null;
+  }
+
+  /** E-key path: fire the dialogue handler for the adjacent NPC. */
+  requestNpcDialogue(): void {
+    if (this.nearestNpc) this.onNpcInteract?.(this.nearestNpc);
+  }
   /** The "E" prompt bubble above the nearest in-range station. */
   private stationPrompt: Phaser.GameObjects.Container | null = null;
   /** Nearest station tile within interact range (recomputed per frame). */
@@ -531,6 +549,10 @@ export class WorldScene extends Phaser.Scene {
 
     // Hover square only — the hand dot is the facing indicator now.
     this.ensureHoverSquare();
+    // Interactive NPCs of this map: emoji token + name label. Also served
+    // as the E-interact targets on the web (mirrors the Discord "NPC ở
+    // gần" dialogue flow).
+    this.spawnNpcs(welcome.npcs ?? []);
     // Second, independent cursor source: Phaser's own canvas listeners.
     // If the DOM mousemove chain ever misses (listener on the wrong canvas,
     // event swallowed), Phaser still reports every move/click here — and
@@ -671,14 +693,36 @@ export class WorldScene extends Phaser.Scene {
     canvas.height = map.height * th;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Tiles that belong to a LIVE resource node must be excluded (the node
+    // is drawn as a choppable sprite, and a baked copy would stay visible
+    // after felling). But the lobbytrade tree layer uses Pipoya gids that are
+    // NOT registered nodes — those tiles were previously dropped ENTIRELY,
+    // leaving 1000+ collision-blocking trees with NO art (the "block vô
+    // hình" wall). Bake them instead: only baked tiles whose coordinates are
+    // part of an actual node (from the server's res_progress bboxes) are
+    // skipped.
+    const isNodeTile = (x: number, y: number): boolean => {
+      for (const bbox of this.lastProgressBbox.values()) {
+        for (const [bx, by] of bbox) {
+          if (bx === x && by === y) return true;
+        }
+      }
+      return false;
+    };
     for (const layer of map.layers) {
-      if (RESOURCE_LAYERS.has(foldName(layer.name || ""))) continue;
+      // Resource layers ARE baked too — except tiles that belong to a live
+      // choppable node (those render as node sprites; a baked copy stayed
+      // visible after felling). Tiles without a node (lobbytrade's Pipoya
+      // trees have no registered node) MUST bake, or they become invisible
+      // walls (the "block vô hình" bug).
+      const isResourceLayer = RESOURCE_LAYERS.has(foldName(layer.name || ""));
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
         if (!row) continue;
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
+          if (isResourceLayer && isNodeTile(x, y)) continue;
           // GID -> tileset: the entry with the LARGEST firstgid <= gid.
           // The old range test (gid < firstgid + columns*1000) was a bogus
           // heuristic that broke twice on lobbytrade: the FIRST tileset
@@ -1218,6 +1262,8 @@ export class WorldScene extends Phaser.Scene {
     }
     this.updateHoverSquare();
     this.updateStationPrompt();
+    // NPC proximity is recomputed per frame (cheap — a handful of tokens).
+    this.nearestNpc = this.findNearestNpc();
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
@@ -1629,6 +1675,48 @@ export class WorldScene extends Phaser.Scene {
       .setDepth(100)
       .setActive(true)
       .setAlpha(1);
+  }
+
+  // ===== NPC tokens: emoji sprite + label + E/click dialogue =====
+
+  private spawnNpcs(
+    npcs: { id: string; name: string; emoji: string; x: number; y: number }[],
+  ): void {
+    for (const s of this.npcSprites.values()) s.container.destroy();
+    this.npcSprites.clear();
+    for (const n of npcs) {
+      const container = this.add.container(n.x * 32 + 16, n.y * 32 + 16);
+      const label = this.add
+        .text(0, -30, n.name, {
+          fontFamily: "Verdana, sans-serif", fontSize: "10px",
+          color: "#ffe9a8", stroke: "#1a1208", strokeThickness: 3,
+        })
+        .setOrigin(0.5);
+      const emoji = this.add
+        .text(0, 0, n.emoji, { fontSize: "26px" })
+        .setOrigin(0.5);
+      container.add([emoji, label]);
+      container.setDepth(20);
+      container.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, 40, 48), Phaser.Geom.Rectangle.Contains,
+      );
+      container.on("pointerdown", () => this.onNpcInteract?.(n));
+      this.npcSprites.set(n.id, { container, x: n.x, y: n.y });
+    }
+  }
+
+  /** Nearest NPC within Chebyshev range 1 (adjacent, like the Discord
+   *  npc_adjacent rule: |dx| + |dy| == 1). */
+  private findNearestNpc(): { id: string; name: string; x: number; y: number } | null {
+    let best: { id: string; name: string; x: number; y: number } | null = null;
+    for (const [id, n] of this.npcSprites) {
+      const d = Math.abs(n.x - this.selfX) + Math.abs(n.y - this.selfY);
+      if (d === 1) {
+        best = { id, name: id, x: n.x, y: n.y };
+        break;
+      }
+    }
+    return best;
   }
 
   // ===== Station interact: E prompt + hover cursor + click-to-open =====
