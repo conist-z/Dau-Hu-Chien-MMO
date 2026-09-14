@@ -331,7 +331,6 @@ export class WorldScene extends Phaser.Scene {
   private resourceSig = "";
   // Tile count at the last base-map bake: the rebake trigger (chop/regrow
   // changes the count; an unchanged carried payload must not re-bake).
-  private lastBakedResourceCount = -1;
   // --- night zombies (Kaetram-style mob, SEPARATE realtime web pack) ---
   // One entry per live zombie id: interpolated 20 Hz -> 60 fps like players.
   // The sprite is ONE frame cut from the local sheet copy (Kaetram zombie
@@ -641,7 +640,6 @@ export class WorldScene extends Phaser.Scene {
     // Resource layer was skipped at build time (no textures yet) — rebuild
     // it now and clear the sig cache so snapshots can refresh it again.
     this.resourceSig = "";
-    this.lastBakedResourceCount = (this.welcome.resources ?? []).length;
     this.updateResourceLayer(this.welcome.resources);
   }
 
@@ -706,15 +704,17 @@ export class WorldScene extends Phaser.Scene {
     // reappeared). Tiles on resource layers WITHOUT a server node (lobbytrade's
     // Pipoya trees — no registered node, not in the payload) still bake, so
     // they never become the "block vô hình" invisible wall again.
+    // Tiles belonging to LIVE server nodes are drawn as sprites in
+    // updateResourceLayer — they must NEVER enter the bake, or the baked
+    // copy stays visible after felling ("đập rồi vẫn còn") and each felling
+    // needs an expensive canvas-clear/rebake (the chop lag).
     const resourceTileSet = new Set(
       (welcome.resources ?? []).map(([x, y]) => `${x},${y}`),
     );
     for (const layer of map.layers) {
-      // Resource layers ARE baked too — but ONLY tiles the server reports as
-      // visible resource nodes (those render as choppable sprites; a baked
-      // copy stayed visible after felling). Tiles without a server node
-      // (lobbytrade's Pipoya trees have no registered node) MUST bake, or
-      // they become invisible walls (the "block vô hình" bug).
+      // Resource layers bake only tiles WITHOUT a live server node (those
+      // render as choppable sprites instead). Node-less tiles (lobbytrade's
+      // Pipoya decor trees) MUST bake, or they become invisible walls.
       const isResourceLayer = RESOURCE_LAYERS.has(foldName(layer.name || ""));
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
@@ -722,7 +722,7 @@ export class WorldScene extends Phaser.Scene {
         for (let x = 0; x < map.width; x++) {
           const gid = row[x];
           if (!gid) continue;
-          if (isResourceLayer && !resourceTileSet.has(`${x},${y}`)) continue;
+          if (isResourceLayer && resourceTileSet.has(`${x},${y}`)) continue;
           // GID -> tileset: the entry with the LARGEST firstgid <= gid.
           // The old range test (gid < firstgid + columns*1000) was a bogus
           // heuristic that broke twice on lobbytrade: the FIRST tileset
@@ -749,81 +749,17 @@ export class WorldScene extends Phaser.Scene {
         }
       }
     }
+    // Node membership changed: force the sprite layer to rebuild on the
+    // next snapshot (its sig-guard would otherwise skip the refresh).
+    this.resourceSig = "";
+    this.updateResourceLayer(welcome.resources ?? []);
     const key = "map-bake";
-    if (this.textures.exists(key)) this.textures.remove(key);
-    this.textures.addCanvas(key, canvas);
-    // Sync the rebake trigger with what was just baked.
-    this.lastBakedResourceCount = (welcome.resources ?? []).length;
     if (this.mapBake) {
       this.mapBake.setTexture(key);
     } else {
       this.mapBake = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-10);
     }
   }
-
-  /** Erase just the felled node's tiles from the base bake (O(bbox)).
-   *  A full rebake costs thousands of drawImage calls — a visible stall
-   *  on every felling — while the only thing that changed is a handful of
-   *  32px tiles. res_felled carries [x, y, anchor_x, anchor_y]; the tile
-   *  rect is all we need to clear (the ground under it was never baked —
-   *  resource LAYERS were skipped wholesale at bake time... except tiles
-   *  listed in welcome.resources. Both cases: clearing the rect reveals
-   *  the ground baked from the NON-resource layers beneath... which the
-   *  bake flattened into one canvas. So re-draw the ground for that rect
-   *  from the non-resource layers, then it looks identical to pre-chop.) */
-  private clearFelledTilesFromBake(
-    felled: [number, number, number, number][],
-  ): void {
-    const welcome = this.welcome;
-    if (!welcome || !this.mapBake) return;
-    const map = welcome.map;
-    const tw = map.tile_width;
-    const th = map.tile_height;
-    const tex = this.textures.get("map-bake");
-    if (!tex || !tex.getSourceImage()) return;
-    const canvas = tex.getSourceImage() as HTMLCanvasElement;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    // Non-resource layer names (folded) — mirrors bakeMapIfReady's set.
-    const RESOURCE_LAYERS = new Set([
-      "cay", "tree", "trees", "resources",
-      "vat pham ko lien quan", "ore", "ores", "mine",
-      "tang da nho", "tang da lon",
-      "nam nau", "nam tim", "co", "hoa trang", "hoa xanh", "hoa tim", "hoa vang",
-    ]);
-    const foldName = (s: string): string =>
-      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
-    const groundLayers = map.layers.filter(
-      (l) => !RESOURCE_LAYERS.has(foldName(l.name || "")),
-    );
-    for (const [x, y] of felled) {
-      // Wipe the tile rect, then redraw the GROUND tiles (non-resource
-      // layers) for that cell — flattened bake means the ground pixels for
-      // this cell live only here.
-      ctx.clearRect(x * tw, y * th, tw, th);
-      for (const layer of groundLayers) {
-        const row = layer.data[y];
-        if (!row) continue;
-        const gid = row[x];
-        if (!gid) continue;
-        const ts = this.tilesetForGid(map, gid);
-        if (!ts || ts.image == null) continue;
-        const texKey = this.tileTextures.get(ts.image);
-        if (!texKey || !this.textures.exists(texKey)) continue;
-        const src = this.textures.get(texKey).getSourceImage() as HTMLImageElement;
-        if (!src || !src.width) continue;
-        const local = gid - ts.firstgid;
-        const col = local % ts.columns;
-        const rowIdx = Math.floor(local / ts.columns);
-        ctx.drawImage(
-          src, col * (ts.tilewidth ?? tw), rowIdx * th, ts.tilewidth ?? tw, th,
-          x * tw, y * th, tw, th,
-        );
-      }
-    }
-  }
-
   private buildBlocks(blocks: [number, number, string][]): void {
     if (!this.blockLayer) this.blockLayer = this.add.layer();
     const seen = new Set<string>();
@@ -3115,19 +3051,9 @@ export class WorldScene extends Phaser.Scene {
       if (this.welcome) this.welcome.resources = snap.resources;
       this.updateResourceLayer(snap.resources);
       this.felledTiles = new Set((snap.res_felled ?? []).map(([x, y]) => `${x},${y}`));
-      // Felled node's tiles must also leave the BASE BAKE (else the baked
-      // copy keeps the tree glued to the ground). Re-baking the whole map is
-      // thousands of drawImage calls (a 300ms+ stall on every felling), so
-      // instead CLEAR just the felled tiles' rectangles from the bake canvas
-      // — O(bbox) instead of O(map). Regrow takes the slow path (a tile
-      // APPEARED -> count grew -> one full rebake, rare and acceptable).
-      const rc = snap.resources.length;
-      if (rc < this.lastBakedResourceCount) {
-        this.clearFelledTilesFromBake(snap.res_felled ?? []);
-      } else if (rc > this.lastBakedResourceCount) {
-        this.bakeMapIfReady();
-      }
-      this.lastBakedResourceCount = rc;
+      // Node tiles are NEVER baked into "map-bake" (only sprites), so a
+      // felled node needs no canvas surgery — the sprite layer above handles
+      // vanish/regrow. No rebake, no stall on felling.
     }
     this.syncProgressBars(snap.res_progress, {
       x: Math.floor(snap.self.x),
