@@ -1,4 +1,4 @@
 {
   "client_id": "965153822861307914",
-  "redirect_uri": "https://discord.com/oauth2/authorize?client_id=965153822861307914&response_type=code&redirect_uri=%2Fauth&scope=identify"
+  "redirect_uri": "https://web-production-19398.up.railway.app/"
 }
