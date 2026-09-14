@@ -200,15 +200,8 @@ export class Hud {
   /** Set by main.ts: deposit a currency stack into the purse. */
   onPurseDeposit: ((itemId: string, qty: number, fromIndex: number) => void) | null = null;
 
-  /** Currency ids with UNACKED optimistic purse deltas (+n / -n). While a
-   *  currency has a pending delta, the setInventory delta-merge leaves that
-   *  id alone — guessing where to apply the server's diff mid-flight is what
-   *  created phantom stacks ("ghost coin") and shuffled coins between
-   *  stacks (the flicker-reorder). Cleared when a snapshot reconciles that
-   *  id's total with the screen's, or after 2s TTL. */
-  private pursePending: Record<string, number> = {};
-  private pursePendingAt = 0;
-  /** Last purse op (revert + reconcile routing when the server refuses). */
+  /** Last purse op — its transient pre-ack server diff (echo) is held out
+   *  of the delta-merge for 2s; real pickups during the window still apply. */
   private lastPurseOp: {
     kind: "deposit" | "withdraw";
     itemId: string;
@@ -216,6 +209,12 @@ export class Hud {
     qty: number;
     at: number;
   } | null = null;
+  /** Transient pre-ack server diff of the last purse op (+qty deposit /
+   *  −1 withdraw), held out of the delta-merge for 2s. Real pickups of the
+   *  same currency during the window still apply (precise — no freeze). */
+  private purseEcho: { itemId: string; delta: number } | null = null;
+  private purseEchoAt = 0;
+  private purseEchoItemId: string | null = null;
   /** Purse balances (server truth, 20 Hz): coins + crystals. */
   private purseCoins = 0;
   private purseCrystals = 0;
@@ -724,7 +723,6 @@ export class Hud {
     else this.purseCrystals += qty;
     this.trackPursePending(itemId, -qty);
     this.lastPurseOp = { kind: "deposit", itemId, slot: fromIndex, qty, at: Date.now() };
-    this.invVersion = -1; // next server delta reconciles totals
     this.renderHotbar();
     this.renderInventory();
     this.toast(`Đã nạp ${qty} ${itemId === "coin" ? "xu" : "tinh thể"} vào ví`);
@@ -733,8 +731,10 @@ export class Hud {
 
   /** Record an optimistic purse delta for an item id. */
   private trackPursePending(itemId: string, delta: number): void {
-    this.pursePending[itemId] = (this.pursePending[itemId] ?? 0) + delta;
-    this.pursePendingAt = Date.now();
+    const prev = this.purseEcho?.itemId === itemId ? this.purseEcho.delta : 0;
+    this.purseEcho = { itemId, delta: prev + delta };
+    this.purseEchoAt = Date.now();
+    this.purseEchoItemId = itemId;
   }
 
   /** Revert the local optimistic preview of a REFUSED purse op — otherwise
@@ -1842,7 +1842,6 @@ export class Hud {
       else this.purseCrystals = Math.max(0, this.purseCrystals - 1);
       this.trackPursePending(itemId, +1);
       this.lastPurseOp = { kind: "withdraw", itemId, slot, qty: 1, at: Date.now() };
-      this.invVersion = -1; // next server delta reconciles totals
       this.renderHotbar();
       this.renderInventory();
       this.onPurseWithdraw(itemId, slot);
@@ -1905,36 +1904,30 @@ export class Hud {
       if (s) server[s.id] = (server[s.id] ?? 0) + s.qty;
     }
     // 3) Per-item delta. Everything unchanged keeps its slot untouched.
-    // PURSE-GUARD: while a currency id has an UNACKED optimistic purse
-    // delta, skip guessing where its server diff lands — mid-flight merges
-    // are what minted phantom stacks (ghost coins) and shuffled coin
-    // stacks around (the flicker-reorder). The next snapshot after the
-    // op lands (or the 2s TTL) releases the guard.
-    if (this.pursePendingAt && Date.now() - this.pursePendingAt > 2000) {
-      this.pursePending = {};
-      this.pursePendingAt = 0;
-    }
-    // Release the guard for ids whose server total now matches the screen
-    // (the op landed and the optimistic preview was already correct).
-    for (const pid of Object.keys(this.pursePending)) {
-      const shownTotal = (shown[pid] ?? 0) + (placed.reduce(
-        (acc, p) => acc + (p.id === pid ? p.qty : 0), 0));
-      if ((server[pid] ?? 0) === shownTotal) delete this.pursePending[pid];
+    // PURSE-ECHO HOLD: while the last purse op is unacked (2s), its own
+    // transient server diff (+qty for a deposit / −1 for a withdraw) is
+    // HELD OUT of the merge — applying it mid-flight is what minted phantom
+    // coins and shuffled coin stacks (the flicker-reorder). The optimistic
+    // preview already shows the final state; real pickups of the same
+    // currency during the window still apply (precise, no blanket freeze).
+    const echoStale = !this.purseEchoAt || Date.now() - this.purseEchoAt > 2000;
+    const echoId = echoStale ? null : this.purseEchoItemId;
+    const echoDelta = echoStale ? 0 : (this.purseEcho?.delta ?? 0);
+    if (echoStale) {
+      this.purseEcho = null;
+      this.purseEchoAt = 0;
+      this.purseEchoItemId = null;
     }
     const bag = this.inventory.bag.map((s) => (s ? { ...s } : null));
     const changed: string[] = [];
     const allIds = new Set([...Object.keys(shown), ...Object.keys(server)]);
     for (const id of allIds) {
-      const d = (server[id] ?? 0) - (shown[id] ?? 0);
+      // Purse echo: subtract the op's own not-yet-landed diff from the
+      // server's before comparing — only the RESIDUE (real events like a
+      // pickup) is merged, at its correct slot.
+      const adj = id === echoId ? echoDelta : 0;
+      const d = (server[id] ?? 0) - adj - (shown[id] ?? 0);
       if (d === 0) continue;
-      if (this.pursePending[id]) {
-        // Unacked purse delta: wait for the server to catch up rather than
-        // mis-applying. Drop the pending marker once the totals agree.
-        if (d !== 0) {
-          // Still divergent: keep waiting (bounded by the TTL above).
-          continue;
-        }
-      }
       changed.push(id);
       if (d > 0) {
         // Gained (pickup / collect / craft output): top up an existing stack
@@ -1977,7 +1970,9 @@ export class Hud {
     const ids = new Set([...Object.keys(gotTotals), ...Object.keys(server)]);
     let totalsMatch = true;
     for (const id of ids) {
-      if ((gotTotals[id] ?? 0) !== (server[id] ?? 0)) { totalsMatch = false; break; }
+      // Held purse echo counts as reconciled (the op is in flight).
+      const srv = (server[id] ?? 0) - (id === echoId ? echoDelta : 0);
+      if ((gotTotals[id] ?? 0) !== srv) { totalsMatch = false; break; }
     }
     if (totalsMatch) {
       this.inventory = { bag, hotbar: inv.hotbar };
