@@ -501,7 +501,12 @@ export class WorldScene extends Phaser.Scene {
         this.mapBake = null;
       }
       if (this.textures.exists("map-bake")) this.textures.remove("map-bake");
-      this.resourceSig = ""; // dynamic resource layer belongs to the old map
+      // Drop the old map's resource sprites NOW (they render above the baked
+      // ground). The sig above is keyed by map id as well, so the rebuild
+      // cannot be skipped later either.
+      this.resourceSig = "";
+      if (this.resourceLayer) this.resourceLayer.removeAll(true);
+      this.resourceTiles.clear();
     }
     this.assetFetch = fetchAsset;
     this.welcome = welcome;
@@ -2407,7 +2412,16 @@ export class WorldScene extends Phaser.Scene {
    * whose bbox contained it in the previous snapshot.
    */
   updateResourceLayer(tiles: [number, number, number][]): void {
-    const sig = tiles.map((t) => t.join(",")).join(";");
+    // MAP ID IS PART OF THE SIGNATURE (user 16/09): the layer lives ABOVE the
+    // baked ground (depth -5 vs -10), and buildWorld bumps resourceSig to ""
+    // on a map switch. A destination map with ZERO resources (the trade
+    // interior) therefore computed sig "" == resourceSig "" and the guard
+    // skipped the rebuild — leaving the PREVIOUS map's grass/flowers sprites
+    // painted over the interior while the real interior collision blocked the
+    // player ("thấy cỏ hoa nhưng không đi xuyên được"). Keying by map forces
+    // the clear on every switch, including into an empty map.
+    const sig = `${this.welcome?.map.id ?? ""}|`
+      + tiles.map((t) => t.join(",")).join(";");
     if (sig === this.resourceSig) return;
     this.resourceSig = sig;
 
