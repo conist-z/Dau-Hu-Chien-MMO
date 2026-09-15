@@ -1706,7 +1706,9 @@ export class WorldScene extends Phaser.Scene {
           }
         }
       }
-      if (bestPen === Infinity || bestPen > r) return;
+      // Max legitimate penetration: half box + one sub-cell (~0.43) —
+      // beyond that the box tunneled; never yank (server parity).
+      if (bestPen === Infinity || bestPen > r + 1 / WorldScene.MASK_RES + 1e-6) return;
       const nx = this.selfX + bestShiftX;
       const ny = this.selfY + bestShiftY;
       // The correction must never push the box INTO a square-solid tile

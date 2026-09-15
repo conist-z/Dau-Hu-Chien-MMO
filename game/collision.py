@@ -150,11 +150,34 @@ class Collision:
         clamp — which stays byte-identical to the client prediction — a
         small correction pushes the box out of the sprite's OPAQUE pixels
         when the map provides alpha masks. Without masks this is a no-op and
-        the behaviour is exactly the old square-block movement."""
-        nx = x_f + self._free_x(x_f, y_f, dx)
-        ny = y_f + self._free_y(nx, y_f, dy)
-        if self.map_data.tile_masks is not None:
-            nx, ny = self.map_data.tile_masks.correct(
-                nx, ny, FLOAT_BOX_HALF, self
-            )
+        the behaviour is exactly the old square-block movement.
+
+        The move is INTEGRATED IN SUB-STEPS (<=0.2 tile each): a single
+        lag-catch-up step can be ~2 tiles, and a one-shot correction after
+        it would either tunnel through a wall sprite (penetration beyond
+        the mask depth) or yank the player backwards. Sub-stepping keeps
+        every correction small and local — same order of magnitude as the
+        client's per-frame prediction step."""
+        dist = math.hypot(dx, dy)
+        if dist <= 1e-9:
+            return x_f, y_f
+        steps = max(1, math.ceil(dist / 0.2))
+        # Sub-step toward ABSOLUTE partial targets (x_f + dx*(i+1)/steps)
+        # instead of accumulating sx additions: repeated addition drifts by
+        # an ulp and the wall-slide clamps (which compare against tile
+        # boundaries computed from the target) would land off by 1e-15 —
+        # the client mirrors these clamps exactly, so every step must be
+        # computed from the same exact arithmetic as a single-step move.
+        nx, ny = x_f, y_f
+        for i in range(steps):
+            tx = x_f + dx * (i + 1) / steps
+            ty = y_f + dy * (i + 1) / steps
+            ax = self._free_x(nx, ny, tx - nx)
+            ay = self._free_y(nx + ax, ny, ty - ny)
+            nx += ax
+            ny += ay
+            if self.map_data.tile_masks is not None:
+                nx, ny = self.map_data.tile_masks.correct(
+                    nx, ny, FLOAT_BOX_HALF, self
+                )
         return nx, ny

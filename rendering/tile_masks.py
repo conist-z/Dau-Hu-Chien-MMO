@@ -346,7 +346,11 @@ class MapTileMasks:
             if best is None:
                 return x_f, y_f
             pen, dx, dy = best
-            if pen > r:  # absurd penetration — bail out to square behaviour
+            # Max legitimate penetration: box half (0.3) + one sub-cell
+            # (0.125) ≈ 0.43. Anything beyond means the box tunneled (a step
+            # jumped the whole mask) — sub-stepping in can_move_float keeps
+            # real cases under this, but never yank on a tunnel either.
+            if pen > r + 1.0 / MASK_RES + 1e-6:
                 return x_f, y_f
             nx = x_f + dx
             ny = y_f + dy
