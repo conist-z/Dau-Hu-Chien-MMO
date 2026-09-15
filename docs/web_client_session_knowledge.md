@@ -355,3 +355,56 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - Shake animation + particle khi chặt (Kaetram có `resource.shake()`).
 - Avatar player thật (cần OAuth) — đang là ô vuông màu (xanh=self, cam=Discord
   player, xanh lá=web player khác).
+
+
+## 7. E2E PROBE: log vào server PRODUCTION như client thật (session 16/09)
+
+Kỹ thuật quyết định khi debug mọi thứ liên quan movement/portal/chat — không
+cần trình duyệt, không cần đoán: kết nối thẳng websocket vào relay Railway.
+
+### 7.1 Frame shapes (đọc từ web_client/src/net.ts + web_api/core.py)
+- Login: `{"type":"guest_login","guest_id":"<19-digit ≥ 900e15>"}` → chờ
+  `login_result` (lấy `token`).
+- List scenario: `{"type":"list"}` → frame `scenario_list`/có "list" trong type;
+  lấy `channel_id`.
+- Join: `{"type":"join","token":token,"channel_id":str(ch)}` → chờ `welcome`.
+- **Chat/lệnh**: `{"type":"chat_cmd","text":"/khutraodoi in"}` — là
+  **envelope TỐT cao**, KHÔNG PHẢI `{"type":"action","frame":{...}}` (gửi sai
+  → server trả `error: bad_action`).
+- Input/movement: `{"type":"input","seq":n,"dx","dy","running","x","y"}`
+  (x,y = vị trí predict; gửi mỗi ~50ms; dx=dy=0 + x/y vẫn là idle heartbeat).
+- Teleport vào chợ đổi map → chờ frame `welcome` MỚI (map khác).
+
+### 7.2 Mô hình server-side cần nắm trước khi debug portal
+- Portal check chạy trong `_web_tick_runtime` ở **2 nhánh**: nhánh MOVING
+  (dx/dy ≠ 0) và nhánh IDLE (dx=dy=0, converge theo report). **Nhánh IDLE từng
+  bị `continue` nhảy qua portal check** — push vào cửa = idle → không bao giờ
+  tele. Đã fix (manager.py, user 16/09): idle path có portal check riêng.
+- `check_portal_after_move` phát hiện bằng **hộp va chạm mở rộng 0.15 ô**
+  (GATE_MARGIN) chạm tile cửa — không phải tâm đứng giữa tile.
+- Latch chống bounce: sau khi tele, player bị latch cho tới khi bước khỏi
+  mọi tile cửa của map đó.
+- `_converge_to_report` CHỈ chạy khi report còn tươi
+  (`0 < now - report_at < 1.0`); report bị consume (`report_at=0`) sau 1 lần
+  áp — harness probe phải gửi report mới mỗi tick.
+
+### 7.3 Pitfall đã mất 2h
+- Probe gửi input sai shape (dx/dy≠0 cùng lúc với report) → LEGACY time
+  integration + converge CHẠY ĐỒNG THỜI, body bay lung tung (thấy (25.5,21.3)
+  dù report (38.5,25.4)) → kết luận probe vô nghĩa. Luôn dùng dx=0,dy=0.
+- File trên đĩa remote đúng ≠ process đang chạy code mới: **bắt buộc Restart
+  panel sau deploy**, và probe lại production để verify ("old code in RAM").
+- `game/travel.py` deployed 01:47; `manager.py` (idle portal fix) 02:17 —
+  Restart phải SAU mốc deploy mới nhất.
+
+### 7.4 Checklist debug portal (theo thứ tự)
+1. Probe production: đẩy vào cửa bằng idle-heartbeat reports → có `welcome`
+   map mới không? Capture **đích thực** (map id + toạ độ), đừng chỉ tìm
+   "montertradebase".
+2. Remote md5 các file: travel.py, manager.py, portals.json == local?
+3. Restart sau deploy chưa? (mtime remote file vs thời điểm Restart).
+4. Local full-manager harness: tạo runtime lobby qua
+   `get_or_create_side_runtime`, đẩy report tới tile cửa, xem player đổi
+   runtime không.
+5. Nếu local fire mà production không → RAM cũ (Restart). Nếu cả hai không
+   fire → đọc lại 7.2 (idle path, latch, GATE_MARGIN, report freshness).
