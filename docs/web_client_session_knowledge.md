@@ -430,9 +430,40 @@ cần trình duyệt, không cần đoán: kết nối thẳng websocket vào re
 - `GameManager.web_map_change_hook: Optional[Callable[[rt, user_id], Awaitable]]`
   (default None — game layer không import web).
 - `WebHub.__init__` tự cắm: `manager.web_map_change_hook = self.send_map_welcome`
-  → `send_map_welcome` fetch session từ `dst_rt.web_sessions` (đã được
-  `move_player_between_runtimes` migrate) và push `build_welcome(dst_rt, uid)`.
+  → `send_map_welcome` push `build_welcome(dst_rt, uid)` (session đã được
+  `move_player_between_runtimes` migrate sang `dst_rt.web_sessions`).
 - Client `onWelcome → buildWorld` đã rebuild sẵn (reset pred/selfX/selfY +
-  collision) — không cần sửa web_client.
+  collision) — không cần sửa web_client cho phần map.
 - Lock: tests/test_web_portal_map_switch.py (hook register, welcome map đích
   có collision, Discord-only player không crash hook).
+
+### ⚠️ BẪY 8.1 — HAI object session (fix đầu tiên KHÔNG ăn)
+Mỗi client web có **2 object WebSession khác nhau**:
+1. `conn.session` = session của `SessionRegistry` (web_api tạo lúc
+   login/join; giữ token/display_name).
+2. `rt.web_sessions[user_id]` = session do `GameManager.register_web_session`
+   tạo (giữ dx/dy/report_x/report_y/report_at/input_seq — cái tick dùng).
+
+`send_to_client_conn(sess, frame)` so khớp bằng **identity** (`conn.session is
+sess`) → luồn manager-session vào là KHÔNG khớp object nào ⇒ welcome bị bỏ
+IM LẶNG (không exception, không log). Triệu chứng: mọi thứ "đúng" mà client
+vẫn kẹt map cũ. **Đúng luôn:** lọc theo `sess.user_id == uid and
+sess.channel_id == rt.channel_id` (kèm guard `uid in rt.web_sessions` để
+player Discord-only không bị gửi).
+
+### ⚠️ BẪY 8.2 — client reset inputSeq=0 ở MỖI welcome
+`net.ts` cũ: `case "welcome" → this.inputSeq = 0` (đúng cho join mới, SAI cho
+welcome giữa phiên). Session server vẫn đếm tiếp (vd 2020) ⇒ snapshot echo
+`ack=2020` trong khi client gửi seq 1,2,3 → mọi input mới bị coi là "đã ack"
+⇒ replay/reconcile TẮT (`pendingInputs=0` dù đang đi) ⇒ lệch dai dẳng sau mỗi
+lần đổi map. **Fix:** welcome mang `input_seq` (server: `build_welcome` đọc
+`rt.web_sessions[uid].input_seq`) → client `this.inputSeq = frame.input_seq ?? 0`
+và `buildWorld` đặt `this.lastAckedSeq = welcome.input_seq ?? -1`.
+
+### Checklist xác minh (đã dùng thật)
+1. Probe production: space → `/khutraodoi in` → đi bộ vào cửa, in ra
+   `*** WELCOME MID-WALK -> <map>` (trước fix: chỉ thấy tele, không welcome).
+2. Kiểm code mới đã nằm trong RAM chưa: welcome có field `input_seq` không
+   (field này chỉ có ở bản mới) — nhanh hơn đoán "đã Restart chưa".
+3. Nhớ: đi bộ trong probe phải theo kiểu report dần (client-authoritative),
+   server converge có cap tốc độ; dừng report là server đứng im.
