@@ -5,7 +5,7 @@
       "montertradebase": {
         "map_id": "montertradebase",
         "target": "spawn_layer",
-        "portal_tiles": [[30, 24], [30, 25], [38, 24], [38, 25]]
+        "portal_tiles": [[38, 24], [38, 25]]
       }
     }
   },
@@ -14,7 +14,7 @@
     "destinations": {
       "lobbytrade": {
         "map_id": "lobbytrade",
-        "target": [30, 26],
+        "target": [38, 26],
         "portal_tiles": [[8, 12], [9, 12]]
       }
     }

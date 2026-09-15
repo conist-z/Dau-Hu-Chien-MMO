@@ -28,6 +28,15 @@ TRADE_INTERIOR_MAP = "montertradebase"
 
 # Runtime attribute: per-player "standing on a portal tile" latch (anti-loop).
 _PORTAL_LATCH_ATTR = "on_portal_tile"
+# Anti ping-pong (user 16/09): arriving from a portal puts the player right in
+# front of the door they just used — still holding the movement key walks them
+# straight back into the trigger and the two doors bounce them forever. After
+# a teleport the gate re-arms ONLY when the player's box is CLEAR of every
+# trigger tile by this margin (tiles), not merely off the trigger row.
+_REARM_CLEAR_DISTANCE = 1.6
+# Escape hatch: if the player somehow can't get clear (spawn blocked), re-arm
+# anyway after this many seconds so the door never becomes a one-way wall.
+_REARM_MAX_SECONDS = 2.5
 
 # TRADE ZONES: maps where building is forbidden (user rule 15/09 — "ở khu
 # trao đổi thì cấm phá block"). Both the Discord path and the web path go
@@ -98,14 +107,63 @@ def portal_link_for(rt, portal_cfg: Portals, x: int, y: int) -> PortalLink | Non
     return portal_cfg.link_at(rt.map_data.map_id, x, y)
 
 
+def _touching_portal_link(rt, portal_cfg: Portals, player):
+    """The link whose trigger tile the player's COLLISION BOX touches.
+
+    User 16/09: the door is a PORTAL GATE, not a floor marker — touching it
+    must teleport immediately and the player must never walk through it.
+    The old center-tile check let the swept float box slide across the
+    1-tile-deep door between two int syncs (the "đi xuyên cửa" bug). The
+    box is FLOAT_BOX_HALF wide around the continuous position; when only
+    int coords exist (Discord pack) the box reduces to the own tile.
+    """
+    import math
+
+    from game.collision import FLOAT_BOX_HALF
+
+    r = FLOAT_BOX_HALF
+    # GATE MARGIN: the web client predicts collision with its own tile/mask
+    # copy and stops its reported position a hair short of the door sprite
+    # (observed: box edge 0.01 tiles from the trigger row). Expand the box by
+    # a small margin so PUSHING AGAINST the gate fires the teleport — the
+    # door acts like a pressure plate in front of it, and walking through
+    # stays impossible (any crossing path touches the expanded box).
+    GATE_MARGIN = 0.15
+    rr = r + GATE_MARGIN
+    x_f = getattr(player, "x_f", None)
+    y_f = getattr(player, "y_f", None)
+    if x_f is None or y_f is None:
+        x_f, y_f = player.x + 0.5, player.y + 0.5
+    x0 = int(math.floor(x_f - rr))
+    x1 = int(math.floor(x_f + rr))
+    y0 = int(math.floor(y_f - rr))
+    y1 = int(math.floor(y_f + rr))
+    map_id = rt.map_data.map_id
+    for ty in range(y0, y1 + 1):
+        for tx in range(x0, x1 + 1):
+            link = portal_cfg.link_at(map_id, tx, ty)
+            if link is not None:
+                return link
+    return None
+
+
 def check_portal_after_move(rt, portal_cfg: Portals, user_id: int,
                             moved_off_portal: bool = False):
     """Called after a successful move. Returns the (link, player) pair when a
     teleport must fire, else None.
 
+    Fires the moment the player's collision box TOUCHES a portal tile
+    (see _touching_portal_link) — the door acts as an instant gate.
+
     Anti-loop latch: arriving ON a portal tile (the interior mat IS the
     arrival AND the trigger) does not re-fire until the player steps off
     every portal tile of the current map.
+
+    Anti ping-pong (user 16/09): a portal ARRIVAL re-latches the mover and
+    the latch re-arms only when the player's box is CLEAR of every trigger
+    tile by _REARM_CLEAR_DISTANCE (or _REARM_MAX_SECONDS pass) — walking
+    straight back into the door while still holding the key must NOT bounce
+    the player between the two maps.
 
     ``moved_off_portal`` (web tick path): True when the player's PREVIOUS
     position was off every portal tile — web movement reports a target
@@ -114,22 +172,64 @@ def check_portal_after_move(rt, portal_cfg: Portals, user_id: int,
     "đi xuyên cửa" bug). With this the latch only blocks BACK-TO-BACK
     teleports within continuous portal contact, same as Discord.
     """
+    import time as _time
+
     player = rt.state.get_player(user_id)
     if player is None:
         return None
-    link = portal_link_for(rt, portal_cfg, player.x, player.y)
+    link = _touching_portal_link(rt, portal_cfg, player)
     if not hasattr(rt, _PORTAL_LATCH_ATTR):
         setattr(rt, _PORTAL_LATCH_ATTR, set())
     latched = getattr(rt, _PORTAL_LATCH_ATTR)
     if link is None:
-        # Off every portal tile: re-arm.
-        if user_id in latched:
+        # Off every portal tile: re-arm ONLY when clearly clear of the gate
+        # (or the escape-hatch timer expires) — see _REARM_* above.
+        stamp = getattr(rt, "_portal_teleport_at", {}).get(user_id)
+        if stamp is not None:
+            cleared = _box_clear_of_triggers(rt, portal_cfg, player)
+            expired = (_time.monotonic() - stamp) > _REARM_MAX_SECONDS
+            if cleared or expired:
+                rt._portal_teleport_at.pop(user_id, None)
+                latched.discard(user_id)
+        elif user_id in latched:
+            # Teleported long ago (pre-restart latch / Discord path):
+            # plain tile-off still re-arms.
             latched.discard(user_id)
         return None
     if user_id in latched and not moved_off_portal:
         return None
     latched.add(user_id)
+    if not hasattr(rt, "_portal_teleport_at"):
+        rt._portal_teleport_at = {}
+    rt._portal_teleport_at[user_id] = _time.monotonic()
     return link, player
+
+
+def _box_clear_of_triggers(rt, portal_cfg: Portals, player) -> bool:
+    """True when the player's box is at least _REARM_CLEAR_DISTANCE away from
+    every trigger tile of this map (box edge distance, in tile units)."""
+    import math
+
+    from game.collision import FLOAT_BOX_HALF
+
+    mp = portal_cfg.for_map(rt.map_data.map_id)
+    if mp is None or not mp.trigger_tiles:
+        return True
+    r = FLOAT_BOX_HALF
+    x_f = getattr(player, "x_f", None)
+    y_f = getattr(player, "y_f", None)
+    if x_f is None or y_f is None:
+        x_f, y_f = player.x + 0.5, player.y + 0.5
+    need = _REARM_CLEAR_DISTANCE + r
+    for tx, ty in mp.trigger_tiles:
+        # Distance from the box CENTER to the tile center; the tile is 1 wide
+        # so subtract 0.5 for the edge gap on each axis.
+        dx = abs(x_f - (tx + 0.5)) - 0.5
+        dy = abs(y_f - (ty + 0.5)) - 0.5
+        gap = math.hypot(max(0.0, dx), max(0.0, dy))
+        if gap < need:
+            return False
+    return True
 
 
 def move_player_between_runtimes(

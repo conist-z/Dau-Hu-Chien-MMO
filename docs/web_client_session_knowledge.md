@@ -408,3 +408,31 @@ cần trình duyệt, không cần đoán: kết nối thẳng websocket vào re
    runtime không.
 5. Nếu local fire mà production không → RAM cũ (Restart). Nếu cả hai không
    fire → đọc lại 7.2 (idle path, latch, GATE_MARGIN, report freshness).
+
+## 8. Portal qua cửa WALK phải re-send WELCOME (session 16/09 — bug "tele
+## nhưng client kẹt map cũ")
+
+### Hiện tượng
+- Server tele đúng (log client: `d=32.90 pred=(38.64,25.68) srv=(8.50,12.50)` —
+  srv đã ở interior, pred còn ở lobby), nhưng sau đó client dự đoán bằng
+  collision map CŨ (`pred=(8.50,14.38) srv=(8.50,12.70)` d=1.68 LẶP VÔ HẠN —
+  y=14.38 là sàn lobby, y=12.70 là tường interior). Client KHÔNG BAO GIỜ nhận
+  payload map đích khi đi cửa.
+
+### Root cause
+- `/khutraodoi in/out` (chat) có `WebHub._maybe_teleport_welcome` gửi welcome
+  mới → đi lệnh ổn. Đi cửa thì server tele trong
+  `GameManager._teleport_through_link` — đường này KHÔNG có web I/O, snapshot
+  chỉ mang `map_id` (client KHÔNG rebuild world từ snapshot) → client giữ
+  layer + collision map nguồn mãi mãi.
+
+### Fix (2 đầu, web-safe)
+- `GameManager.web_map_change_hook: Optional[Callable[[rt, user_id], Awaitable]]`
+  (default None — game layer không import web).
+- `WebHub.__init__` tự cắm: `manager.web_map_change_hook = self.send_map_welcome`
+  → `send_map_welcome` fetch session từ `dst_rt.web_sessions` (đã được
+  `move_player_between_runtimes` migrate) và push `build_welcome(dst_rt, uid)`.
+- Client `onWelcome → buildWorld` đã rebuild sẵn (reset pred/selfX/selfY +
+  collision) — không cần sửa web_client.
+- Lock: tests/test_web_portal_map_switch.py (hook register, welcome map đích
+  có collision, Discord-only player không crash hook).
