@@ -248,6 +248,20 @@ def _is_blocking_layer(nl: str) -> bool:
     )
 
 
+def _is_wall_like_layer(nl: str) -> bool:
+    """True for layers whose tiles must keep FULL SQUARE collision — walls,
+    buildings, water: near-solid textures where a mask hole reads as walking
+    through the wall. Decor-ish blockers (trees/bushes/rocks/torches) are the
+    only ones refined to their pixel shape."""
+    return (
+        "building" in nl
+        or "tuong" in nl
+        or "wall" in nl
+        or "nuoc" in nl
+        or "water" in nl
+    )
+
+
 def _collision_from_layers(
     layers: List[Tuple[str, List[List[int]]]], width: int, height: int
 ) -> List[List[int]]:
@@ -403,9 +417,26 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # Sub-tile masks: for every blocked tile, remember the blocking layer's
     # GID (topmost blocking layer wins) so tile_masks can derive the sprite's
     # real opaque shape from the tileset alpha.
+    # SCOPE (user feedback): masks refine DECOR sprites only — trees, bushes,
+    # boulders, torches... Wall-like layers (building/tường/water/đá xây) stay
+    # FULL SQUARE blocks: their textures are (near-)solid, and any mask hole
+    # there reads as walking through the wall. Square walls, pixel trees.
     blocking_gids: Dict[Tuple[int, int], int] = {}
+    # Tiles that ANY wall-like layer blocks: never refined, even when a tree
+    # also overlaps there — the wall body is solid regardless of the tree's
+    # transparency (a mask hole in a wall reads as walking through it).
+    wall_owned: set = set()
     for name, grid in tile_layers:
-        if not _is_blocking_layer(_normalize_layer_name(name)):
+        nl = _normalize_layer_name(name)
+        if not _is_blocking_layer(nl):
+            continue
+        if _is_wall_like_layer(nl):
+            for gy, row in enumerate(grid):
+                if gy >= height:
+                    break
+                for gx, gid in enumerate(row):
+                    if gx < width and gid:
+                        wall_owned.add((gx, gy))
             continue
         for gy, row in enumerate(grid):
             if gy >= height:
@@ -413,6 +444,8 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
             for gx, gid in enumerate(row):
                 if gx < width and gid:
                     blocking_gids[(gx, gy)] = gid
+    for tile in wall_owned:
+        blocking_gids.pop(tile, None)
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
