@@ -77,39 +77,23 @@ class TilesetMasks:
 def _mask_from_patch(patch: "Image.Image") -> Mask:
     """Downsample a tile patch to a MASK_RES bitmask via alpha coverage.
 
-    A sub-cell is solid when ANY of its pixels is (mostly) opaque. Using
-    any() instead of majority keeps thin trunks/wires solid — under-blocking
-    lets players clip through trees, over-blocking only hugs the sprite.
-    """
+    BOX-filter downsample (PIL resize): every sub-cell becomes the AVERAGE
+    alpha of ALL its pixels, computed in C — no sampling grid to miss thin
+    opaque features between sample points (the old strided lattice let
+    players clip through near-solid wall sprites wherever a sparse sample
+    stepped over a thin opaque edge). A sub-cell is solid when its average
+    alpha shows meaningful coverage; a low bar keeps faint-but-opaque
+    features (shading strokes, thin frames) blocking, which is the safe
+    side: over-blocking only hugs the sprite, under-blocking tunnels."""
     w, h = patch.size
-    alpha = patch.convert("RGBA").getchannel("A")
-    px = alpha.load()
+    avg = patch.convert("RGBA").getchannel("A").resize(
+        (MASK_RES, MASK_RES), Image.BOX
+    )
+    apx = avg.load()
     mask = _empty_mask()
-    cell_w = w / MASK_RES
-    cell_h = h / MASK_RES
     for my in range(MASK_RES):
-        y0 = int(my * cell_h)
-        y1 = max(y0 + 1, int((my + 1) * cell_h))
         for mx in range(MASK_RES):
-            x0 = int(mx * cell_w)
-            x1 = max(x0 + 1, int((mx + 1) * cell_w))
-            solid = False
-            # Downsample on a strided grid (MAX 16 samples per edge): a
-            # 32px tile at cell 4px would otherwise scan 16x16=256 pixels
-            # per cell x 64 cells = 16k alpha reads per tile — x1064 tiles
-            # per sheet made map load crawl. A 16-sample lattice sees every
-            # feature >= ~1/16 of the tile (trunks, torch poles) and keeps
-            # per-sheet cost at ~2k reads per tile.
-            step_x = max(1, (x1 - x0) // 16)
-            step_y = max(1, (y1 - y0) // 16)
-            for y in range(y0, min(y1, h), step_y):
-                for x in range(x0, min(x1, w), step_x):
-                    if px[x, y] >= 128:
-                        solid = True
-                        break
-                if solid:
-                    break
-            if solid:
+            if apx[mx, my] >= 40:
                 mask |= 1 << (my * MASK_RES + mx)
     return mask
 
