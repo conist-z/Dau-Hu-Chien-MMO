@@ -21,6 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from game.manager import GameManager
 from game.travel import TRADE_LOBBY_MAP
 from web_api.core import ClientConnection, WebHub
+from web_api.protocol import WebSession
 
 ASSETS = pathlib.Path(__file__).resolve().parent.parent / "assets" / "maps"
 
@@ -50,7 +51,11 @@ def test_portal_step_pushes_welcome_for_destination_map():
         uid = 42
         gm, rt = _lobby_gm_with_web_player(uid)
         hub = WebHub(gm)
-        sess = rt.web_sessions[uid]
+        # The connection holds web_api's REGISTRY session, not the manager's
+        # per-runtime one (see test_welcome_reaches_conn_whose_session_object_differs).
+        sess = WebSession(
+            user_id=uid, display_name="tester", channel_id=1, token="tok",
+        )
         hub.connections[7] = ClientConnection(cid=7, session=sess, joined=True)
 
         link = gm.portals.link_at(TRADE_LOBBY_MAP, *DOOR_TILE)
@@ -72,6 +77,54 @@ def test_portal_step_pushes_welcome_for_destination_map():
         # The payload carries the DESTINATION collision, not the source map's —
         # this is exactly what kept the client desynced before.
         assert welcomes[-1]["map"]["collision"]
+
+    asyncio.run(run())
+
+
+def test_welcome_reaches_conn_whose_session_object_differs():
+    """Production has TWO session objects per client: web_api's registry
+    session (bound to ``conn.session``) and the manager's per-runtime session
+    (``rt.web_sessions[uid]``, holding the tick state). They are different
+    objects, so matching by identity in send_to_client_conn silently dropped
+    every map-switch welcome. Match on user_id + channel instead.
+    """
+
+    async def run():
+        uid = 42
+        gm, rt = _lobby_gm_with_web_player(uid)
+        hub = WebHub(gm)
+        # The registry object the connection really holds (≠ rt.web_sessions).
+        registry_sess = WebSession(
+            user_id=uid, display_name="tester", channel_id=1, token="tok",
+        )
+        assert registry_sess is not rt.web_sessions[uid]
+        hub.connections[3] = ClientConnection(cid=3, session=registry_sess, joined=True)
+
+        await hub.send_map_welcome(rt, uid)
+
+        frames = []
+        while not hub.outbox.empty():
+            frames.append(await hub.outbox.get())
+        assert [f["frame"]["type"] for f in frames] == ["welcome"]
+        assert frames[0]["cid"] == 3
+        assert frames[0]["frame"]["map"]["id"] == rt.map_data.map_id
+
+    asyncio.run(run())
+
+
+def test_welcome_is_not_pushed_to_a_different_channel():
+    """A web session in another channel must not receive this map payload."""
+
+    async def run():
+        uid = 42
+        gm, rt = _lobby_gm_with_web_player(uid)
+        hub = WebHub(gm)
+        other = WebSession(
+            user_id=uid, display_name="tester", channel_id=999, token="tok2",
+        )
+        hub.connections[5] = ClientConnection(cid=5, session=other, joined=True)
+        await hub.send_map_welcome(rt, uid)
+        assert hub.outbox.empty()
 
     asyncio.run(run())
 

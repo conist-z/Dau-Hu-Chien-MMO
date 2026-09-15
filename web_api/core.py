@@ -102,11 +102,24 @@ class WebHub:
         its own WebSession handle); here the session is fetched from the
         destination runtime — move_player_between_runtimes migrated it into
         ``rt.web_sessions`` during the teleport.
+
+        IDENTITY TRAP (user 16/09): there are TWO session objects per client —
+        web_api's registry session (the one bound to ``conn.session``) and the
+        manager's per-runtime session created by register_web_session (the one
+        holding dx/dy/report/input_seq for the tick). They are NOT the same
+        object, so send_to_client_conn(sess) — which matches by identity —
+        silently dropped every map-switch welcome and the client kept the old
+        map. Match on the stable facts instead: user_id + channel.
         """
-        sess = getattr(rt, "web_sessions", {}).get(user_id)
-        if sess is None:
-            return
-        await self.send_to_client_conn(sess, build_welcome(rt, user_id))
+        if user_id not in getattr(rt, "web_sessions", {}):
+            return  # Discord-only player: no web client to update
+        for conn in self.connections.values():
+            sess = conn.session
+            if (sess is not None and conn.joined
+                    and sess.user_id == user_id
+                    and sess.channel_id == rt.channel_id):
+                await self.send_to_client(conn.cid, build_welcome(rt, user_id))
+                return
 
     # ----- envelope plumbing -----
 
