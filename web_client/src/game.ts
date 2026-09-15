@@ -3125,6 +3125,11 @@ export class WorldScene extends Phaser.Scene {
               const sy = inp.dy * sp * inp.dt;
               this.selfX += this.freeX(this.selfX, this.selfY, sx);
               this.selfY += this.freeY(this.selfX, this.selfY, sy);
+              // Server parity: can_move_float runs the mask correction per
+              // sub-step; the replay must too, or reconciliation lands the
+              // box inside opaque pixels and the next frames "đè lên" the
+              // sprite.
+              this.correctMaskOverlap();
             }
           }
         }
