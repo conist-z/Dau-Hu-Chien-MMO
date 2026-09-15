@@ -589,6 +589,7 @@ class MapCog(commands.Cog):
         tile = free_arrival_tile(
             lobby_rt, resolve_spawn_tiles(lobby_rt, self.manager.portals, "lobbytrade"),
             occupied,
+            portal_cfg=self.manager.portals,
         )
         move_player_between_runtimes(cur_rt, lobby_rt, uid, tile)
         self.manager.touch_session(cur_rt.channel_id, uid)

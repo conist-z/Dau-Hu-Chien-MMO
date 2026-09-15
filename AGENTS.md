@@ -68,7 +68,10 @@ tests/        test_state.py test_collision.py test_map_loader.py test_renderer.p
 ## Deployment (cloud hosting panel)
 
 The bot runs on a Discord-bot hosting panel (Pterodactyl-style). Full detail in
-`docs/deployment.md` and `docs/trien-khai.md`; the essentials every session must know:
+`docs/deployment.md` and `docs/trien-khai.md`; building a portal-linked sub-area
+(dungeon / interior / instanced map)? read `docs/portal_sub_areas.md` first —
+layer-naming collision rules, the portal gate model, and the web-client
+map-switch requirements; the essentials every session must know:
 
 - **Panel auto-manages venv + deps**: on Start it `cd /home/container`, creates `.venv`
   (per Python version), `pip install -r ${REQUIREMENTS_FILE}`, then `exec .venv/bin/python ${BOT_PY_FILE}`.

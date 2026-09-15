@@ -26,17 +26,17 @@ log = logging.getLogger("GAME")
 TRADE_LOBBY_MAP = "lobbytrade"
 TRADE_INTERIOR_MAP = "montertradebase"
 
-# Runtime attribute: per-player "standing on a portal tile" latch (anti-loop).
+# Runtime attribute: per-player "box is TOUCHING a portal tile right now" set.
+# It is the EDGE DETECTOR for the gate (see check_portal_after_move): a gate
+# fires on the not-touching -> touching transition only, so standing on or
+# against the door can never re-fire it.
 _PORTAL_LATCH_ATTR = "on_portal_tile"
-# Anti ping-pong (user 16/09): arriving from a portal puts the player right in
-# front of the door they just used — still holding the movement key walks them
-# straight back into the trigger and the two doors bounce them forever. After
-# a teleport the gate re-arms ONLY when the player's box is CLEAR of every
-# trigger tile by this margin (tiles), not merely off the trigger row.
-_REARM_CLEAR_DISTANCE = 1.6
-# Escape hatch: if the player somehow can't get clear (spawn blocked), re-arm
-# anyway after this many seconds so the door never becomes a one-way wall.
-_REARM_MAX_SECONDS = 2.5
+# Gate cooldown (user 16/09): a short grace window after every teleport. The
+# old model re-armed with a 2.5 s timer — which cleared while the player was
+# still standing next to the door they came out of, and the next tiny step
+# pulled them straight back in ("vừa ra khỏi khu vực đã bị dịch chuyển vào
+# lại"). Edge detection + this cooldown replaces it: no timer, no bounce.
+_GATE_COOLDOWN_SECONDS = 0.9
 
 # TRADE ZONES: maps where building is forbidden (user rule 15/09 — "ở khu
 # trao đổi thì cấm phá block"). Both the Discord path and the web path go
@@ -89,17 +89,45 @@ def resolve_link_target(
     return resolve_spawn_tiles(rt, portal_cfg, link.map_id)
 
 
-def free_arrival_tile(rt, candidates, occupied) -> tuple:
-    """First walkable, unoccupied arrival tile; any walkable tile as fallback;
-    the first candidate as last resort (interiors are mostly walkable, so the
-    first branch wins in practice)."""
-    for x, y in candidates:
-        if rt.collision.is_walkable(x, y) and (x, y) not in occupied:
-            return (x, y)
-    for x, y in candidates:
-        if rt.collision.is_walkable(x, y):
-            return (x, y)
-    return tuple(candidates[0]) if candidates else (0, 0)
+def free_arrival_tile(rt, candidates, occupied, portal_cfg=None) -> tuple:
+    """Pick the arrival tile: walkable, unoccupied, and — when ``portal_cfg``
+    is given — NOT a gate tile of the destination map.
+
+    Arriving exactly ON the exit tile (the interior mat) is what made the gate
+    feel hair-triggered: the player spawned standing on the trigger. When the
+    only candidate is a gate tile (that mat), nudge to a free walkable
+    neighbour so arrivals land just inside the room and a deliberate step
+    back onto the mat is what exits.
+    """
+
+    def is_trigger(x: int, y: int) -> bool:
+        return (
+            portal_cfg is not None
+            and portal_cfg.link_at(rt.map_data.map_id, x, y) is not None
+        )
+
+    def pick(pred) -> tuple | None:
+        for x, y in candidates:
+            if pred(x, y):
+                return (x, y)
+        return None
+
+    chosen = (
+        pick(lambda x, y: rt.collision.is_walkable(x, y)
+             and (x, y) not in occupied and not is_trigger(x, y))
+        or pick(lambda x, y: rt.collision.is_walkable(x, y)
+                and (x, y) not in occupied)
+        or pick(lambda x, y: rt.collision.is_walkable(x, y))
+        or (tuple(candidates[0]) if candidates else (0, 0))
+    )
+    if not is_trigger(*chosen):
+        return chosen
+    for dx, dy in ((0, -1), (0, 1), (1, 0), (-1, 0)):
+        nx, ny = chosen[0] + dx, chosen[1] + dy
+        if (rt.collision.is_walkable(nx, ny) and (nx, ny) not in occupied
+                and not is_trigger(nx, ny)):
+            return (nx, ny)
+    return chosen
 
 
 def portal_link_for(rt, portal_cfg: Portals, x: int, y: int) -> PortalLink | None:
@@ -149,87 +177,53 @@ def _touching_portal_link(rt, portal_cfg: Portals, player):
 
 def check_portal_after_move(rt, portal_cfg: Portals, user_id: int,
                             moved_off_portal: bool = False):
-    """Called after a successful move. Returns the (link, player) pair when a
+    """Called after a move/position report. Returns ``(link, player)`` when a
     teleport must fire, else None.
 
-    Fires the moment the player's collision box TOUCHES a portal tile
-    (see _touching_portal_link) — the door acts as an instant gate.
+    EDGE-TRIGGERED gate (user 16/09 — "cổng đang hơi nhạy"): the gate fires
+    only on the not-touching -> touching transition of the player's collision
+    box, plus a _GATE_COOLDOWN_SECONDS grace window after any teleport.
 
-    Anti-loop latch: arriving ON a portal tile (the interior mat IS the
-    arrival AND the trigger) does not re-fire until the player steps off
-    every portal tile of the current map.
+    Why the old latch+timer was wrong: it re-armed on a 2.5 s timer, so a
+    player who had just come out of the door — still standing right next to it
+    — had the gate armed again under their feet, and the next tiny movement
+    (or holding the key they came out with) yanked them straight back into the
+    map they had just left. Timers cannot express "I have walked away".
 
-    Anti ping-pong (user 16/09): a portal ARRIVAL re-latches the mover and
-    the latch re-arms only when the player's box is CLEAR of every trigger
-    tile by _REARM_CLEAR_DISTANCE (or _REARM_MAX_SECONDS pass) — walking
-    straight back into the door while still holding the key must NOT bounce
-    the player between the two maps.
+    Consequences of the edge model, all intended:
+      * arriving AT the gate (the interior mat) never re-fires — the arrival
+        is seeded as touching (move_player_between_runtimes) and/or nudged
+        off the trigger (free_arrival_tile);
+      * stepping off the gate and walking back onto it teleports again —
+        that is what a door does, and it now needs a deliberate move;
+      * standing, pushing or jittering against the door never re-fires.
 
-    ``moved_off_portal`` (web tick path): True when the player's PREVIOUS
-    position was off every portal tile — web movement reports a target
-    every flush, so "standing still on the door, wanting the teleport" is
-    a legitimate re-entry; the latch alone would swallow it forever (the
-    "đi xuyên cửa" bug). With this the latch only blocks BACK-TO-BACK
-    teleports within continuous portal contact, same as Discord.
+    ``moved_off_portal`` is accepted for the web tick's call signature and is
+    no longer load-bearing (edge detection derives that state itself).
     """
     import time as _time
 
     player = rt.state.get_player(user_id)
     if player is None:
         return None
+    touching = getattr(rt, _PORTAL_LATCH_ATTR, None)
+    if touching is None:
+        touching = set()
+        setattr(rt, _PORTAL_LATCH_ATTR, touching)
     link = _touching_portal_link(rt, portal_cfg, player)
-    if not hasattr(rt, _PORTAL_LATCH_ATTR):
-        setattr(rt, _PORTAL_LATCH_ATTR, set())
-    latched = getattr(rt, _PORTAL_LATCH_ATTR)
     if link is None:
-        # Off every portal tile: re-arm ONLY when clearly clear of the gate
-        # (or the escape-hatch timer expires) — see _REARM_* above.
-        stamp = getattr(rt, "_portal_teleport_at", {}).get(user_id)
-        if stamp is not None:
-            cleared = _box_clear_of_triggers(rt, portal_cfg, player)
-            expired = (_time.monotonic() - stamp) > _REARM_MAX_SECONDS
-            if cleared or expired:
-                rt._portal_teleport_at.pop(user_id, None)
-                latched.discard(user_id)
-        elif user_id in latched:
-            # Teleported long ago (pre-restart latch / Discord path):
-            # plain tile-off still re-arms.
-            latched.discard(user_id)
+        touching.discard(user_id)  # left the gate: the next touch is an edge
         return None
-    if user_id in latched and not moved_off_portal:
-        return None
-    latched.add(user_id)
+    if user_id in touching:
+        return None  # already in contact: no re-fire (and no bounce)
+    last = getattr(rt, "_portal_teleport_at", {}).get(user_id)
+    if last is not None and (_time.monotonic() - last) < _GATE_COOLDOWN_SECONDS:
+        return None  # just teleported: grace window
+    touching.add(user_id)
     if not hasattr(rt, "_portal_teleport_at"):
         rt._portal_teleport_at = {}
     rt._portal_teleport_at[user_id] = _time.monotonic()
     return link, player
-
-
-def _box_clear_of_triggers(rt, portal_cfg: Portals, player) -> bool:
-    """True when the player's box is at least _REARM_CLEAR_DISTANCE away from
-    every trigger tile of this map (box edge distance, in tile units)."""
-    import math
-
-    from game.collision import FLOAT_BOX_HALF
-
-    mp = portal_cfg.for_map(rt.map_data.map_id)
-    if mp is None or not mp.trigger_tiles:
-        return True
-    r = FLOAT_BOX_HALF
-    x_f = getattr(player, "x_f", None)
-    y_f = getattr(player, "y_f", None)
-    if x_f is None or y_f is None:
-        x_f, y_f = player.x + 0.5, player.y + 0.5
-    need = _REARM_CLEAR_DISTANCE + r
-    for tx, ty in mp.trigger_tiles:
-        # Distance from the box CENTER to the tile center; the tile is 1 wide
-        # so subtract 0.5 for the edge gap on each axis.
-        dx = abs(x_f - (tx + 0.5)) - 0.5
-        dy = abs(y_f - (ty + 0.5)) - 0.5
-        gap = math.hypot(max(0.0, dx), max(0.0, dy))
-        if gap < need:
-            return False
-    return True
 
 
 def move_player_between_runtimes(
@@ -264,9 +258,10 @@ def move_player_between_runtimes(
         screen.clear_panels()
         screen.travel_steps = 0
         dst_rt.screens[user_id] = screen
-    # Arriving ON a portal tile (the interior mat IS the arrival spot): latch
-    # the mover so the portal does not instantly bounce them back; it re-arms
-    # when they step off every portal tile (check_portal_after_move).
+    # Arriving ON a gate tile (the interior mat IS the arrival spot): seed the
+    # mover as ALREADY in contact so the edge detector in
+    # check_portal_after_move cannot fire on arrival (no instant bounce).
+    # Stepping off clears it; touching the gate again teleports.
     if not hasattr(dst_rt, _PORTAL_LATCH_ATTR):
         setattr(dst_rt, _PORTAL_LATCH_ATTR, set())
     getattr(dst_rt, _PORTAL_LATCH_ATTR).add(user_id)

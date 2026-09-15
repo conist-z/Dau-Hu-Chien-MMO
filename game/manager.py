@@ -1937,6 +1937,7 @@ class GameManager:
                 lobby_rt,
                 resolve_spawn_tiles(lobby_rt, self.portals, TRADE_LOBBY_MAP),
                 occupied,
+                portal_cfg=self.portals,
             )
             async with cur_rt.lock:
                 move_player_between_runtimes(cur_rt, lobby_rt, user_id, tile)
@@ -2375,7 +2376,9 @@ class GameManager:
             (p.x, p.y)
             for p in dst_rt.state.get_visible_players()
         }
-        tile = free_arrival_tile(dst_rt, candidates, occupied)
+        tile = free_arrival_tile(
+            dst_rt, candidates, occupied, portal_cfg=self.portals,
+        )
         move_player_between_runtimes(src_rt, dst_rt, user_id, tile)
         # WEB CLIENT MAP SWITCH: walking through a portal must re-send the
         # world payload, exactly like the /khutraodoi chat command does via
