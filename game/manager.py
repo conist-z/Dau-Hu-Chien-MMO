@@ -309,6 +309,13 @@ class GameManager:
         # the loop takes each runtime's own lock per tick).
         self.web_task: Optional[asyncio.Task] = None
         self.respawn_tasks: Dict[tuple, asyncio.Task] = {}
+        # WEB MAP-SWITCH HOOK (user 16/09): set by WebHub at startup. Called
+        # with (dst_rt, user_id) whenever a player crosses a portal, so the
+        # web client receives a fresh welcome payload for the DESTINATION
+        # map. Without it the client kept rendering/colliding against the
+        # source map while snapshots carried destination coordinates — the
+        # permanent d=1.68..33 desync ("tele qua cửa nhà cũ").
+        self.web_map_change_hook = None
         # Serializes real Discord message edits per (channel, message) and spaces
         # them so we never hit the edit rate-limit bucket (429). See editor.py.
         self.edit_gate = ChannelEditGate()
@@ -788,6 +795,30 @@ class GameManager:
                             player.sync_int_from_float()
                             player.float_moved = True
                             self._schedule_save(rt, player)
+                    # PORTAL CHECK on the idle path too (user 16/09: pushing
+                    # against a door = zero input vector + position reports;
+                    # without this the gate only fired while dx/dy != 0 and
+                    # the player could stand pressed against the door forever
+                    # without teleporting). Same side-world gate as below.
+                    if self.side_runtimes.get(
+                        (rt.channel_id, rt.map_data.map_id)
+                    ) is rt:
+                        from game.travel import check_portal_after_move
+
+                        prev_off = (
+                            getattr(rt, "on_portal_tile", None) is None
+                            or user_id not in rt.on_portal_tile
+                        )
+                        fired = check_portal_after_move(
+                            rt, self.portals, user_id,
+                            moved_off_portal=prev_off,
+                        )
+                        if fired is not None:
+                            link, portal_player = fired
+                            await self._teleport_through_link(
+                                rt.channel_id, rt, user_id, link
+                            )
+                            continue
                     continue
                 self._regen_player_beat(rt, player, now)
                 self._stamina_regen_beat(rt, player, now)
@@ -2346,6 +2377,20 @@ class GameManager:
         }
         tile = free_arrival_tile(dst_rt, candidates, occupied)
         move_player_between_runtimes(src_rt, dst_rt, user_id, tile)
+        # WEB CLIENT MAP SWITCH: walking through a portal must re-send the
+        # world payload, exactly like the /khutraodoi chat command does via
+        # WebHub._maybe_teleport_welcome. The web session migrated to
+        # dst_rt.web_sessions inside move_player_between_runtimes, so the
+        # hub can still reach its connection through the same object.
+        hook = getattr(self, "web_map_change_hook", None)
+        if hook is not None:
+            try:
+                await hook(dst_rt, user_id)
+            except Exception:  # noqa: BLE001 — a dead conn must not kill the tick
+                log.exception(
+                    "[WEB] map-change welcome failed uid=%s map=%s",
+                    user_id, dst_rt.map_data.map_id,
+                )
         # Both worlds changed: refresh the mover now and everyone else shortly.
         self._notify_travel_change(src_rt, user_id)
         self._notify_travel_change(dst_rt, user_id)

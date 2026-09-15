@@ -472,7 +472,11 @@ export class WorldScene extends Phaser.Scene {
     // saw it as "desync" and dragged the avatar across the map — the
     // accumulated-latency bug that re-fired every ~10 min of relogging.
     this.inputLog.length = 0;
-    this.lastAckedSeq = -1;
+    // Server handoff: the session's own input_seq keeps counting across map
+    // switches, so a mid-session welcome must NOT reset the ack base to -1
+    // (snapshots would then echo a seq far above ours and every new input
+    // looked pre-acked — reconcile off = permanent desync).
+    this.lastAckedSeq = welcome.input_seq ?? -1;
     this.seqReplayActive = false;
     this.pendingDt = 0;
     this.driftIdleMs = 0;

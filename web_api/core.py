@@ -88,6 +88,25 @@ class WebHub:
         self.connections: Dict[int, ClientConnection] = {}
         self.outbox: asyncio.Queue = asyncio.Queue()
         self._snapshot_task: Optional[asyncio.Task] = None
+        # Portal crossings happen inside the game tick (game layer, no web
+        # import): the manager calls this hook so the browser receives the
+        # DESTINATION map payload. Without it a player who WALKED through a
+        # portal kept the source map's layers + collision and desynced
+        # forever while snapshots carried the new coordinates.
+        manager.web_map_change_hook = self.send_map_welcome
+
+    async def send_map_welcome(self, rt, user_id: int) -> None:
+        """Re-send the full world payload to a player whose map just changed.
+
+        Mirrors _maybe_teleport_welcome (the /khutraodoi chat path, which has
+        its own WebSession handle); here the session is fetched from the
+        destination runtime — move_player_between_runtimes migrated it into
+        ``rt.web_sessions`` during the teleport.
+        """
+        sess = getattr(rt, "web_sessions", {}).get(user_id)
+        if sess is None:
+            return
+        await self.send_to_client_conn(sess, build_welcome(rt, user_id))
 
     # ----- envelope plumbing -----
 

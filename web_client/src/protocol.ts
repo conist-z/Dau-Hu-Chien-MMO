@@ -12,6 +12,10 @@ export const MSG_PING = "ping";
 
 export interface WelcomePayload {
   type: "welcome";
+  /** Server session's highest input seq at handoff time. A mid-session
+   *  welcome (portal step / /khutraodoi) keeps the session running, so the
+   *  client resumes numbering here instead of restarting at 0. */
+  input_seq?: number;
   map: {
     id: string;
     name: string;

@@ -403,7 +403,13 @@ export class Net {
       case "welcome": {
         this.joined = true;
         this.everJoined = true;
-        this.inputSeq = 0; // fresh connection: restart the input sequence
+        // Welcome is not always a fresh connection: a portal step or
+        // /khutraodoi re-sends it while the server session (and its input
+        // seq counter) keeps running. Resuming from the server's handoff
+        // avoids re-sending seqs the server already acked — restarting at 0
+        // left the ack pinned high, disabled the replay reconcile and
+        // desynced the client permanently after every map switch.
+        this.inputSeq = (frame as { input_seq?: number }).input_seq ?? 0;
         this.handlers.onWelcome(frame);
         break;
       }

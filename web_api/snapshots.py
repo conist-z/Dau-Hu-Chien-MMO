@@ -310,8 +310,19 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         if player is not None
         else False
     )
+    # INPUT-SEQ HANDOFF (user 16/09): a welcome is not always the start of a
+    # session — walking through a portal or /khutraodoi re-sends it while the
+    # SAME WebSession (and its input_seq counter) keeps running. The client
+    # must resume numbering there instead of restarting at 0: snapshots keep
+    # echoing the session's high ack, so a client that restarted at 0 saw
+    # every fresh input pre-acked (ack stuck, replay/reconcile disabled) and
+    # desynced permanently after every map switch.
+    _sess = getattr(rt, "web_sessions", {}).get(user_id)
+    if _sess is None:
+        _sess = getattr(rt, "web_sessions", {}).get(str(user_id))
     return {
         "type": "welcome",
+        "input_seq": max(0, int(getattr(_sess, "input_seq", 0) or 0)),
         # Paperdoll manifest: frame grid + animation rows for the player
         # sheets (assets/players). Static data — read once per welcome.
         "players_manifest": _players_manifest_payload(),
