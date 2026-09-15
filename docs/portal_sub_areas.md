@@ -250,3 +250,67 @@ Dấu hiệu phân biệt nhanh:
 - `tests/test_web_portal_map_switch.py` — hook welcome (kể cả bẫy 2 session
   object + cách ly theo channel), welcome map đích có collision.
 - `tests/test_map_loader.py` — luật collision theo tên layer.
+
+---
+
+## 10. VÀO GAME THẬT ĐỂ TEST (đa người chơi, không phải probe)
+
+Probe (§7) kiểm tra **logic server**. Muốn thấy đúng như người chơi nhìn thấy —
+multiplayer, sprite, va chạm bằng chuột/phím — thì phải **vào game thật**. Cách
+đã dùng suốt session 16/09:
+
+### 10.1 Chạy thử với nhiều người chơi thật
+
+**Trick guest:** mỗi tài khoản guest là một "người chơi" độc lập — tôi có thể
+đăng nhập nhiều guest cùng lúc và thấy player của nhau trên map:
+
+1. Mở **nhiều tab/cửa sổ trình duyệt** (hoặc 1 tab thường + 1 tab ẩn danh).
+2. Mỗi tab vào `https://web-production-19398.up.railway.app/`, bấm login guest
+   (guest_id tự sinh, mỗi tab một id riêng ⇒ mỗi tab là 1 player).
+3. Cả các tab join **cùng một channel** (cùng scenario) → thấy player của nhau,
+   chat với nhau, đánh chung quái.
+4. Một tab đi vào cửa monter ⇒ các tab còn lại phải thấy player đó **biến mất**
+   khỏi map chợ (chuyển runtime) — đây là cách xác nhận `move_player_between_runtimes`
+   hoạt động đúng về multiplayer, không chỉ về toạ độ.
+
+Màu tên/avatar: mỗi player có 1 màu role cố định (mất lần đầu xuất hiện) —
+dùng để phân biệt tab nào là player nào.
+
+### 10.2 Test từng tính năng bằng lệnh trong game (chat)
+
+Gõ trực tiếp vào ô chat của web client:
+
+| Lệnh | Dùng để |
+|---|---|
+| `/khutraodoi in` / `out` | vào/ra khu trao đổi — test đường **lệnh** (khác đường **cửa**) |
+| `/weather`, `/time` | xem thời tiết/giờ hiện tại của server |
+| `/spawnmob <kind> [n]` | gọi quái ra cạnh mình để test đánh (zombie, ske, spider, slime, bat, rat) |
+| `/give <item> [n]` | mint đồ (admin) — test craft/hotbar/nhặt mà không phải đi farm |
+| `/setweather <key>` | đổi thời tiết ngay lập tức (mưa/tuyết/mây…) để test hiệu ứng |
+| `/help` | danh sách đầy đủ |
+
+### 10.3 Kịch bản test cổng (làm theo thứ tự)
+
+1. **Đi vào cửa**: đẩy vào cửa monter ⇒ phải tele **ngay lập tức**, không đi
+   xuyên qua, không phải đứng đúng tâm ô.
+2. **Vừa đến**: đứng yên ngay chỗ đến ≥3s ⇒ **không** bị tele ngược.
+3. **Giữ phím** hướng cửa sau khi đến ⇒ không bounce (edge + seed chặn).
+4. **Ra bằng thảm**: bước lên thảm ⇒ về chợ, đứng **cạnh** cửa (không dính cổng).
+5. **Ra rồi quay lại**: đi ra xa >2 ô, rồi đi vào cửa lại ⇒ tele lần 2 bình
+   thường (cổng vẫn là cổng, không khoá vĩnh viễn).
+6. **Đa người**: tab A đứng trong nhà, tab B ở chợ ⇒ B không thấy A; A bước lên
+   thảm ⇒ cả hai cùng thấy A xuất hiện lại ở chợ trước cửa.
+7. **Reload giữa chừng**: đứng trong nhà, F5 ⇒ vẫn ở trong nhà (server nhớ
+   runtime), không bị trả về chợ.
+
+### 10.4 Khi có lỗi: lấy dữ liệu đúng cách
+
+- **F12 → Console**: copy **toàn bộ** log quanh lúc lỗi (có `[DESYNC] d=…`,
+  `pred=… srv=…` là dữ liệu quý — ghi kèm thời điểm và thao tác vừa làm).
+- **HUD debug góc trái trên** (`pred/srv/d/ack`): `d=0.00` là đồng bộ; `d` lớn
+  kéo dài = lệch. Nhớ `ack` có tăng theo khi di chuyển không.
+- **Log panel** (hosting bot): hiện `[WEB] frame … crashed`, traceback, portal
+  fire log — copy **nguyên văn**, đừng tóm tắt.
+- Chụp **cả** console + ảnh màn hình cùng khoảnh khắc (Lightshot/Win+Shift+S)
+  — ảnh cho biết *nhìn thấy gì*, console cho biết *server nghĩ gì*; thiếu 1
+  trong 2 là phải đoán.
