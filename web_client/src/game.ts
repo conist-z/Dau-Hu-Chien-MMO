@@ -161,6 +161,11 @@ export class WorldScene extends Phaser.Scene {
   /** E-key press feedback: the bubble pops (scale punch). */
   private promptPunchAt = 0;
   private mapBake: Phaser.GameObjects.Image | null = null;
+  /** Asset requester captured from buildWorld: the bake needs it to re-ask
+   *  for tileset sheets it is missing (see bakeMapIfReady). */
+  private assetFetch: ((name: string) => void) | null = null;
+  /** Rate limit for the missing-tileset re-request (one try/second max). */
+  private lastTilesetKick = 0;
   private lastBlockSig = "";
   // Real block faces (assets/blocks/<id>.png fetched via asset_request).
   // Pending ids get a plain rectangle until the texture arrives, then the
@@ -483,6 +488,22 @@ export class WorldScene extends Phaser.Scene {
     this.selfX = welcome.self.x;
     this.selfY = welcome.self.y;
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
+    // MAP SWITCH (walking through a portal / /khutraodoi): the previous map's
+    // baked canvas must go BEFORE the new one is baked. bakeMapIfReady bails
+    // while the new sheets are still in flight, and the old canvas used to
+    // just stay — the trade lobby's grass/flowers covering the whole interior
+    // while the REAL (interior) collision blocked the player ("thấy cỏ hoa
+    // nhưng không đi xuyên được"). Hide + drop it now; it is rebuilt (and
+    // re-shown) as soon as the destination sheets land.
+    if (this.welcome && this.welcome.map.id !== welcome.map.id) {
+      if (this.mapBake) {
+        this.mapBake.destroy(); // drop the object too — no invisible leftovers
+        this.mapBake = null;
+      }
+      if (this.textures.exists("map-bake")) this.textures.remove("map-bake");
+      this.resourceSig = ""; // dynamic resource layer belongs to the old map
+    }
+    this.assetFetch = fetchAsset;
     this.welcome = welcome;
     // Paperdoll: stash manifest, fetch base + every mapped weapon sheet
     // once through the same relay pipe as blocks/mobs (license-safe).
@@ -512,12 +533,17 @@ export class WorldScene extends Phaser.Scene {
     // --- tilesets: request each PNG through the relay (license-safe) ---
     for (const ts of map.tilesets) {
       if (!ts.image) continue;
-      if (!this.tileTextures.has(ts.image)) {
-        this.tileTextures.set(ts.image, ts.image.replace(/\.png$/i, ""));
-        // Server asset lane: "tilesets/<name>.png" resolves in
-        // assets/tilesets (bigmap's sheet also lives in assets/maps — the
-        // server falls back to basename matching, so this path works for
-        // every map).
+      const key = this.tileTextures.get(ts.image)
+        ?? ts.image.replace(/\.png$/i, "");
+      this.tileTextures.set(ts.image, key);
+      // Re-request whenever the TEXTURE is missing — not merely when the
+      // name is new. A sticky tileTextures entry (name seen earlier) used to
+      // make this a no-op, so a map whose sheet had never actually decoded
+      // baked nothing and the PREVIOUS map stayed on screen (the interior
+      // showing the trade lobby's grass/flowers).
+      // Server asset lane: "tilesets/<name>.png" resolves in assets/tilesets
+      // (the server also falls back to basename matching).
+      if (!(this.textures && this.textures.exists(key))) {
         fetchAsset(`tilesets/${ts.image}`);
       }
     }
@@ -702,7 +728,24 @@ export class WorldScene extends Phaser.Scene {
     const usable = map.tilesets.filter(
       (t) => t.image && this.textures.exists(this.tileTextures.get(t.image) ?? ""),
     );
-    if (usable.length === 0) return;
+    if (usable.length === 0) {
+      // Sheets not decoded yet. buildWorld already hid/removed the previous
+      // map's canvas, so nothing wrong is on screen — but the bake MUST run
+      // once they land. Re-ask for the missing sheets (rate-limited) instead
+      // of giving up silently: the load callback (onTilesetLoaded) can be
+      // missed when the same sheet was requested earlier and the client's
+      // asset cache answered it, which left this map permanently un-baked.
+      const nowKick = performance.now();
+      if (nowKick - this.lastTilesetKick > 1000) {
+        this.lastTilesetKick = nowKick;
+        for (const t of map.tilesets) {
+          if (t.image && !this.textures.exists(this.tileTextures.get(t.image) ?? "")) {
+            this.assetFetch?.(`tilesets/${t.image}`);
+          }
+        }
+      }
+      return;
+    }
 
     // Resource layers ("cây", "vật phẩm ko liên quan", ...) are drawn as a
     // separate dynamic layer (choppable), so the base bake must EXCLUDE the
@@ -797,6 +840,7 @@ export class WorldScene extends Phaser.Scene {
     this.textures.addCanvas(key, canvas);
     if (this.mapBake) {
       this.mapBake.setTexture(key);
+      this.mapBake.setVisible(true); // re-show after a map switch hid it
     } else {
       this.mapBake = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-10);
     }
@@ -3032,6 +3076,15 @@ export class WorldScene extends Phaser.Scene {
   }
 
   applySnapshot(snap: SnapshotPayload): void {
+    // MAP-SWITCH GUARD (user 16/09): the server moves the body to the
+    // destination runtime on the portal tick, but the matching welcome (the
+    // payload that actually swaps map/collision) arrives a frame later.
+    // Applying that in-between snapshot painted the avatar onto the OLD map
+    // at NEW-map coordinates — the "nháy qua cửa nhà gỗ rồi nháy về" flash.
+    // Ignore snapshots from another map; the welcome rebuilds the world.
+    if (this.welcome && snap.map_id && snap.map_id !== this.welcome.map.id) {
+      return;
+    }
     // Authoritative self position for reconciliation. Self is NOT in the
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };

@@ -154,6 +154,11 @@ function applyTexture(name: string, b64: string): void {
       game.textures.addImage(key, img);
     }
     URL.revokeObjectURL(url);
+    // Cache only on SUCCESS. Registering the key before the bytes decoded made
+    // a single failed decode permanent: every later request short-circuited on
+    // this set, no texture was ever created, and the map could not bake again
+    // (the interior showed the previous map's ground).
+    assetTextures.set(key, key);
     if (name.startsWith("blocks/")) {
       // Block face arrived: redraw the block layer with the real sprite.
       scene.onBlockTexture(name.slice("blocks/".length).replace(/\.png$/i, ""));
@@ -190,8 +195,16 @@ function applyTexture(name: string, b64: string): void {
     // rebuilding duplicated players and reset the camera).
     scene.onTilesetLoaded(bareName);
   };
+  img.onerror = () => {
+    assetTextures.delete(key);
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* already revoked */
+    }
+    console.warn("[asset] decode failed:", name);
+  };
   img.src = url;
-  assetTextures.set(key, key);
 }
 
 function applyInventory(inv: InventoryPayload, version?: number): void {
