@@ -4,6 +4,83 @@
 > session xây web client. Đọc trước khi đụng vào `web_client/`, `web_api/`,
 > `web_client/relay/` hoặc thay đổi luồng Discord bot ↔ web.
 
+## 0. ⚠️ THẢM HỌA 15/09 — MẤT MẶT ĐẤT 2 TIẾNG: BÀI HỌC ĐỌC TRƯỚC KHI SỬA BAKE
+
+**ĐÂY LÀ LỖI ĐẮT NHẤT SESSION — mọi fix gid/tilecount/cache đều là hướng SAI
+vì thủ phạm nằm ngoài chúng hết.**
+
+### Diễn biến
+- Triệu chứng: **mặt đất + building biến mất hoàn toàn** trên web client;
+  cây/đá/cỏ/nấm VẪN hiện bình thường. Fix gid (commit `af6c611`, `2754051`,
+  `4c19767` với tilecount) xong vẫn đen;怀疑 cache,怀疑 payload,怀疑 asset lane —
+  **2 TIẾNG không ra**.
+
+### Nguyên nhân gốc (1 dòng bị xoá)
+- Commit **`37cdec2`** (fix chop-lag: "node tiles never baked") viết lại **phần
+  đuôi** của `bakeMapIfReady` và **VÔ TÌNH XOÁ MẤT dòng
+  `this.textures.addCanvas("map-bake", canvas)`**.
+- Chuỗi hậu quả: canvas VẪN được vẽ ĐÚNG 100% (mọi gid đúng, mọi crop đúng —
+  nên mọi mô phỏng/kiểm chứng offline đều "pass") → nhưng image `map-bake`
+  tham chiếu texture **KHÔNG TỒN TẠI** trong Phaser → Phaser im lặng vẽ
+  **KHÔNG GÌ** cho image đó → mặt đất biến mất.
+- **Cây vẫn hiện** vì chúng đi ĐƯỜNG KHÁC: server gửi `resources` [x,y,gid] →
+  client vẽ sprite riêng trong `updateResourceLayer` (không qua map-bake).
+  Chính sự "nửa đen nửa hiện" này đã **CHE MẤT** bản chất lỗi: mọi dữ liệu
+  nhìn đều đúng, chỉ thiếu đúng 1 dòng đăng ký texture.
+
+### Vì sao debug 2 tiếng không ra (bài học quy trình)
+1. **Mọi verification đều đi theo hướng dữ liệu** (gid → tilecount → asset →
+   cache) vì các bước vẽ canvas nhìn "đúng" trong code — không ai nghĩ rằng
+   canvas vẽ xong rồi nhưng KHÔNG ĐƯỢC ĐĂNG KÝ vào Phaser.
+2. **Mô phỏng offline không phát hiện được**: mô phỏng PIL/Python vẽ canvas
+   xong xuôi rồi thoát — không có tầng Phaser để nói "texture không tồn tại".
+   Mô phỏng chỉ verify dữ liệu, KHÔNG verify pipeline render.
+3. **Không có runtime instrumentation**: nếu sớm hơn có 1 dòng
+   `console.assert(this.textures.exists("map-bake"), "BAKE NOT REGISTERED")`
+   sau bake thì ra ngay trong 2 phút.
+4. **Merge nhiều session đụng chung `game.ts`**: session khác sửa phần đuôi
+   bake cùng lúc, dòng addCanvas nằm trong vùng bị viết lại → mất âm thầm.
+
+### LUẬT CỨNG khi đụng `bakeMapIfReady` (web_client/src/game.ts)
+1. **Canvas PHẢI được `this.textures.addCanvas("map-bake", canvas)` SAU CÙNG
+   khi vẽ, TRƯỚC khi `add.image`/`setTexture` dùng key đó.** Không dòng này
+   = mặt đất biến mất âm thầm, KHÔNG có error nào cả.
+2. Rebake an toàn: `if (this.textures.exists(key)) this.textures.remove(key);`
+   trước `addCanvas` (addCanvas lên texture đang tồn tại là no-op + warning).
+3. **Sửa phần đuôi bake xong PHẢI chạy tay qua checklist:**
+   `(a) canvas vẽ xong? (b) addCanvas gọi? (c) image/setTexture dùng đúng key?`
+4. Khi "mặt đất mất nhưng cây còn": **nghi ngờ pipeline đăng ký texture trước**,
+   đừng lao vào gid/payload. Cây sống = resource-sprite path (không qua bake);
+   bake chết = chỉ nền chết. Đó chính là signature của lỗi này.
+5. Thêm instrumentation rẻ để bắt hồi quy: sau bake, `console.assert(
+   this.textures.exists("map-bake") && this.mapBake?.texture.key === "map-bake",
+   "[BAKE] texture không được đăng ký — mặt đất sẽ không render")`.
+
+### Kiến thức phụ rút ra cùng đợt (đều đã fix + deploy)
+- **`ERR_HTTP_HEADERS_SENT` giết relay trên Railway**: `res.setHeader()` SAU
+  `res.writeHead()` là throw → relay chết ngay request đầu tiên → Railway báo
+  "Application failed to respond". Header phải đưa VÀO map writeHead
+  (`res.writeHead(200, { "Content-Type": …, "Cache-Control": … })`). Đã test
+  cục bộ trước khi push (`node relay.js` + curl header check).
+- **Cache-Control cho relay static**: `index.html` = `no-store` (shell cũ trỏ
+  bundle đã xoá → SPA fallback trả HTML về cho request JS → map đen dai dẳng
+  dù Ctrl+F5), `/assets/*` = `immutable, max-age=1 năm` (tên file có hash —
+  an toàn tuyệt đối). SPA fallback (không tìm thấy file) cũng phải `no-store`.
+- **`app-config.json` là file OAuth CỦA CLIENT**: redirect_uri PHẢI là URL
+  trang web (`https://web-production-…up.railway.app/`), KHÔNG PHẢI URL
+  `discord.com/oauth2/authorize?…`. Nhét nhầm URL authorize vào redirect_uri
+  → Discord báo "Invalid OAuth2" khi login. File này biến mất mỗi lần
+  `rm -rf relay/dist` — phải tạo lại ĐÚNG NỘI DUNG ngay sau copy dist.
+- **Vite dev proxy để debug client local**: target phải `https://` +
+  `changeOrigin: true` (target `wss://` và thiếu changeOrigin đều fail SNI
+  "Host: localhost is not in cert's altnames"). Xem `web_client/vite.config.ts`.
+- **E2E probe từ máy dev** (không cần browser): python aiohttp ws →
+  `guest_login` → `list` → `join` → đón `welcome`, rồi kiểm tra payload thật
+  của server (tilesets có tilecount? layers nested? assets về đủ?). Probe
+  `asset_request` từng sheet để xác nhận lane. KHÔNG cần đoán mò khi probe
+  được trực tiếp.
+
+---
 ## 1. Kiến trúc tổng thể
 
 ```
@@ -38,7 +115,11 @@ GameManager → GameState/Actions/Rules → SQLite
 # Quy trình chuẩn sau mỗi thay đổi web client:
 cd web_client; npm run build
 rm -rf relay/dist; cp -r dist relay/dist
-# tạo lại web_client/relay/dist/app-config.json (client_id + redirect_uri)
+# ⚠️ BẮT BUỘC tạo lại web_client/relay/dist/app-config.json (lệnh rm -rf + cp
+# xoá nó biến mất — thiếu/sai file này = Discord OAuth "Invalid OAuth2"):
+# { "client_id": "965153822861307914",
+#   "redirect_uri": "https://web-production-19398.up.railway.app/" }
+# redirect_uri = URL TRANG WEB, KHÔNG PHẢI URL discord.com/authorize!
 cd ..; .venv\Scripts\python scripts\deploy_files.py web_api\core.py   # nếu đổi Python
 git add … ; git commit; git push github-dauhu main; git push origin main
 ```
@@ -81,8 +162,10 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 
 ### Rendering (Phaser)
 - **Vẽ map = bake 1 canvas duy nhất** (`bakeMapIfReady`): vẽ tile bằng Canvas2D
-  1 lần → 1 texture. Từng là ~30k `add.image` → GPU chết (siêu lag). KHÔNG
-  quay lại per-tile images cho nền.
+  1 lần → **`textures.addCanvas("map-bake", canvas)`** → 1 texture. Từng là
+  ~30k `add.image` → GPU chết (siêu lag). KHÔNG quay lại per-tile images cho
+  nền. **⚠️ addCanvas là DÒNG SỐNG CÒN — mất nó = mất mặt đất âm thầm, xem
+  mục 0 ở đầu tài liệu (thảm hoạ 15/09) TRƯỚC khi sửa hàm này.**
 - **Texture tới SAU khi build world**: tileset PNG đi qua relay asynchronously.
   Mọi code build bằng texture phải có cơ chế rebuild khi `onTilesetLoaded` —
   và **reset signature cache** khi rebuild (bug "mất cây": layer cây build lúc
@@ -224,7 +307,48 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - Railway tự deploy mỗi git push; kiểm tra bản served bằng cách fetch JS bundle
   và tìm chuỗi đặc trưng (vd `channel_id:String`).
 
+## 5b. Session 14–15/09: multiplayer + movement + UI (tổng hợp nhanh)
+- **Client-authoritative movement** (docs/client_authoritative_movement.md):
+  client gửi input + vị trí dự đoán, server nhận làm truth. Lệch ổn định 1.5–3 ô
+  ở IDLE là ACCEPTED (đã thử ép 0 = giật lùi khó chịu, bỏ). DESYNC log trên
+  console (`[DESYNC] d=… pred=… srv=… ack=… pendingInputs=…`) bật F3 — dùng để
+  chẩn đoán, đừng fix theo từng dòng log.
+- **Màu tên player = role color vĩnh viễn** (`player.name_color`, mint 1 lần
+  lúc tạo, lưu DB) — đi kèm CẢ welcome lẫn snapshot 20Hz cho self + remote
+  (từng thiếu ở self → "mình trắng, người khác thấy màu khác").
+- **Swing broadcast**: mọi attack/chop/break server bắn frame `swing` kèm
+  actor uid + tile → client chơi animation ĐÚNG NGƯỜI. Từng dùng "đoán theo
+  khoảng cách" (nearest player trong 3.5 ô) → người đứng gần cây bị vung tay
+  oan. KHÔNG quay lại đoán.
+- **Drop magnet**: server gửi `target_id` trong drops — client kéo linh khí về
+  ĐÚNG người nhặt (từng bay vào người xem gần nhất).
+- **Profile popup** (click player khác): dùng bộ asset V5 (`inv_frame`,
+  `close_small`, `btn_*` 4 state: rest sáng/hover TỐI/pressed/disabled).
+  Hover trong kit này là TỐI ĐI, không phải sáng lên. Sprite `btn_*.png` gốc
+  có chữ CREATE bake sẵn — đã mổ pixel xoá chữ, giữ nguyên `create_btn.png`
+  cho panel craft. Phải để hit-square remote player `alpha 0.001` (KHÔNG
+  `setVisible(false)` — invisible = mất input hit test trong Phaser).
+- **Popup in-game không phải popup web**: DOM overlay con của `#overlay`,
+  không veil toàn màn hình (veil làm Chrome hiện tab-switch UI khi click),
+  chặn `contextmenu` trên `#game-root` (trước đó chỉ chặn canvas → chuột phải
+  vào popup vẫn ra menu Chrome).
+- **Bake resource tiles**: tile thuộc LIVE node KHÔNG bake vào map-bake
+  (sprite path xử lý); tile KHÔNG node (cây decor chợ) PHẢI bake (nếu không →
+  block vô hình). Bake chạy lại chỉ khi SỐ tile resource visible đổi (sig
+  guard); khi node GỤC thì chỉ clearRect đúng bbox (O(node), không rebake cả
+  map — rebake cả map = khựng 300–600ms đúng lúc cây đổ).
+- **Server tileset payload PHẢI có `tilecount`** (từ Tiled) + client resolve
+  gid theo khoảng `[firstgid, firstgid+tilecount)` — map có thể đăng ký CÙNG
+  1 sheet ở 2 firstgid khác nhau (BaseChip@577 + @5337) nên "largest firstgid
+  ≤ gid" đơn thuần là SAI.
+
 ## 6. Ý tưởng tiếp theo (không có bug đang treo — bug được fix riêng ở session khác)
+- **OAuth Discord thật**: Railway có auto-deploy nên có thể bật lại, đổi
+  redirect_uri trong app-config.json + Dev Portal (bot đã có `web_api/auth.py`).
+- Block selector trên web (phím B) thay vì set 🧱 bên Discord.
+- Shake animation + particle khi chặt (Kaetram có `resource.shake()`).
+- Avatar player thật (cần OAuth) — đang là ô vuông màu (xanh=self, cam=Discord
+  player, xanh lá=web player khác).
 - **OAuth Discord thật**: Railway có auto-deploy nên có thể bật lại, đổi
   redirect_uri trong app-config.json + Dev Portal (bot đã có `web_api/auth.py`).
 - Block selector trên web (phím B) thay vì set 🧱 bên Discord.
