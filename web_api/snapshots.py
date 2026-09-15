@@ -332,6 +332,14 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             ],
             "tilesets": _tilesets_payload(rt),
             "spawn": list(md.spawn),
+            # Sub-tile alpha masks (rendering/tile_masks.py): per-tile opaque
+            # shapes for partially-blocking sprites. Client mirrors the
+            # server's correct() so prediction stays aligned.
+            "tile_masks": (
+                md.tile_masks.to_payload()
+                if md.tile_masks is not None
+                else None
+            ),
         },
         "self": {
             "id": user_id,

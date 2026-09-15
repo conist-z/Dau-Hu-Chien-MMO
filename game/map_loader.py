@@ -24,6 +24,10 @@ class MapData:
     tilesets: List[Dict] = field(default_factory=list)
     # Ordered tile layers: (name, grid[y][x] of tile GIDs).
     tile_layers: List[Tuple[str, List[List[int]]]] = field(default_factory=list)
+    # Per-tile alpha masks (rendering/tile_masks.py): blocked tiles get the
+    # real opaque shape of their sprite instead of a full square. None =
+    # map has no tileset refinement (square collision everywhere).
+    tile_masks: Optional[object] = None
     # Tiles carved walkable by "stairs" layers (mountain staircases); up and
     # down share the same carved path. Empty for maps without stairs.
     stair_walkable: Tuple[Tuple[int, int], ...] = ()
@@ -396,6 +400,19 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         height = my - oy + 1
         tile_layers = _remap_layers(tile_layers, ox, oy, width, height)
     collision = _collision_from_layers(tile_layers, width, height)
+    # Sub-tile masks: for every blocked tile, remember the blocking layer's
+    # GID (topmost blocking layer wins) so tile_masks can derive the sprite's
+    # real opaque shape from the tileset alpha.
+    blocking_gids: Dict[Tuple[int, int], int] = {}
+    for name, grid in tile_layers:
+        if not _is_blocking_layer(_normalize_layer_name(name)):
+            continue
+        for gy, row in enumerate(grid):
+            if gy >= height:
+                break
+            for gx, gid in enumerate(row):
+                if gx < width and gid:
+                    blocking_gids[(gx, gy)] = gid
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
@@ -428,6 +445,38 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         map_dir=Path(map_id).parent if "/" in map_id or "\\" in map_id else None,
     )
     tileset = tilesets[0] if tilesets else None
+    # Alpha-derived masks (rendering.tile_masks) — only meaningful once the
+    # walkable carves below are applied, so build AFTER overrides: a carved
+    # stair tile must not keep a tree mask (it is walkable anyway, but the
+    # payload should stay honest).
+    tile_masks = None
+    try:
+        from rendering.tile_masks import build_map_masks, mask_block_fraction, MASK_RES
+
+        full = (1 << (MASK_RES * MASK_RES)) - 1
+        md_stub = type("_MD", (), {"width": width, "height": height, "tilesets": tilesets})()
+        tile_masks = build_map_masks(md_stub, blocking_gids)
+        # Tiles whose sprite is (near-)opaque AND covers the whole cell keep
+        # square collision (None) — refining them changes nothing visually
+        # but bloats the welcome payload and slows every sweep.
+        # Tiles that are fully TRANSPARENT (decor gids with no pixels on a
+        # blocking layer) must NOT become walkable: the map author blocked
+        # that tile deliberately — keep the square block.
+        if tile_masks is not None:
+            for y in range(height):
+                row = tile_masks.grid[y]
+                for x in range(width):
+                    m = row[x]
+                    if m is None:
+                        continue
+                    if mask_block_fraction(m) >= 0.99:
+                        row[x] = None  # square block is equivalent
+                    elif m == 0:
+                        row[x] = None  # invisible blocker: keep square
+        else:
+            tile_masks = None
+    except Exception:
+        tile_masks = None  # square collision fallback, never block map load
     spawn_raw = data.get("spawn")
     if isinstance(spawn_raw, dict):
         sx = spawn_raw.get("x", 0)
@@ -459,6 +508,7 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         tileset=tileset,
         tilesets=tilesets,
         tile_layers=tile_layers,
+        tile_masks=tile_masks,
         stair_walkable=tuple(stair_overrides),
         display_name=data.get("name", map_id),
     )

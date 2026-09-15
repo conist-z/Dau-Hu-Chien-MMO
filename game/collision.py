@@ -63,6 +63,18 @@ class Collision:
                 out.append(t)
         return out
 
+    def _mask_passable(self, x: int, y: int) -> bool:
+        """True when this statically-blocked tile is refined by an alpha
+        mask: the tile sweep must LET THE BOX ENTER (the mask answers the
+        real blocking shape; can_move_float's correct() pushes out of the
+        opaque pixels). False = plain square block (old behaviour)."""
+        tm = getattr(self.map_data, "tile_masks", None)
+        if tm is None:
+            return False
+        if y < 0 or y >= tm.height or x < 0 or x >= tm.width:
+            return False
+        return tm.grid[y][x] is not None
+
     def _free_x(self, x_f: float, y_f: float, dx: float) -> float:
         """Movement allowed along x, clamped EXACTLY to the blocking wall so
         the player slides along it instead of stopping short."""
@@ -80,7 +92,11 @@ class Collision:
             start = math.floor(x_f + r)
             end = math.floor(x_f + dx + r)
             for c in range(start, end + 1):
-                if any(not self.is_walkable(c, t) for t in rows):
+                if any(
+                    not self._mask_passable(c, t)
+                    and not self.is_walkable(c, t)
+                    for t in rows
+                ):
                     return min(dx, c - r - x_f)  # right edge touches column c
             return dx
         # Moving left: same boundary rule on the LEFT edge (floor(x_f - r),
@@ -88,7 +104,11 @@ class Collision:
         start = math.floor(x_f - r)
         end = math.floor(x_f + dx - r)
         for c in range(start, end - 1, -1):
-            if any(not self.is_walkable(c, t) for t in rows):
+            if any(
+                not self._mask_passable(c, t)
+                and not self.is_walkable(c, t)
+                for t in rows
+            ):
                 return max(dx, (c + 1) + r - x_f)  # left edge touches c+1
         return dx
 
@@ -103,20 +123,38 @@ class Collision:
             start = math.floor(y_f + r)
             end = math.floor(y_f + dy + r)
             for t in range(start, end + 1):
-                if any(not self.is_walkable(c, t) for c in cols):
+                if any(
+                    not self._mask_passable(c, t)
+                    and not self.is_walkable(c, t)
+                    for c in cols
+                ):
                     return min(dy, t - r - y_f)
             return dy
         start = math.floor(y_f - r)
         end = math.floor(y_f + dy - r)
         for t in range(start, end - 1, -1):
-            if any(not self.is_walkable(c, t) for c in cols):
+            if any(
+                not self._mask_passable(c, t)
+                and not self.is_walkable(c, t)
+                for c in cols
+            ):
                 return max(dy, (t + 1) + r - y_f)
         return dy
 
     def can_move_float(self, x_f: float, y_f: float, dx: float, dy: float) -> tuple:
         """Swept move for the continuous client: X first, then Y against the
         new x, each clamped to the wall — the player SLIDES along walls.
-        Returns the new (x_f, y_f)."""
+        Returns the new (x_f, y_f).
+
+        Sub-tile refinement (rendering/tile_masks.py): AFTER the swept tile
+        clamp — which stays byte-identical to the client prediction — a
+        small correction pushes the box out of the sprite's OPAQUE pixels
+        when the map provides alpha masks. Without masks this is a no-op and
+        the behaviour is exactly the old square-block movement."""
         nx = x_f + self._free_x(x_f, y_f, dx)
         ny = y_f + self._free_y(nx, y_f, dy)
+        if self.map_data.tile_masks is not None:
+            nx, ny = self.map_data.tile_masks.correct(
+                nx, ny, FLOAT_BOX_HALF, self
+            )
         return nx, ny

@@ -32,6 +32,13 @@ export interface WelcomePayload {
       image: string | null;
     }[];
     spawn: [number, number];
+    // Sub-tile alpha masks (rendering/tile_masks.py): per-tile opaque
+    // shapes for partially-blocking sprites. Sparse {y: {x: mask}};
+    // absent/undefined = square collision only (old servers).
+    tile_masks?: {
+      res: number;
+      tiles: Record<string, Record<string, number>>;
+    } | null;
   };
   self: {
     id: number;

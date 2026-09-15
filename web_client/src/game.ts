@@ -194,6 +194,12 @@ export class WorldScene extends Phaser.Scene {
   private selfX = 0; // predicted float position, TILE units
   private selfY = 0;
   private collision: number[][] = []; // collision[y][x] = 1 blocks
+  // Sub-tile alpha masks (server: rendering/tile_masks.py). Key "x,y" ->
+  // bitfield (res=8): bit my*res+mx = opaque sub-cell. Only PARTIAL tiles
+  // (server strips near-full/empty ones) appear here — everything else uses
+  // the plain square grid, so the prediction mirrors game/collision.py.
+  private tileMasks = new Map<string, number>();
+  private static readonly MASK_RES = 8;
   private selfServerPos = { x: 0, y: 0 }; // last authoritative position
   private lastServerRecv = 0;
   /** Input-sequence reconciliation (Source-engine style): buffer of recent
@@ -543,6 +549,18 @@ export class WorldScene extends Phaser.Scene {
     this.selfServerPos = { x: welcome.self.x, y: welcome.self.y };
     this.lastServerRecv = performance.now();
     this.collision = welcome.map.collision ?? [];
+    // Sub-tile masks: sparse {y:{x:mask}} -> flat "x,y" map (server parity).
+    this.tileMasks.clear();
+    const tm = welcome.map.tile_masks;
+    if (tm && tm.tiles) {
+      for (const yKey of Object.keys(tm.tiles)) {
+        const y = parseInt(yKey, 10);
+        const row = tm.tiles[yKey];
+        for (const xKey of Object.keys(row)) {
+          this.tileMasks.set(`${parseInt(xKey, 10)},${y}`, row[xKey]);
+        }
+      }
+    }
     this.selfDir = welcome.self.dir || "SOUTH";
     if (!this.faceVec) {
       const v0 = DIR_VECTORS[this.selfDir] ?? DIR_VECTORS.SOUTH;
@@ -1581,6 +1599,10 @@ export class WorldScene extends Phaser.Scene {
       const stepY = v.dy * speed * dt;
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);
       this.selfY += this.freeY(this.selfX, this.selfY, stepY);
+      // Pixel-accurate refinement (server parity: can_move_float's
+      // correct()) — run per prediction step, not just per snapshot, so the
+      // box visibly hugs the sprite's opaque shape instead of the tile edge.
+      this.correctMaskOverlap();
     }
     // Reconciliation lives in applySnapshot now (input-sequence replay):
     // every snapshot rewinds self to the acked authority position and replays
@@ -1611,8 +1633,95 @@ export class WorldScene extends Phaser.Scene {
     // the box out along the axis of least penetration instead of letting it
     // keep running through the block.
     this.resolveSolidOverlap();
+    this.correctMaskOverlap();
     this.updateFacing();
     marker.setPosition(this.selfX * 32, this.selfY * 32);
+  }
+
+  /** Sub-tile mask refinement — client mirror of the server's
+   * MapTileMasks.correct() (rendering/tile_masks.py), run AFTER the swept
+   * prediction (which stays byte-identical to the server's tile sweep) and
+   * only as a positional correction each snapshot, same as
+   * resolveSolidOverlap. Never runs when the map has no masks. */
+  private correctMaskOverlap(): void {
+    if (this.tileMasks.size === 0) return;
+    const r = 0.3;
+    const E = 1e-6;
+    const cell = 1 / WorldScene.MASK_RES;
+    for (let pass = 0; pass < 4; pass++) {
+      let bestPen = Infinity;
+      let bestShiftX = 0;
+      let bestShiftY = 0;
+      for (let ty = Math.floor(this.selfY - r); ty <= Math.floor(this.selfY + r); ty++) {
+        for (let tx = Math.floor(this.selfX - r); tx <= Math.floor(this.selfX + r); tx++) {
+          const mask = this.tileMasks.get(`${tx},${ty}`);
+          if (mask === undefined) continue;
+          // Felled node tiles walk free even under a mask (server parity).
+          if (this.felledTiles.has(`${tx},${ty}`)) continue;
+          const left = this.selfX - r;
+          const right = this.selfX + r;
+          const top = this.selfY - r;
+          const bottom = this.selfY + r;
+          if (right <= tx + E || left >= tx + 1 - E ||
+              bottom <= ty + E || top >= ty + 1 - E) continue;
+          const mx0 = Math.max(0, Math.floor((left - tx) / cell));
+          const mx1 = Math.min(WorldScene.MASK_RES - 1, Math.floor((right - tx) / cell));
+          const my0 = Math.max(0, Math.floor((top - ty) / cell));
+          const my1 = Math.min(WorldScene.MASK_RES - 1, Math.floor((bottom - ty) / cell));
+          let sx0 = -1, sx1 = -1, sy0 = -1, sy1 = -1;
+          for (let my = my0; my <= my1; my++) {
+            const rowbits = mask >> (my * WorldScene.MASK_RES);
+            for (let mx = mx0; mx <= mx1; mx++) {
+              if ((rowbits & (1 << mx)) === 0) continue;
+              // Real interior overlap (box shrunk a hair).
+              const cx0 = tx + mx * cell;
+              const cx1 = cx0 + cell;
+              const cy0 = ty + my * cell;
+              const cy1 = cy0 + cell;
+              if (right - 1e-6 <= cx0 || left + 1e-6 >= cx1) continue;
+              if (bottom - 1e-6 <= cy0 || top + 1e-6 >= cy1) continue;
+              if (sx0 < 0 || mx < sx0) sx0 = mx;
+              if (mx > sx1) sx1 = mx;
+              if (sy0 < 0 || my < sy0) sy0 = my;
+              if (my > sy1) sy1 = my;
+            }
+          }
+          if (sx0 < 0) continue;
+          const cX0 = tx + sx0 * cell;
+          const cX1 = tx + (sx1 + 1) * cell;
+          const cY0 = ty + sy0 * cell;
+          const cY1 = ty + (sy1 + 1) * cell;
+          const cand = [
+            { pen: cX1 - left, dx: (cX1 + r) - this.selfX, dy: 0 },
+            { pen: right - cX0, dx: (cX0 - r) - this.selfX, dy: 0 },
+            { pen: cY1 - top, dx: 0, dy: (cY1 + r) - this.selfY },
+            { pen: bottom - cY0, dx: 0, dy: (cY0 - r) - this.selfY },
+          ];
+          for (const c of cand) {
+            if (c.pen >= -1e-6 && c.pen < bestPen) {
+              bestPen = c.pen;
+              bestShiftX = c.dx;
+              bestShiftY = c.dy;
+            }
+          }
+        }
+      }
+      if (bestPen === Infinity || bestPen > r) return;
+      const nx = this.selfX + bestShiftX;
+      const ny = this.selfY + bestShiftY;
+      // The correction must never push the box INTO a square-solid tile
+      // (server parity: the server bails out to the old position then).
+      let legal = true;
+      const cx = Math.floor(nx), cy = Math.floor(ny);
+      if (this.solidAt(cx, cy)) legal = false;
+      if (legal && this.solidAt(Math.floor(nx - r), cy)) legal = false;
+      if (legal && this.solidAt(Math.floor(nx + r), cy)) legal = false;
+      if (legal && this.solidAt(cx, Math.floor(ny - r))) legal = false;
+      if (legal && this.solidAt(cx, Math.floor(ny + r))) legal = false;
+      if (!legal) return;
+      this.selfX = nx;
+      this.selfY = ny;
+    }
   }
 
   /** Push the box out of any solid tile it currently overlaps (least-
@@ -2898,6 +3007,11 @@ export class WorldScene extends Phaser.Scene {
     // A FELLED node's tile walks free even though the static grid still
     // lists it as blocked (the standing-tree blocker): server parity.
     if (this.felledTiles.has(`${tx},${ty}`)) return false;
+    // Mask-refined tiles are ENTERABLE for the sweep (server parity:
+    // Collision._mask_passable) — the opaque-pixel correction
+    // (correctMaskOverlap, mirrored server-side in can_move_float) does the
+    // actual pixel-accurate blocking.
+    if (this.tileMasks.has(`${tx},${ty}`)) return false;
     const row = this.collision[ty];
     if (!row || tx < 0 || tx >= row.length || row[tx] === 1) return true;
     // Placed blocks block movement (server mirrors this via BlockGrid).
