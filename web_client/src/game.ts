@@ -272,6 +272,27 @@ export class WorldScene extends Phaser.Scene {
   /** Set by main.ts: opens the profile popup for the clicked player. */
   onPlayerClick: ((p: PlayerPayload) => void) | null = null;
 
+  /** Show name labels above players (Settings page toggle). The self
+   *  label + remote labels share one flag; toggling repaints instantly. */
+  showNames = true;
+
+  /** Canvas of the current map bake — the minimap draws straight from the
+   *  SAME pixels the game renders (zero extra art, zero extra requests).
+   *  Null before the first bake (map page shows a placeholder then). */
+  minimapSourcePx(): HTMLCanvasElement | null {
+    if (!this.textures.exists("map-bake")) return null;
+    const src = this.textures.get("map-bake").getSourceImage();
+    return src instanceof HTMLCanvasElement ? src : null;
+  }
+
+  /** Toggle all remote + self name labels (Settings). Labels live inside
+   *  player containers; selfLabel is a scene-level text. */
+  setNamesVisible(visible: boolean): void {
+    this.showNames = visible;
+    this.selfLabel?.setVisible(visible);
+    for (const rp of this.players.values()) rp.label.setVisible(visible);
+  }
+
   /** True when the given normalized screen pos sits on a remote body
    *  (profile-clickable). Called from the canvas hover hook to swap the
    *  cursor icon (like the craft-table hover). */
@@ -338,6 +359,8 @@ export class WorldScene extends Phaser.Scene {
   private mouseScreen: { x: number; y: number } | null = null; // normalized 0..1 cursor pos
   // --- resource nodes layer (trees/bushes/ore from the server) ---
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
+  /** Above-player bake (roofs/canopies) — drawn OVER actors. */
+  private mapAbove: Phaser.GameObjects.Image | null = null;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
   // Tile count at the last base-map bake: the rebake trigger (chop/regrow
@@ -500,7 +523,12 @@ export class WorldScene extends Phaser.Scene {
         this.mapBake.destroy(); // drop the object too — no invisible leftovers
         this.mapBake = null;
       }
+      if (this.mapAbove) {
+        this.mapAbove.destroy(); // old roof/canopy must not cover the new map
+        this.mapAbove = null;
+      }
       if (this.textures.exists("map-bake")) this.textures.remove("map-bake");
+      if (this.textures.exists("map-above")) this.textures.remove("map-above");
       // Drop the old map's resource sprites NOW (they render above the baked
       // ground). The sig above is keyed by map id as well, so the rebuild
       // cannot be skipped later either.
@@ -794,11 +822,23 @@ export class WorldScene extends Phaser.Scene {
     const resourceTileSet = new Set(
       (welcome.resources ?? []).map(([x, y]) => `${x},${y}`),
     );
+    // Above-player layers (roofs/canopies) bake to a SEPARATE canvas drawn
+    // OVER the actors (depth 30) — Ekonia "Roof"/Kaetram "02_high" parity:
+    // the player walks under the art and is visually covered.
+    const aboveSet = new Set((map.above_layers ?? []).map((n) => foldName(n)));
+    const aboveCanvas = aboveSet.size ? document.createElement("canvas") : null;
+    if (aboveCanvas) {
+      aboveCanvas.width = map.width * tw;
+      aboveCanvas.height = map.height * th;
+    }
+    const aboveCtx = aboveCanvas ? aboveCanvas.getContext("2d") : null;
     for (const layer of map.layers) {
       // Resource layers bake only tiles WITHOUT a live server node (those
       // render as choppable sprites instead). Node-less tiles (lobbytrade's
       // Pipoya decor trees) MUST bake, or they become invisible walls.
       const isResourceLayer = RESOURCE_LAYERS.has(foldName(layer.name || ""));
+      // Above-player tiles go to the OVER canvas (never the base bake).
+      const isAboveLayer = aboveSet.has(foldName(layer.name || ""));
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
         if (!row) continue;
@@ -825,7 +865,9 @@ export class WorldScene extends Phaser.Scene {
           const tileW = ts.tilewidth ?? tw;
           const tileH = th;
           if (col * tileW >= src.width) continue;
-          ctx.drawImage(
+          const dest = isAboveLayer ? aboveCtx : ctx;
+          if (!dest) continue;
+          dest.drawImage(
             src, col * tileW, rowIdx * tileH, tileW, tileH,
             x * tw, y * th, tw, th,
           );
@@ -848,6 +890,20 @@ export class WorldScene extends Phaser.Scene {
       this.mapBake.setVisible(true); // re-show after a map switch hid it
     } else {
       this.mapBake = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-10);
+    }
+    // Above-player bake: register + draw OVER actors (depth 30 > player 20).
+    const akey = "map-above";
+    if (aboveCanvas && aboveCtx) {
+      if (this.textures.exists(akey)) this.textures.remove(akey);
+      this.textures.addCanvas(akey, aboveCanvas);
+      if (this.mapAbove) {
+        this.mapAbove.setTexture(akey);
+        this.mapAbove.setVisible(true);
+      } else {
+        this.mapAbove = this.add.image(0, 0, akey).setOrigin(0, 0).setDepth(30);
+      }
+    } else if (this.mapAbove) {
+      this.mapAbove.setVisible(false);
     }
   }
   private buildBlocks(blocks: [number, number, string][]): void {
@@ -1263,7 +1319,7 @@ export class WorldScene extends Phaser.Scene {
       const label = this.add.text(0, 22, p.name, {
         fontSize: "10px", color: p.color || "#ffffff",
         stroke: "#000000", strokeThickness: 3,
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setVisible(this.showNames);
       // Plan A hand: same-colour dot + tool icon, BOTH inside the container
       // so interpolation moves them for free (no per-frame sync needed).
       const hand = this.add.circle(HAND_ORBIT, 0, HAND_RADIUS, color);

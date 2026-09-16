@@ -68,6 +68,11 @@ export class KeyboardInput {
       if (MOVE_KEYS[e.code]) e.preventDefault();
       return;
     }
+    if (e.code === "KeyB") {
+      e.preventDefault();
+      this.hooks.onToggleInventory();
+      return;
+    }
     if (e.code === "KeyE") {
       e.preventDefault();
       // Near a station: E interacts (opens the craft panel with the press

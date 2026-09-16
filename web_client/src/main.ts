@@ -21,6 +21,10 @@ let pendingRejoinChannel: string | null = null;
 const hud = new Hud();
 const scene = new WorldScene();
 
+// Kaetram hub: wire the pages to the scene (minimap source, debug toggle,
+// player row → profile card) BEFORE any snapshot can arrive.
+hud.attachHubPages(scene, (p) => showProfilePopup(p));
+
 // ----- player profile popup (click another player in the world) -----
 
 const profilePopup = document.getElementById("profile-popup")!;
@@ -248,6 +252,7 @@ const net = new Net({
   onRtt: (rttMs) => {
     scene.setNetRtt(rttMs);
     hud.setPing(rttMs); // live ms readout (green/amber/red)
+    hud.setHubSelf({ pingMs: rttMs }); // profile page mirror
   },
   // Feed the scene's replay buffer with every seq'd input the moment it is
   // sent — before any snapshot can ack it (ordering guarantee: flushInput
@@ -313,6 +318,14 @@ const net = new Net({
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
+    // Hub pages: live bars + player list (20 Hz mirror, re-render only the
+    // currently-open page).
+    hud.setHubSelf({
+      hp: frame.self.hp, maxHp: frame.self.max_hp,
+      mana: frame.self.mana, maxMana: frame.self.max_mana,
+      coins: frame.self.coins, crystals: frame.self.crystals ?? 0,
+    });
+    hud.setHubPlayers(frame.players);
     // near_station lives INSIDE self on snapshots (top-level only on
     // welcome) — reading the wrong spot meant the 20 Hz station state was
     // permanently false: no grid upgrade, no auto-close on range exit.

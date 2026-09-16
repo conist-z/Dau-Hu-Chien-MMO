@@ -42,6 +42,11 @@
           <form id="chat-form">
             <input id="chat-input" type="text" placeholder="Nhập /lệnh..." autocomplete="off" />
           </form>
+          <!-- Kaetram-style vertical hub bar + its page container. Nested
+               INSIDE #hud-chat so it anchors to the chat frame's top edge
+               whatever height the log grows to (user spec: sát mép trên
+               khung chat, lề phải màn hình). -->
+          <div id="hud-hub"></div>
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>

@@ -194,6 +194,183 @@ html, body {
 }
 #chat-input:focus { border-color: var(--accent); }
 
+/* ---- Kaetram vertical hub bar (right edge, above chat) ----
+   Kaetram parity: #hud_buttons sprite (3 cols x 10 rows of 22x25),
+   rest/hover/active columns. Nested inside #hud-chat: anchored to the
+   chat frame's TOP edge (bottom: 100%) and flush with the screen's right
+   edge, whatever height the chat log grows to (user spec). */
+#hud-hub {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* children re-enable */
+  z-index: 3;
+}
+#hub-bar {
+  position: absolute;
+  right: -11px; /* flush with the screen edge (chat padding + border) */
+  bottom: calc(100% + 4px); /* sits ON the chat frame's top border */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 2px 3px 0;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  pointer-events: auto;
+}
+.hub-btn {
+  cursor: pointer;
+  image-rendering: pixelated;
+  opacity: 0.92;
+  transition: opacity 0.08s ease-out;
+}
+.hub-btn:hover { opacity: 1; }
+/* Page container: Kaetram slice-container clone via border-image 9-slice.
+   Opens ABOVE the bar (bottom anchored to the bar's top), right-aligned. */
+#hub-page {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 320px); /* above the 10-button bar */
+  width: 268px;
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  color: #eee;
+  background: rgba(10, 12, 18, 0.88);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  font-family: "PixelTahoma", Tahoma, monospace;
+  font-size: 13px;
+}
+#hub-page.hidden { display: none; }
+.hub-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: "Jacquard12", "PixelTahoma", monospace;
+  font-size: 20px;
+  color: #f2e6c8;
+}
+#hub-page-close {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  background: url("/ui/v5/atoms/close_small.png") no-repeat center / 14px 14px;
+  image-rendering: pixelated;
+  filter: brightness(1.6);
+}
+#hub-page-close:hover { filter: brightness(2.4); }
+.hub-slice-inner {
+  padding: 8px;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+.hub-page-body { flex: 1; min-height: 120px; }
+.hub-page-foot { flex: 0; }
+.hub-page-foot.hidden { display: none; }
+.hub-stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+.hub-stat-row span { opacity: 0.75; }
+.hub-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px 0;
+  font-weight: 700;
+}
+.hub-bar-track {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hub-bar-fill { height: 100%; transition: width 0.2s ease; }
+.hub-note {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.65;
+  line-height: 1.45;
+}
+.hub-map-wrap { display: flex; flex-direction: column; gap: 4px; }
+.hub-map-canvas {
+  width: 100%;
+  aspect-ratio: 1;
+  image-rendering: pixelated;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+}
+.hub-profile { display: flex; flex-direction: column; }
+.hub-equip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.hub-equip-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  font-size: 9px;
+  text-align: center;
+  opacity: 0.9;
+}
+.hub-equip-slot img { width: 22px; height: 22px; image-rendering: pixelated; opacity: 0.55; }
+.hub-players { display: flex; flex-direction: column; gap: 4px; }
+.hub-player-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.hub-player-row:hover { background: rgba(255, 255, 255, 0.12); }
+.hub-player-row span:last-child { margin-left: auto; opacity: 0.7; font-size: 11px; }
+.hub-player-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.hub-settings { display: flex; flex-direction: column; gap: 6px; }
+.hub-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.hub-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.hub-slice-button {
+  padding: 4px 10px;
+  cursor: pointer;
+  text-align: center;
+  font-weight: 700;
+  background: rgba(88, 101, 242, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+}
+.hub-slice-button:hover { background: rgba(88, 101, 242, 0.5); }
+.hub-slice-button:active { background: rgba(88, 101, 242, 0.7); }
+
 /* Toasts (center top) */
 #hud-toast {
   position: absolute;

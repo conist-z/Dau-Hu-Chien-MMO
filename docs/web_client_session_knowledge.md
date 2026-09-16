@@ -467,3 +467,52 @@ và `buildWorld` đặt `this.lastAckedSeq = welcome.input_seq ?? -1`.
    (field này chỉ có ở bản mới) — nhanh hơn đoán "đã Restart chưa".
 3. Nhớ: đi bộ trong probe phải theo kiểu report dần (client-authoritative),
    server converge có cap tốc độ; dừng report là server đứng im.
+
+## 9. Discord client NGƯNG phát triển (quyết định 17/09)
+
+**Discord UI (hub message, D-pad, hub image, persistent views phía bot) tạm
+ngưng build tiếp.** Mọi tính năng UI mới chỉ làm trên **web client**
+(`web_client/`). Phía bot giữ nguyên hiện trạng: chỉ sửa bug nghiêm trọng,
+không thêm tính năng mới.
+
+## 10. Hub bar dọc Kaetram (web client) — kiến trúc + sprite data
+
+Thanh nút dọc sát mép phải, ngay trên khung chat, mở các "page" kiểu Kaetram.
+Code: `web_client/src/hub_bar.ts` (bar + sprite mapping), `hub_pages.ts`
+(nội dung từng trang), CSS `#hud-hub / #hub-bar / #hub-page` trong
+`styles.css`, container nằm **bên trong `#hud-chat`** để neo tự động sát mép
+trên khung chat + lề phải màn hình.
+
+### Bản chất mô hình (Kaetram parity)
+- Bar = tập nút cố định; bấm nút = **toggle** trang; mở trang này tự đóng
+  trang kia; 1 trang chính mở tại 1 thời điểm; nút có active state.
+- Trang là **DOM overlay** chồng trên canvas game (KHÔNG vẽ trong canvas).
+- Inventory KHÔNG nằm ở đây — client đã có sẵn panel bag riêng (nút "Túi đồ"
+  route sang panel đó). Nút "Chat" chỉ focus `#chat-input`.
+
+### Sprite `hud_buttons.png` (assets Kaetram, đã tải về
+`web_client/public/ui/kaetram/interface/`)
+- Layout: **3 cột trạng thái × 10 hàng nút, cell 22×25** (cột: thường /
+  hover / active). Background-size tổng: **132×500px** (đã scale ×2 từ 66×250
+  gốc để nét trên màn retina).
+- Mapping hàng ↔ nút (nguồn `_buttons.scss` gốc của Kaetram, hàng từ trên
+  xuống): `0` map/warp, `1` profile, `2` inventory/bag, `3` settings,
+  `4` achievements, `5` quests, `6` friends, `7` guilds, `8` chat,
+  `9` leaderboards. Mapping trong `hub_bar.ts` (`HUB_BUTTONS`), vị trí cắt
+  = `col * 44px, row * 50px` (đơn vị đã scale).
+- Khung panel dùng `slices/container.png` (9-slice): `border-image-slice` cần
+  **`44%`** (KHÔNG phải `44`) thì góc mới không gãy.
+- PNG gốc có màu lỗi khi tải trực tiếp (`hud_buttons.png` từ branch develop
+  decode sai màu) → đang dùng bản `hud_buttons_rgb.png` đã convert RGB. Nếu
+  tải lại, nhớ kiểm màu.
+
+### Wire-up (điểm cắm)
+- `ui.ts`: build bar + container trong `buildHud`, expose
+  `setHubScene/gameData/...`; bar ẩn/hiện theo gate (`hideGate` khi vào game,
+  `showGate` khi ra lobby).
+- `main.ts`: sau khi có scene + snapshot → feed dữ liệu (map id/name/size,
+  player quanh, HP/mana/xu/tinh thể, ping) → `hubPages.render()` khi mở.
+- Nút bar gọi callback `onPage` trong `hub_pages.ts` — return `true` = đã tự
+  xử lý (inventory/chat, không mở container), `false` = render trang vào
+  `#hub-page`.
+- Đóng trang: nút X, hoặc bấm lại đúng nút đang active, hoặc mở nút khác.

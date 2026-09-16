@@ -29,6 +29,9 @@ import {
   PURSE_COIN_X, PURSE_CRYSTAL_X, PURSE_DIGIT,
   itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
+import { HubBar } from "./hub_bar";
+import type { HubPageId } from "./hub_bar";
+import { HubPages, type SelfInfo } from "./hub_pages";
 
 // Animated pixel weather icons copied from the Discord hub renderer
 // (assets/gui/weather/<key>/frame_*.png -> public/ui/hud/weather/). One frame
@@ -166,6 +169,16 @@ export class Hud {
   private selectedQuick: number | null = null; // quick-craft catalog index
   private nearTable = false; // updated from snapshots (server truth)
 
+  // ---- Kaetram-style vertical hub bar (right edge, above chat) ----
+  hubBar: HubBar;
+  hubPages: HubPages | null = null;
+  /** Live self info mirror for the hub pages (setBars/setPurse/setPing
+   *  and main.ts feed it; the map/profile pages read it on render). */
+  private hubSelf: SelfInfo = {
+    name: "—", hp: 0, maxHp: 0, mana: 0, maxMana: 0,
+    coins: 0, crystals: 0, pingMs: null, mapName: "—", mapSize: [0, 0],
+  };
+
   // ---- Quick-craft catalog SCROLL (mouse wheel over the LIGHT grid) ----
   // The 3×5 grid shows a WINDOW into the recipe list; `craftScroll` is the
   // index of the first visible recipe OF THE ACTIVE FILTER. Scroll bounds
@@ -248,6 +261,33 @@ export class Hud {
   private onCollect: ((slot: number | null) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
   constructor() {
+    // Kaetram hub bar: built FIRST (DOM nodes exist in index.html) so the
+    // pages can be wired before any snapshot arrives.
+    this.hubBar = new HubBar();
+    this.hubBar.onPage = (page: HubPageId): boolean => {
+      // Inventory button = the EXISTING bag panel (user: bag already own).
+      // Its open/close mirrors the bar's own single-page rule: opening the
+      // bag closes any open hub page; closing the bag does not reopen one.
+      if (page === "inventory") {
+        if (this.invPanel.classList.contains("hidden")) {
+          this.hubBar.close();
+          this.toggleInventory(true);
+        } else {
+          this.toggleInventory(false);
+        }
+        return true;
+      }
+      // Chat button = focus the chat input (typing goes to chat, not world).
+      if (page === "chat") {
+        this.chatInput.focus();
+        return true;
+      }
+      // Any hub page opening closes the bag (one primary window at a time).
+      if (!this.invPanel.classList.contains("hidden")) {
+        this.toggleInventory(false);
+      }
+      return false; // page falls through to the hub container
+    };
     this.chatForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = this.chatInput.value.trim();
@@ -1660,6 +1700,8 @@ export class Hud {
 
   hideGate(): void {
     this.gateEl.classList.add("hidden");
+    // Player is in-game now: reveal the Kaetram hub bar.
+    this.hubBar.show();
   }
 
   setLoginButton(enabled: boolean, label = "🔑 Đăng nhập Discord"): void {
@@ -2376,6 +2418,43 @@ export class Hud {
 
   onSlotSelect(cb: (slot: number) => void): void {
     this.onSelectSlot = cb;
+  }
+
+  // ----- Kaetram hub bar wiring (pages fed from live client state) -----
+
+  /** Wire the hub pages to the Phaser scene (map minimap + debug toggle).
+   *  Called once from main.ts after both exist. */
+  attachHubPages(scene: import("./game").WorldScene, onPlayerPick: (p: import("./protocol").PlayerPayload) => void): void {
+    this.hubPages = new HubPages(this.hubBar, scene);
+    this.hubPages.onPlayerPick = onPlayerPick;
+    // The bar itself drives rendering: every open/switch paints the page
+    // body here (single path — no stale empty container after clicks).
+    this.hubBar.onOpen = (_page) => this.hubPages?.render();
+    this.hubBar.onToggleDebug = () => {
+      scene.debugEnabled = !scene.debugEnabled;
+      const dbg = document.getElementById("desync-debug");
+      if (dbg) dbg.style.display = scene.debugEnabled ? "block" : "none";
+      if (this.hubBar.current === "settings") this.hubPages?.render();
+    };
+    this.hubBar.onLogout = () => location.reload();
+  }
+
+  /** Feed the profile/map pages with live self info (cheap mirror —
+   *  setters below already run on every snapshot). */
+  setHubSelf(patch: Partial<SelfInfo>): void {
+    Object.assign(this.hubSelf, patch);
+    this.hubPages?.setSelf(this.hubSelf);
+  }
+
+  /** Feed the players page with the snapshot's player list. */
+  setHubPlayers(list: import("./protocol").PlayerPayload[]): void {
+    this.hubPages?.setPlayers(list);
+  }
+
+  /** Open a hub page (render happens inside HubPages.render). */
+  openHubPage(page: HubPageId): void {
+    this.hubBar.open(page);
+    this.hubPages?.render();
   }
 
   /** Register bag-sync + reorder callbacks (server round-trips). */
