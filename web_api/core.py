@@ -1436,6 +1436,14 @@ class WebHub:
         except ValueError:
             path = None  # type: ignore[assignment]
         b64 = None
+        if path is not None and not Path(path).exists() and name.startswith("tilesets/"):
+            # Fallback: the sheet may ship INSIDE the map's own folder
+            # (ekonia maps: "tiles/ekonia_baked.png" next to the JSON, not in
+            # assets/tilesets). Search every map-JSON sibling dir for the
+            # basename so converted maps never bake black.
+            for cand in ASSETS_DIR.rglob(safe):
+                path = cand
+                break
         if path is not None and Path(path).exists():
             try:
                 b64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
