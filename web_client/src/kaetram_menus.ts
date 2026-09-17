@@ -14,6 +14,13 @@ export abstract class Menu {
   protected container: HTMLElement;
   protected close: HTMLElement;
   protected button: HTMLElement | null;
+  /** Pending fadeOut timer — cancelled by fadeIn so a quick
+   *  hide→show sequence can't close the freshly-opened menu
+   *  (the "mở lên là tự tắt" bug). */
+  private fadeTimer: number | null = null;
+  /** Authoritative visibility flag — style.display lags behind the fade
+   *  animation, so isVisible() must NOT read it. */
+  private shown = false;
 
   constructor(containerName: string, closeButton?: string, toggleButton?: string) {
     this.container = document.querySelector(containerName)!;
@@ -30,11 +37,13 @@ export abstract class Menu {
 
   public show(): void {
     this.showCallback?.();
+    this.shown = true;
     this.button?.classList.add("active");
     this.fadeIn(this.container);
   }
 
   public hide(): void {
+    this.shown = false;
     this.button?.classList.remove("active");
     this.fadeOut(this.container);
   }
@@ -45,13 +54,17 @@ export abstract class Menu {
   }
 
   public isVisible(): boolean {
-    const d = this.container.style.display;
-    // fadeIn sets explicit flex; CSS default is none (hidden) until shown.
-    return d === "flex" || (d !== "none" && d !== "" && d !== "");
+    return this.shown;
   }
 
   /** Util.fadeIn parity — original uses opacity+display transitions. */
   protected fadeIn(el: HTMLElement): void {
+    // Cancel any pending fadeOut — otherwise its timer fires after we've
+    // re-shown and slams display back to none (auto-close bug).
+    if (this.fadeTimer !== null) {
+      window.clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+    }
     el.style.removeProperty("display");
     // slice-container default is display:none in CSS; Kaetram's Util sets
     // display flex + animates opacity.
@@ -65,9 +78,11 @@ export abstract class Menu {
   }
 
   protected fadeOut(el: HTMLElement): void {
+    if (this.fadeTimer !== null) window.clearTimeout(this.fadeTimer);
     el.style.transition = "0.25s opacity linear";
     el.style.opacity = "0";
-    window.setTimeout(() => {
+    this.fadeTimer = window.setTimeout(() => {
+      this.fadeTimer = null;
       el.style.display = "none";
       el.style.removeProperty("opacity");
       el.style.removeProperty("transition");
@@ -436,17 +451,35 @@ export class Equipments extends Menu {
     // Unequip on click (original behavior — server decides if allowed).
     for (const [key, el] of Object.entries(this.slots))
       el.addEventListener("click", () => this.unequipCallback?.(key));
+    // Placeholder icons for every unequipped slot (Kaetram's
+    // Util.getEquipmentPlaceholderURL parity) — the bare page looked
+    // "empty/broken"; with placeholders it reads as the real paperdoll.
+    this.showPlaceholders();
+    // Stats render as "Crush: 0" etc. instead of bare labels until the
+    // server provides real bonuses.
+    this.fillStats("#attack-stats", {});
+    this.fillStats("#defense-stats", {});
+    this.fillStats("#bonuses", {});
+  }
+
+  /** Fill every slot with its grey placeholder icon. */
+  private showPlaceholders(): void {
+    for (const [key, el] of Object.entries(this.slots))
+      el.style.backgroundImage =
+        `url("/ui/kaetram/interface/equipment/${key}.png")`;
   }
 
   public onUnequip(cb: (slot: string) => void): void {
     this.unequipCallback = cb;
   }
 
-  /** synchronize() parity: fill slot images + stat rows from display data. */
+  /** synchronize() parity: fill slot images + stat rows from display data.
+   *  Slots without data fall back to their placeholder icon. */
   public synchronize(display: EquipmentDisplay): void {
     for (const [key, el] of Object.entries(this.slots)) {
       const data = display.slots[key.replace("-skin", "Skin") as string] ?? display.slots[key];
-      el.style.backgroundImage = data?.iconUrl ?? "";
+      el.style.backgroundImage =
+        data?.iconUrl ?? `url("/ui/kaetram/interface/equipment/${key}.png")`;
     }
     const countEl = document.querySelector(".equipment-slot-arrows-count");
     const arrows = display.slots["arrows"];
@@ -464,7 +497,7 @@ export class Equipments extends Menu {
       for (const label of labels) {
         const el = root.querySelector(label);
         const key = label.replace(".", "");
-        if (el) el.innerHTML = `${el.innerHTML.split(":")[0]}: ${values[key] ?? "—"}`;
+        if (el) el.innerHTML = `${el.innerHTML.split(":")[0]}: ${values[key] ?? "0"}`;
       }
     }
   }

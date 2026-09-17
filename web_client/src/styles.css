@@ -217,13 +217,15 @@ html, body {
    we lift the bar above our chat frame to keep the same corner look).
    NOTE: #hud-hub is inset:0 of #hud-chat, so ITS bottom == chat bottom;
    `bottom: 100%` anchors the bar's BOTTOM edge to the hub's TOP edge. */
-/* Specificity bump (2 ids) so this wins over the compiled sheet that loads
-   after us — their rule sets bottom:0 (screen corner). */
+/* The bar as a VERTICAL column (user spec): pinned to the right edge,
+   anchored to the chat frame's top border. 2-id prefix wins the cascade
+   over the compiled sheet that loads after us. */
 #hud-hub #hud-hub #buttons,
 #hud-chat #hud-hub #buttons {
+  flex-direction: column;
   bottom: 100%;
+  right: 6px;
   margin-bottom: 2px;
-  padding-right: 6px;
   pointer-events: auto;
 }
 /* Page containers (slice-container/slice-page/map-frame) center on the

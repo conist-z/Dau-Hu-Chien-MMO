@@ -2480,15 +2480,19 @@ export class Hud {
         case "chat-button":
           this.chatInput.focus();
           break;
-        case "quests-button": this.kQuests.toggle(); break;
-        case "achievements-button": this.kAchievements.toggle(); break;
-        case "settings-button": this.kSettings.toggle(); break;
-        case "warp-button": this.kWarp.toggle(); break;
-        case "leaderboard-button": this.kLeaderboards.toggle(); break;
-        case "profile-button": this.kEquipments.toggle(); break;
+        case "profile-button":
+          // The Equipments menu binds #equipment-button (inside the profile
+          // page, original behavior); the main-bar profile button is driven
+          // here — a single extra trigger, no double-toggle.
+          this.kEquipments.toggle();
+          break;
         case "guildss-button": case "friends-button":
           this.toast("Chưa có hệ thống này trên server.");
           break;
+        // quests/achievements/settings/warp/leaderboard/profile buttons are
+        // bound by each Menu itself (original Kaetram behavior) — do NOT
+        // toggle here too or every click fires twice and the page closes
+        // itself instantly (the auto-close bug).
       }
     });
   }
