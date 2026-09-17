@@ -99,6 +99,18 @@ def _resolve_tilesets(tilesets, assets_dir: Path,
         img = ts.get("image")
         if not img:
             continue
+        # Preserve hand-drawn Tile Collision Editor data: Tiled stores it as
+        # ts["tiles"][i]["objectgroup"]["objects"] (rect/ellipse/polygon per
+        # tile index). tile_masks rasterizes these into the sub-tile mask,
+        # OVERRIDING the alpha-derived shape — manual wins, "cho chắc".
+        hand_tiles = ts.get("tiles") if isinstance(ts.get("tiles"), list) else None
+        hand_collision = None
+        if hand_tiles:
+            hand_collision = {
+                t.get("id"): t["objectgroup"]
+                for t in hand_tiles
+                if isinstance(t, dict) and t.get("objectgroup")
+            } or None
         rel = Path(img)
         candidates = [
             *([assets_dir / map_dir / rel] if map_dir else []),
@@ -121,6 +133,7 @@ def _resolve_tilesets(tilesets, assets_dir: Path,
                     "columns": ts.get("columns", 1),
                     "tilewidth": ts.get("tilewidth", 32),
                     "tilecount": ts.get("tilecount"),
+                    "hand_collision": hand_collision,
                 }
             )
             continue
@@ -131,6 +144,7 @@ def _resolve_tilesets(tilesets, assets_dir: Path,
                 "columns": ts.get("columns", 1),
                 "tilewidth": ts.get("tilewidth", 32),
                 "tilecount": ts.get("tilecount"),
+                "hand_collision": hand_collision,
             }
         )
     return resolved
@@ -224,16 +238,24 @@ def _is_blocking_layer(nl: str) -> bool:
         # not a wall — players spawn on it and step off it.
         return False
     if "cua" in nl and "tuong tac" in nl:
-        # "cửa ...(tương tác được)" layers are DOORS: portal triggers, not
-        # walls (players teleport when stepping on them).
-        return False
+        # "cửa ...(tương tác được)" layers are DOORS: SOLID. The portal is a
+        # pressure gate — touching the door tile teleports (travel.py), so
+        # the tile itself must never be enterable (user 17/09: "không cho đi
+        # xuyên", "1 block chặn hẳn hoi"). Carving the door walkable is what
+        # let players walk through non-portal doors (the left monster door).
+        return True
+    if "khong di xuyen" in nl or "khong di qua duoc" in nl:
+        # montertradebase names its furniture/decor layers e.g.
+        # "bàn(không đi xuyên được)" / "ghế(không đi xuyên được)" —
+        # the author's intent is in the NAME, so honor it data-driven.
+        return True
     return (
         "collision" in nl
         or "va cham" in nl
         or "vacham" in nl
         or "tuong" in nl  # "tường(...)" normalises to "tuong(...)"
         or "wall" in nl
-        or "tang đa" in nl  # "tảng đá(...)" ASCII-folds to "tang đa(...)"
+        or "tang da" in nl  # "tảng đá(...)" ASCII-folds to "tang da(...)"
         or "rock" in nl
         or "cây" in nl  # "cây(...)" layer (lobbytrade trees)
         # bigmap "cây" folds to "cay" (no diacritics survive NFKD for this
@@ -250,15 +272,20 @@ def _is_blocking_layer(nl: str) -> bool:
 
 def _is_wall_like_layer(nl: str) -> bool:
     """True for layers whose tiles must keep FULL SQUARE collision — walls,
-    buildings, water: near-solid textures where a mask hole reads as walking
-    through the wall. Decor-ish blockers (trees/bushes/rocks/torches) are the
-    only ones refined to their pixel shape."""
+    buildings, water AND furniture/decor blockers: near-solid textures where
+    a mask hole reads as walking through the object. Decor-ish blockers that
+    benefit from pixel-shape refinement are TREES/bushes/rocks/torches on
+    tree-ish layers only."""
     return (
         "building" in nl
         or "tuong" in nl
         or "wall" in nl
         or "nuoc" in nl
         or "water" in nl
+        or "khong di xuyen" in nl
+        # montertradebase furniture: "bàn"/"ghế"/"vật trang trí"
+        or "ban(" in nl or "ghe(" in nl
+        or ("vat trang tri" in nl and "di xuyen" in nl)
     )
 
 
@@ -291,7 +318,10 @@ def _normalize_layer_name(name: str) -> str:
     import unicodedata
 
     nfkd = unicodedata.normalize("NFKD", name or "")
-    return "".join(ch for ch in nfkd if not unicodedata.combining(ch)).lower()
+    folded = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+    # NFKD does NOT decompose "đ" — fold it manually so layer names like
+    # "bàn(không đi xuyên được)" match ASCII checks data-driven.
+    return folded.replace("đ", "d").replace("Đ", "d").lower()
 
 
 def _walkable_overrides(
@@ -309,23 +339,15 @@ def _walkable_overrides(
         nl = _normalize_layer_name(name)
         is_stair = "cau thang" in nl or "stair" in nl
         is_bridge = "cay cau" in nl or "bridge" in nl
-        # Doors ("cửa ...(tương tác được)") must be STEPPABLE: they are
-        # portal triggers, not walls (players teleport through them).
-        is_door = "cua" in nl and "tuong tac" in nl
-        if not is_stair and not is_bridge and not is_door:
+        # Doors are NOT carved: they are solid (portal fires on touch).
+        if not is_stair and not is_bridge:
             continue
-        if is_door:
-            # Carve exactly the door tiles (no above/below spread).
-            carve_y = False
-        else:
-            carve_y = not is_bridge
+        carve_y = not is_bridge
         for y, row in enumerate(grid):
             for x, gid in enumerate(row):
                 if not gid:
                     continue
-                if is_door:
-                    carve = ((x, y),)
-                elif is_bridge:
+                if is_bridge:
                     carve = ((x, y),)
                 else:
                     carve = ((x, y), (x, y - 1), (x, y + 1))
@@ -360,6 +382,66 @@ def _first_walkable(collision: List[List[int]]) -> tuple:
     return (0, 0)
 
 
+def _art_mask(
+    tile_layers: List[Tuple[str, List[List[int]]]], width: int, height: int
+) -> Optional[List[List[bool]]]:
+    """True where ANY layer paints a tile — the drawn-art region. Spawn must
+    live here, never in the empty void around converted maps."""
+    if not tile_layers:
+        return None
+    mask = [[False] * width for _ in range(height)]
+    for _name, grid in tile_layers:
+        for y, row in enumerate(grid):
+            if y >= height:
+                break
+            mrow = mask[y]
+            for x, gid in enumerate(row):
+                if x < width and gid:
+                    mrow[x] = True
+    return mask
+
+
+def _centered_walkable(
+    collision: List[List[int]],
+    has_art: Optional[List[List[bool]]] = None,
+) -> tuple:
+    """Walkable tile CLOSEST TO CENTER, preferring tiles that carry art.
+
+    The old row-scan picked the FIRST collision==0 tile — on Ekonia maps that
+    is row 0's void (outside the drawn art, collision empty) so players
+    spawned off the map edge in the black. Center-first inside the art wins;
+    falls back to any walkable tile, then (0,0).
+    """
+    h = len(collision)
+    if h == 0:
+        return (0, 0)
+    w = len(collision[0])
+    cx, cy = w / 2, h / 2
+    best_any: tuple | None = None
+    best_any_d = 1e18
+    best_art: tuple | None = None
+    best_art_d = 1e18
+    for y in range(h):
+        row = collision[y]
+        art_row = has_art[y] if has_art is not None and y < len(has_art) else None
+        for x in range(w):
+            if row[x] != 0:
+                continue
+            d = (x - cx) ** 2 + (y - cy) ** 2
+            if d < best_any_d:
+                best_any_d = d
+                best_any = (x, y)
+            if art_row is not None and art_row[x]:
+                if d < best_art_d:
+                    best_art_d = d
+                    best_art = (x, y)
+    if best_art is not None:
+        return best_art
+    if best_any is not None:
+        return best_any
+    return (0, 0)
+
+
 def _walkable_at(collision: List[List[int]], x: int, y: int) -> bool:
     if not collision:
         return True
@@ -368,9 +450,33 @@ def _walkable_at(collision: List[List[int]], x: int, y: int) -> bool:
     return collision[y][x] == 0
 
 
+def _load_solids_cells(assets_dir: Path, map_id: str) -> List[Tuple[int, int]]:
+    """Read ``<map>.solids.json`` (Ekonia companion) -> absolute tile coords.
+
+    The file maps a list of [x, y] cells (negative allowed — they mark the
+    "black" region outside the drawn art, which IS solid in Ekonia). Missing
+    file = no extras (Kaetram/bigmap don't ship one).
+    """
+    p = assets_dir / f"{map_id}.solids.json"
+    if not p.exists():
+        return []
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        cells = d.get("solid_cells") or []
+        return [(int(c[0]), int(c[1])) for c in cells]
+    except Exception:
+        return []  # malformed solids: never block map load
+
+
 def load_map(map_id: str, assets_dir: Path) -> MapData:
     data = _read_raw(assets_dir, map_id)
     is_tiled = "layers" in data and "tilesets" in data
+
+    # Ekonia companion solids file (<map>.solids.json): the source game's
+    # authoritative per-tile blocking ("các vật thể sẽ có box chạm") — pixel
+    # rects converted to tile coords, INCLUDING negative cells outside the
+    # drawn art. OR it into the derived collision so author intent wins.
+    solids_cells = _load_solids_cells(assets_dir, map_id)
 
     if not is_tiled:
         # Simple format (legacy test-map.json): width/height/collision/spawn.
@@ -413,7 +519,25 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         width = mx - ox + 1
         height = my - oy + 1
         tile_layers = _remap_layers(tile_layers, ox, oy, width, height)
+    elif solids_cells:
+        # A map whose art bbox is smaller than its solids (or vice versa):
+        # grow the grid to cover the solids too so no blocking cell is lost.
+        sx = [c[0] for c in solids_cells]
+        sy = [c[1] for c in solids_cells]
+        min_x, min_y = min(0, min(sx)), min(0, min(sy))
+        max_x = max(width - 1, max(sx))
+        max_y = max(height - 1, max(sy))
+        ox, oy = min_x, min_y
+        width = max_x - min_x + 1
+        height = max_y - min_y + 1
+        tile_layers = _remap_layers(tile_layers, ox, oy, width, height)
     collision = _collision_from_layers(tile_layers, width, height)
+    # OR in the Ekonia solids (already absolute tile coords): shift by the
+    # same bbox origin so grid space matches.
+    for cx, cy in solids_cells:
+        gx, gy = cx - ox, cy - oy
+        if 0 <= gx < width and 0 <= gy < height:
+            collision[gy][gx] = 1
     # Sub-tile masks: for every blocked tile, remember the blocking layer's
     # GID (topmost blocking layer wins) so tile_masks can derive the sprite's
     # real opaque shape from the tileset alpha.
@@ -523,9 +647,13 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         if layer_spawn is not None:
             spawn = (layer_spawn[0] - ox, layer_spawn[1] - oy)
     if spawn is None:
-        spawn = _first_walkable(collision)
+        spawn = _centered_walkable(
+            collision, _art_mask(tile_layers, width, height)
+        )
     if not _walkable_at(collision, spawn[0], spawn[1]):
-        spawn = _first_walkable(collision)
+        spawn = _centered_walkable(
+            collision, _art_mask(tile_layers, width, height)
+        )
     image_path = assets_dir / f"{map_id}.png"
     if not image_path.exists():
         image_path = None
