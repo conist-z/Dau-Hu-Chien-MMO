@@ -492,16 +492,23 @@ trên khung chat + lề phải màn hình.
 
 ### Sprite `hud_buttons.png` (assets Kaetram, đã tải về
 `web_client/public/ui/kaetram/interface/`)
-- Layout: **3 cột trạng thái × 10 hàng nút, cell 22×25** (cột: thường /
-  hover / active). Background-size tổng: **132×500px** (đã scale ×2 từ 66×250
-  gốc để nét trên màn retina).
+- Layout: **3 cột trạng thái × 14 hàng nút, cell 22×25** — sheet thật là
+  **66×350** (ĐÃ VERIFY bằng render grid; doc cũ ghi 66×250 là SAI và làm
+  méo toàn bộ icon 1.4× — đừng lặp lại). Rows 0–9 = 10 nút, rows 10–12
+  TRỐNG, row 13 = khung nút trống màu xanh (dùng làm nền cho nút Trang bị
+  + đè icon `equipment/weapon.png`). Cột: thường / hover / active.
+  Background-size tổng: **132×700px** (scale ×2).
 - Mapping hàng ↔ nút (nguồn `_buttons.scss` gốc của Kaetram, hàng từ trên
-  xuống): `0` map/warp, `1` profile, `2` inventory/bag, `3` settings,
-  `4` achievements, `5` quests, `6` friends, `7` guilds, `8` chat,
-  `9` leaderboards. Mapping trong `hub_bar.ts` (`HUB_BUTTONS`), vị trí cắt
-  = `col * 44px, row * 50px` (đơn vị đã scale).
+  xuống): `0` inventory/bag, `1` chat, `2` leaderboard, `3` map/warp,
+  `4` settings, `5` profile, `6` quests, `7` guilds, `8` friends,
+  `9` achievements, `13` khung trống (equipment). Mapping trong
+  `hub_bar.ts` (`ROW_BY_PAGE`), vị trí cắt = `col * 44px, row * 50px`
+  (đơn vị đã scale).
 - Khung panel dùng `slices/container.png` (9-slice): `border-image-slice` cần
   **`44%`** (KHÔNG phải `44`) thì góc mới không gãy.
+- Khung trang được neo TRÊN NÚT bar bằng CSS var
+  `--hub-bar-h` (đo thật từ bar trong `hub_bar.ts`, ghi vào `#hud-hub`) —
+  KHÔNG hard-code px vì bar cao ~530px, đoán sai là trang đè lên nút giữa.
 - PNG gốc có màu lỗi khi tải trực tiếp (`hud_buttons.png` từ branch develop
   decode sai màu) → đang dùng bản `hud_buttons_rgb.png` đã convert RGB. Nếu
   tải lại, nhớ kiểm màu.
