@@ -72,31 +72,85 @@ const result = sass.compile(ENTRY, {
 });
 
 let css = result.css;
+css = css.replaceAll("/img/interface/", "/ui/kaetram/interface/");
 
-// The entry @use's files directly — preprocess must run per-file, so if any
-// --portrait tokens survived, fix them in the output (they'd error earlier).
-css = css
-  .replaceAll("/img/interface/", "/ui/kaetram/interface/")
-  // Kaetram's reset hides cursors / sets absolute positioning for their
-  // canvas stack — those rules are game-scoped under #game-container etc.
-  // They are harmless for us but we keep them for fidelity.
-  ;
+// ---- SCOPE ----
+const GLOBAL_SELECTORS = [
+  /^html, body$/, /^body, div,/, /^body, button,/, /^h1, h2, h3,?$/,
+  /^canvas$/, /^::-webkit-scrollbar/, /^select$/, /^button, html \[type=button\]/,
+  /^audio:not\(\[controls\]\)$/, /^\[hidden\]$/, /^b, strong$/, /^i, em$/,
+];
 
-fs.writeFileSync(OUT, `/* GENERATED from Kaetram-Open scss/game (MPL-2.0) by scripts/compile_kaetram_css.mjs — do not edit by hand. Re-run: node scripts/compile_kaetram_css.mjs */\n${css}`);
-console.log(`compiled ${css.length} bytes -> ${OUT}`);
+// Parse top-level blocks and filter/scope them.
+function transformCss(source) {
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    // find selector block or at-rule
+    const braceStart = source.indexOf("{", i);
+    if (braceStart === -1) break;
+    const selector = source.slice(i, braceStart).trim();
+    // find matching close brace
+    let depth = 1, j = braceStart + 1;
+    while (j < n && depth > 0) {
+      if (source[j] === "{") depth++;
+      else if (source[j] === "}") depth--;
+      j++;
+    }
+    const body = source.slice(braceStart + 1, j - 1);
 
-// Also compile the BASE layer (fonts + reset + utils) and prepend it —
-// the game scss relies on its font-faces and box-sizing defaults.
-const BASE = path.join(REPO, "scss/base/_index.scss");
-const baseResult = sass.compile(BASE, {
-  loadPaths: [path.join(REPO, "scss"), path.join(REPO, "scss/base")],
-  quietDeps: true,
-});
-const fontCss = baseResult.css
-  .replaceAll("/fonts/", "/fonts/")
-  .replaceAll("url('/fonts/advocut/", "url('/fonts/advocut/");
+    if (selector.startsWith("@media") || selector.startsWith("@supports")) {
+      // recurse into the at-rule body
+      out += `${selector} {${transformCss(body)}}\n`;
+    } else if (selector.startsWith("@")) {
+      // keyframes / font-face / custom-media — keep as-is
+      out += `${selector} {${body}}\n`;
+    } else {
+      const sel = selector.replace(/\s+/g, " ").trim();
+      const isGlobal = GLOBAL_SELECTORS.some((re) => re.test(sel)) ||
+        /^body$/.test(sel) || /^html$/.test(sel) || /^\*$/.test(sel);
+      if (!isGlobal) {
+        // Scope every comma-separated selector under #hud-hub.
+        const scoped = sel
+          .split(",")
+          .map((s) => {
+            s = s.trim();
+            if (!s) return s;
+            if (s.startsWith("#hud-hub")) return s;
+            // keyframes percentage selectors or bare tokens — leave
+            if (/^(from|to|\d+%|\d+\.\d+%)$/.test(s)) return s;
+            return `#hud-hub ${s}`;
+          })
+          .join(", ");
+        out += `${scoped} {${body}}\n`;
+      }
+    }
+    i = j;
+    // skip whitespace between blocks
+    while (i < n && /\s/.test(source[i])) i++;
+  }
+  return out;
+}
+
+css = transformCss(css);
+
+// The bar itself IS inside #hud-hub; font families for scoped elements come
+// from their own rules. Re-add a minimal font scope so the Kaetram pages
+// render with their own typefaces without touching the rest of the app.
+css = `#hud-hub { font-family: Monogram, "AdvoCut Fallback", arial, sans-serif; }
+#hud-hub h1, #hud-hub h2, #hud-hub h3 { font-family: Fibberish, Monogram, AdvoCut, arial, sans-serif; }
+${css}`;
+
+// Also compile the BASE layer for its @font-face declarations ONLY —
+// the base reset (body/button/h1 global rules) is deliberately NOT merged
+// because it would restyle our own HUD; fonts are what the game scss needs.
+const BASE = path.join(REPO, "scss/base/impl/_fonts.scss");
+const fontResult = sass.compile(BASE, { quietDeps: true });
+const fontCss = fontResult.css;
+
 fs.writeFileSync(
   OUT,
   `/* GENERATED from Kaetram-Open scss (MPL-2.0) by scripts/compile_kaetram_css.mjs — do not edit by hand. Re-run: node scripts/compile_kaetram_css.mjs */\n${fontCss}\n${css}`
 );
-console.log(`merged base fonts+reset (${fontCss.length}) + game (${css.length})`);
+console.log(`merged font-faces (${fontCss.length}) + scoped game css (${css.length})`);

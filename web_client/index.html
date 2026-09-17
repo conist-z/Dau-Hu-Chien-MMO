@@ -50,11 +50,12 @@
                INSIDE #hud-chat so it anchors to the chat frame's top edge
                whatever height the log grows to (user spec: sát mép trên
                khung chat, lề phải màn hình). -->
-          <div id="hud-hub"></div>
+          <div id="hud-hub">
           <!-- Kaetram ORIGINAL UI (ported verbatim from game.astro): the
                button bar + every page container, exact ids/classes so the
                compiled kaetram_ui.css (their own scss) styles it 1:1.
-               Bar is re-laid out vertical via #hud-hub overrides. -->
+               EVERYTHING lives inside #hud-hub because the compiled CSS is
+               scoped to it (keeps their reset/fonts off our HUD/hotbar). -->
           <ul id="buttons">
             <li><div id="inventory-button"></div></li>
             <li><div id="achievements-button"></div></li>
@@ -208,6 +209,7 @@
             <div id="warp5" class="map-button"></div>
             <div id="close-map-frame" class="close-container"></div>
           </div>
+          </div><!-- /#hud-hub -->
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>
