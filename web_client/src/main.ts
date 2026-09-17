@@ -248,6 +248,10 @@ function onBlockingAssetDone(key: string): void {
   hud.tickLoading();
 }
 
+// DEBUG HANDLE: expose the Phaser game for console probes (preview_evaluate).
+(window as unknown as { game: Phaser.Game }).game = game;
+// (window.net is attached right after `const net = new Net(...)` below.)
+
 const net = new Net({
   onRtt: (rttMs) => {
     scene.setNetRtt(rttMs);
@@ -548,6 +552,26 @@ const net = new Net({
 // position (see Net.flushInput) so the server body can never drift from what
 // the player sees — the "đứng yên mà hitbox ở chỗ khác" fix.
 net.idlePosHook = () => scene.getSelfPos();
+
+// DEBUG HANDLE: window.net for console probes (preview_evaluate).
+(window as unknown as { net: Net }).net = net;
+
+// F3 collision debug (lobby checkbox or F3 key): paint collision tiles red.
+window.addEventListener("toggle-collision", (e) => {
+  scene.setCollisionDebug(Boolean((e as CustomEvent).detail));
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F3") {
+    e.preventDefault();
+    const cb = document.getElementById("show-collision") as HTMLInputElement | null;
+    if (cb) {
+      cb.checked = !cb.checked;
+      scene.setCollisionDebug(cb.checked);
+    } else {
+      scene.setCollisionDebug(!scene.getCollisionDebug());
+    }
+  }
+});
 
 // ---- DESYNC DEBUG (F3 toggle) -------------------------------------------
 // On-screen panel (10 Hz): predicted vs server position, divergence, ack seq,

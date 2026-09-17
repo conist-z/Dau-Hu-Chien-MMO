@@ -1817,11 +1817,23 @@ export class Hud {
       const v = input.value.trim();
       if (v && this.onPreviewMap) this.onPreviewMap(v);
     };
+    // F3 toggle: server paints collision tiles in RED over the map —
+    // visual check of solids vs art without leaving the game.
+    const cb = document.createElement("label");
+    cb.style.cssText = "margin-left:8px; font-size:11px; user-select:none";
+    const cbx = document.createElement("input");
+    cbx.type = "checkbox";
+    cbx.id = "show-collision";
+    cb.append(cbx, document.createTextNode(" F3: xem collision"));
+    cbx.addEventListener("change", () => {
+      window.dispatchEvent(new CustomEvent("toggle-collision", { detail: cbx.checked }));
+    });
+    row.append(input, btn, cb);
     btn.addEventListener("click", go);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") go();
     });
-    row.append(input, btn);
+    row.append(input, btn, cb);
     this.listEl.appendChild(row);
   }
 

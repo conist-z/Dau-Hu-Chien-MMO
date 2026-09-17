@@ -291,15 +291,13 @@ class WebHub:
         if sess.channel_id:
             self.manager.drop_web_session(sess.channel_id, sess.user_id)
         channel_id = sess.user_id ^ 0x5EED000000000000  # synthetic preview id
-        if self.manager.get_runtime(channel_id) is None:
-            self.manager.create_runtime(channel_id, map_id)
-        else:
-            # Preview channel reused: switch map if requested differs.
-            rt = self.manager.get_runtime(channel_id)
-            assert rt is not None
-            if rt.map_data.map_id != map_id:
-                self.manager.remove_runtime(channel_id)
-                self.manager.create_runtime(channel_id, map_id)
+        # ALWAYS recreate: asset fixes on disk (solids.json, map JSON) must
+        # reach the next preview click WITHOUT a bot restart — reusing the
+        # cached runtime served stale map data after every redeploy.
+        old = self.manager.get_runtime(channel_id)
+        if old is not None:
+            self.manager.remove_runtime(channel_id)
+        self.manager.create_runtime(channel_id, map_id)
         sess.channel_id = channel_id
         ok = self.manager.register_web_session(channel_id, sess.user_id, sess.display_name)
         if not ok:

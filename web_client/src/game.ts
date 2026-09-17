@@ -199,6 +199,7 @@ export class WorldScene extends Phaser.Scene {
   private selfX = 0; // predicted float position, TILE units
   private selfY = 0;
   private collision: number[][] = []; // collision[y][x] = 1 blocks
+  private collisionDebug: Phaser.GameObjects.Graphics | null = null;
   // Sub-tile alpha masks (server: rendering/tile_masks.py). Key "x,y" ->
   // bitfield (res=8): bit my*res+mx = opaque sub-cell. Only PARTIAL tiles
   // (server strips near-full/empty ones) appear here — everything else uses
@@ -3053,6 +3054,30 @@ export class WorldScene extends Phaser.Scene {
 
   setSelectedBlock(id: string): void {
     this.selectedBlock = id;
+  }
+
+  /** F3 debug: paint every collision tile RED over the map (viewport-wide
+   *  grid, follows the map origin exactly) so solids-vs-art mismatches are
+   *  visible in-game without any external tooling. */
+  getCollisionDebug(): boolean {
+    return this.collisionDebug !== null;
+  }
+
+  setCollisionDebug(on: boolean): void {
+    if (this.collisionDebug) {
+      this.collisionDebug.destroy();
+      this.collisionDebug = null;
+    }
+    if (!on) return;
+    const g = this.add.graphics().setDepth(900);
+    g.fillStyle(0xff2020, 0.45);
+    for (let y = 0; y < this.collision.length; y++) {
+      const row = this.collision[y];
+      for (let x = 0; x < row.length; x++) {
+        if (row[x]) g.fillRect(x * 32, y * 32, 32, 32);
+      }
+    }
+    this.collisionDebug = g;
   }
 
   /** Tile rows/columns the player box overlaps on one axis — a direct port
