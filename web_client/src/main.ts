@@ -928,6 +928,13 @@ hud.showScenarioList = (items, onPick) => {
   _paintScenarioList(items, onPick);
 };
 
+// Web map preview: type a map id in the lobby -> solo preview runtime.
+hud.onPreviewMap = (mapId) => {
+  pendingRejoinChannel = null;
+  net.previewMap(mapId);
+  hud.setLobbyStatus("Đang mở preview: " + mapId + "…");
+};
+
 // The server list is ALWAYS live while the lobby is open: refresh every 5s
 // and immediately when the socket (re)connects — no click needed.
 let lobbyListTimer: number | null = null;

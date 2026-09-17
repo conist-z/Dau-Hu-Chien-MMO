@@ -224,6 +224,12 @@ export class Net {
     this.send({ type: MSG_LIST });
   }
 
+  /** Web-only preview: join a solo runtime for any map in the catalog. */
+  previewMap(mapId: string): void {
+    this.lastChannel = ""; // not a Discord channel — skip auto-rejoin
+    this.send({ type: "map_preview", map_id: mapId });
+  }
+
   requestGuestJoin(guestId: string): void {
     this.send({ type: "guest_login", guest_id: guestId });
   }

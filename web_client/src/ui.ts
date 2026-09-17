@@ -1794,9 +1794,8 @@ export class Hud {
     this.listEl.innerHTML = "";
     if (items.length === 0) {
       const p = document.createElement("p");
-      p.textContent = "Chưa có map nào. Dùng /startmap trên Discord trước.";
+      p.textContent = "Chưa có map nào đang chạy — dùng ô Preview bên dưới để vào map bất kỳ.";
       this.listEl.appendChild(p);
-      return;
     }
     for (const it of items) {
       const b = document.createElement("button");
@@ -1811,7 +1810,33 @@ export class Hud {
       b.addEventListener("click", () => onPick(it.channel_id));
       this.listEl.appendChild(b);
     }
+    // ---- Web preview row: type a map id, press Preview to join a solo
+    // runtime for ANY map in the server catalog (no Discord needed).
+    const row = document.createElement("div");
+    row.className = "preview-row";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "preview-input";
+    input.placeholder = "map id: ekonia/forest, kaetram/world_r13_c8…";
+    input.spellcheck = false;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "scenario-btn preview-go";
+    btn.textContent = "Preview ▸";
+    const go = () => {
+      const v = input.value.trim();
+      if (v && this.onPreviewMap) this.onPreviewMap(v);
+    };
+    btn.addEventListener("click", go);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") go();
+    });
+    row.append(input, btn);
+    this.listEl.appendChild(row);
   }
+
+  /** Set by main.ts: launch a web preview session for the typed map id. */
+  onPreviewMap: ((mapId: string) => void) | null = null;
 
   // ----- HUD state -----
 

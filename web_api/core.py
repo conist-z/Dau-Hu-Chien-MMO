@@ -223,6 +223,19 @@ class WebHub:
                 return
             await self._handle_list(conn.session)
             return
+        if ftype == "map_preview":
+            # Web-only preview: spin up (or reuse) a solo preview runtime for
+            # any map id in the catalog and join it immediately. Discord
+            # clients never see these — preview runtimes live on a synthetic
+            # channel id (user_id xor mask) so they can't collide with real
+            # Discord channels.
+            if conn.session is None:
+                await self.send_to_client(
+                    cid, {"type": MSG_ERROR, "code": "not_joined"}
+                )
+                return
+            await self._handle_map_preview(conn, conn.session, frame)
+            return
         if conn.session is None or not conn.joined:
             await self.send_to_client(
                 cid, {"type": MSG_ERROR, "code": "not_joined"}
@@ -261,6 +274,47 @@ class WebHub:
         await self.send_to_client_conn(
             sess, {"type": "scenario_list", "items": items}
         )
+
+    async def _handle_map_preview(
+        self, conn: ClientConnection, sess: WebSession, frame: dict
+    ) -> None:
+        """Create/join a solo preview runtime for ``map_id`` (web client only)."""
+        from game.map_catalog import list_map_ids
+
+        map_id = str(frame.get("map_id", "")).strip()
+        if not map_id or map_id not in list_map_ids(self.manager.assets_dir):
+            await self.send_to_client(
+                conn.cid, {"type": MSG_ERROR, "code": "unknown_map"}
+            )
+            return
+        # Detach from any current scenario first.
+        if sess.channel_id:
+            self.manager.drop_web_session(sess.channel_id, sess.user_id)
+        channel_id = sess.user_id ^ 0x5EED000000000000  # synthetic preview id
+        if self.manager.get_runtime(channel_id) is None:
+            self.manager.create_runtime(channel_id, map_id)
+        else:
+            # Preview channel reused: switch map if requested differs.
+            rt = self.manager.get_runtime(channel_id)
+            assert rt is not None
+            if rt.map_data.map_id != map_id:
+                self.manager.remove_runtime(channel_id)
+                self.manager.create_runtime(channel_id, map_id)
+        sess.channel_id = channel_id
+        ok = self.manager.register_web_session(channel_id, sess.user_id, sess.display_name)
+        if not ok:
+            await self.send_to_client(
+                conn.cid, {"type": MSG_ERROR, "code": "scenario_missing_or_full"}
+            )
+            return
+        await self.manager.ensure_web_tick_async()
+        conn.session = sess
+        conn.joined = True
+        rt = self.manager.get_runtime(channel_id)
+        assert rt is not None
+        welcome = build_welcome(rt, sess.user_id)
+        await self.send_to_client(conn.cid, welcome)
+        self.start_snapshots()
 
     async def _handle_guest_login(self, cid: int, guest_id: str) -> None:
         """Quick-play: no Discord login — a stable per-browser guest id.
