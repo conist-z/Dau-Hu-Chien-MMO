@@ -199,84 +199,43 @@ html, body {
    rest/hover/active columns. Nested inside #hud-chat: anchored to the
    chat frame's TOP edge (bottom: 100%) and flush with the screen's right
    edge, whatever height the chat log grows to (user spec). */
+/* The ORIGINAL Kaetram bar starts hidden (gate/lobby covers the screen);
+   hud.hideGate() → hubBar.show() reveals it after joining. The compiled
+   kaetram_ui.css sets display:flex — override with !important since our
+   stylesheet loads first. */
+#hud-hub #buttons { display: none !important; }
+#hud-hub #buttons.shown { display: flex !important; }
 #hud-hub {
   position: absolute;
   inset: 0;
   pointer-events: none; /* children re-enable */
   z-index: 3;
 }
-#hub-bar {
-  position: absolute;
-  right: -11px; /* flush with the screen edge (chat padding + border) */
-  bottom: calc(100% + 4px); /* sits ON the chat frame's top border */
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 3px 2px 3px 0;
-  background: var(--hud-bg);
-  border: 1px solid var(--hud-border);
-  border-right: none;
-  border-radius: 10px 0 0 10px;
+/* The ORIGINAL Kaetram bar (horizontal row) — pinned to the right edge,
+   sitting ON TOP of the chat frame's top border (our chat lives bottom-
+   right; in Kaetram it's bottom-left so their bottom:0 is screen-corner —
+   we lift the bar above our chat frame to keep the same corner look).
+   NOTE: #hud-hub is inset:0 of #hud-chat, so ITS bottom == chat bottom;
+   `bottom: 100%` anchors the bar's BOTTOM edge to the hub's TOP edge. */
+/* Specificity bump (2 ids) so this wins over the compiled sheet that loads
+   after us — their rule sets bottom:0 (screen corner). */
+#hud-hub #hud-hub #buttons,
+#hud-chat #hud-hub #buttons {
+  bottom: 100%;
+  margin-bottom: 2px;
+  padding-right: 6px;
   pointer-events: auto;
 }
-.hub-btn {
-  cursor: pointer;
-  image-rendering: pixelated;
-  opacity: 0.92;
-  transition: opacity 0.08s ease-out;
+/* Page containers (slice-container/slice-page/map-frame) center on the
+   SCREEN in the original game — but our #hud-hub spans only the chat
+   frame, so their inset:0 margin:auto centering lands off-screen. Pin
+   them to the viewport instead (fixed = containing block is the screen).
+   2-id prefix wins the cascade over the compiled sheet that loads after. */
+#hud-chat #hud-hub .slice-container,
+#hud-chat #hud-hub .slice-page,
+#hud-chat #hud-hub #map-frame {
+  position: fixed;
 }
-.hub-btn:hover { opacity: 1; }
-/* Page container: Kaetram slice-container clone via border-image 9-slice.
-   Opens ABOVE the bar (bottom anchored to the bar's top), right-aligned. */
-#hub-page {
-  position: absolute;
-  right: 0;
-  /* Anchored ABOVE the bar: --hub-bar-h is measured from the real bar in
-     hub_bar.ts (a fixed 320px guess used to overlap the 530px bar). */
-  bottom: calc(100% + var(--hub-bar-h, 534px) + 8px);
-  width: 268px;
-  max-height: min(70vh, calc(100vh - var(--hub-bar-h, 534px) - 48px));
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  color: #eee;
-  background: rgba(10, 12, 18, 0.88);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-radius: 10px;
-  backdrop-filter: blur(4px);
-  pointer-events: auto;
-  font-family: "PixelTahoma", Tahoma, monospace;
-  font-size: 13px;
-}
-#hub-page.hidden { display: none; }
-.hub-page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-family: "Jacquard12", "PixelTahoma", monospace;
-  font-size: 20px;
-  color: #f2e6c8;
-}
-#hub-page-close {
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-  background: url("/ui/v5/atoms/close_small.png") no-repeat center / 14px 14px;
-  image-rendering: pixelated;
-  filter: brightness(1.6);
-}
-#hub-page-close:hover { filter: brightness(2.4); }
-.hub-slice-inner {
-  padding: 8px;
-  overflow-y: auto;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-}
-.hub-page-body { flex: 1; min-height: 120px; }
-.hub-page-foot { flex: 0; }
-.hub-page-foot.hidden { display: none; }
 .hub-stat-row {
   display: flex;
   justify-content: space-between;
