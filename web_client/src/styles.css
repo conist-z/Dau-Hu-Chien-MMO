@@ -231,9 +231,11 @@ html, body {
 #hub-page {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 320px); /* above the 10-button bar */
+  /* Anchored ABOVE the bar: --hub-bar-h is measured from the real bar in
+     hub_bar.ts (a fixed 320px guess used to overlap the 530px bar). */
+  bottom: calc(100% + var(--hub-bar-h, 534px) + 8px);
   width: 268px;
-  max-height: min(70vh, 560px);
+  max-height: min(70vh, calc(100vh - var(--hub-bar-h, 534px) - 48px));
   display: flex;
   flex-direction: column;
   gap: 6px;

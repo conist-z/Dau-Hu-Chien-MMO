@@ -25,13 +25,23 @@ export type HubPageId =
 const BTN_W = 22;
 const BTN_H = 25;
 const SCALE = 2;
-const SHEET_W = 66; // 3 states x 22
+// Sheet 66x350: 3 state columns x 14 rows of 22x25 (rows 10-12 empty,
+// row 13 = blank green button frame — used for the equipment button).
+const SHEET_W = 66;
+const SHEET_H = 350;
 
 /** Row index per page id (hud_buttons row order — verified from
- *  Kaetram's _buttons.scss $selectors list). */
+ *  Kaetram's _buttons.scss $selectors list and by rendering the grid).
+ *  equipment has NO icon row in the sheet: ROW_BY_PAGE maps it to the
+ *  blank frame (row 13) and makeButton overlays equipment/weapon.png. */
 const ROW_BY_PAGE: Record<string, number> = {
   inventory: 0, chat: 1, leaderboard: 2, map: 3, settings: 4,
   profile: 5, quests: 6, guilds: 7, friends: 8, achievements: 9,
+  equipment: 13,
+};
+/** Buttons that get an equipment icon overlaid on the blank frame. */
+const OVERLAY_ICON: Partial<Record<HubPageId, string>> = {
+  equipment: "/ui/kaetram/interface/equipment/weapon.png",
 };
 // Bar buttons top→bottom: Kaetram's visual order, minus inventory (the
 // client already owns the bag panel — its button routes there) and chat
@@ -115,8 +125,18 @@ export class HubBar {
     el.style.height = `${BTN_H * SCALE}px`;
     el.style.backgroundImage = "url('/ui/kaetram/interface/hud_buttons.png')";
     el.style.backgroundRepeat = "no-repeat";
-    el.style.backgroundSize = `${SHEET_W * SCALE}px ${250 * SCALE}px`;
+    el.style.backgroundSize = `${SHEET_W * SCALE}px ${SHEET_H * SCALE}px`;
     this.applyState(el, page, false);
+    const overlay = OVERLAY_ICON[page];
+    if (overlay) {
+      const icon = document.createElement("div");
+      icon.style.cssText =
+        `position:absolute;inset:0;margin:auto;width:32px;height:32px;` +
+        `background:url('${overlay}') no-repeat center / 32px 32px;` +
+        `image-rendering:pixelated;pointer-events:none;`;
+      el.style.position = "relative";
+      el.appendChild(icon);
+    }
     el.title = PAGE_TITLES[page];
     el.addEventListener("click", () => this.click(page));
     return el;
@@ -149,6 +169,7 @@ export class HubBar {
     this.setActive(page, true);
     this.pageTitle.textContent = PAGE_TITLES[page];
     this.container.classList.remove("hidden");
+    this.updatePageAnchor();
     // Page content is data-driven: let the owner (HubPages) paint it.
     this.onOpen?.(page);
   }
@@ -188,6 +209,15 @@ export class HubBar {
   /** Reveal the bar once the player is in-game (gate/lobby hidden). */
   show(): void {
     this.bar.classList.remove("hidden");
+    // Publish the real bar height so #hub-page anchors above it even when
+    // the chat frame resizes (fixed px guesses overlapped the buttons).
+    this.updatePageAnchor();
+  }
+
+  /** Measure the bar and expose its height as a CSS var on the root. */
+  private updatePageAnchor(): void {
+    const h = this.bar.offsetHeight || 0;
+    document.getElementById("hud-hub")?.style.setProperty("--hub-bar-h", `${h}px`);
   }
 }
 
