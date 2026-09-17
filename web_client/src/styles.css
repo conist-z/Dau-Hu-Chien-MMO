@@ -62,7 +62,12 @@ html, body {
    whenever a narrow glyph replaced a wide one. font-variant-numeric keeps
    the digits tabular even where the fixed width is overridden by long text
    fallbacks. */
-#hud-topleft { top: 10px; left: 10px; font-size: 15px; font-weight: 600; }
+/* Clock/weather/ping box sits LEFT of the HP-bar stack, same row. The
+   bars' width is fluid; anchor the clock box to the left of the bars via
+   right offset = bars min-width + gap + margins. */
+#hud-topleft { top: 10px; right: 226px; font-size: 15px; font-weight: 600; }
+/* The old bottom-left ping box is merged into #hud-topleft; hide the shell. */
+#hud-bottomleft { display: none; }
 #hud-clock {
   display: inline-block;
   width: 5ch; /* "HH:MM" — constant 5-glyph layout */
@@ -70,8 +75,7 @@ html, body {
   text-align: center;
 }
 #hud-weather { font-size: 20px; }
-/* Bottom-left: live ping readout — flush corner, unobtrusive. */
-#hud-bottomleft { bottom: 10px; left: 10px; font-size: 13px; }
+/* Live ping readout now lives inside the clock/weather box (top-right). */
 #hud-daynight { font-size: 20px; }
 /* Ping (ms) — tabular digits, colour-coded by health (good/ok/bad). */
 #hud-ping {
@@ -168,7 +172,7 @@ html, body {
 /* Bottom-right: chat */
 #hud-chat {
   position: absolute;
-  right: 10px; bottom: 12px;
+  left: 10px; bottom: 12px;
   width: 280px;
   display: flex; flex-direction: column; gap: 6px;
 }
@@ -206,26 +210,23 @@ html, body {
 #hud-hub #buttons { display: none !important; }
 #hud-hub #buttons.shown { display: flex !important; }
 #hud-hub {
-  position: absolute;
+  /* fixed: escapes #hud-chat so the hub stands alone at the screen's
+     bottom-right regardless of where the chat frame sits (chat is now
+     bottom-LEFT). Covers the full screen for the page dialogs. */
+  position: fixed;
   inset: 0;
   pointer-events: none; /* children re-enable */
   z-index: 3;
 }
-/* The ORIGINAL Kaetram bar (horizontal row) — pinned to the right edge,
-   sitting ON TOP of the chat frame's top border (our chat lives bottom-
-   right; in Kaetram it's bottom-left so their bottom:0 is screen-corner —
-   we lift the bar above our chat frame to keep the same corner look).
-   NOTE: #hud-hub is inset:0 of #hud-chat, so ITS bottom == chat bottom;
-   `bottom: 100%` anchors the bar's BOTTOM edge to the hub's TOP edge. */
-/* The bar as a VERTICAL column (user spec): pinned to the right edge,
-   anchored to the chat frame's top border. 2-id prefix wins the cascade
-   over the compiled sheet that loads after us. */
+/* The bar as a VERTICAL column (user spec), dropped to the BOTTOM-RIGHT
+   corner, standing alone (Kaetram parity: bottom:0 right:0 of the screen).
+   2-id prefix wins the cascade over the compiled sheet. */
 #hud-hub #hud-hub #buttons,
 #hud-chat #hud-hub #buttons {
   flex-direction: column;
-  bottom: 100%;
-  right: 6px;
-  margin-bottom: 2px;
+  bottom: 0;
+  right: 0;
+  padding-right: 4px;
   pointer-events: auto;
 }
 /* Page containers (slice-container/slice-page/map-frame) center on the
@@ -237,7 +238,31 @@ html, body {
 #hud-chat #hud-hub .slice-page,
 #hud-chat #hud-hub #map-frame {
   position: fixed;
+  pointer-events: auto; /* hud-hub is none — pages must eat clicks */
 }
+/* Their global reset killed list markers + margins on ul/li; the scoped
+   compile dropped that rule, so native white bullets appeared left of
+   every option (the "chấm trắng"). Re-kill inside the hub only. */
+#hud-hub ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* Interactive elements inside pages must receive clicks (the hub root is
+   pointer-events:none; the compiled sheet assumes the game overlay was
+   auto). 2-id specificity to beat the sheet. */
+#hud-hub #hud-hub button,
+#hud-hub #hud-hub input,
+#hud-hub #hud-hub select,
+#hud-hub #hud-hub label {
+  pointer-events: auto;
+}
+/* The notification dialog is opacity-animated by the game (always
+   display:flex, opacity 0.8 base); we never trigger it, so keep it
+   invisible until something drives it. 2-id prefix beats the compiled
+   sheet that loads after us. */
+#hud-hub #hud-hub #notification,
+#hud-chat #hud-hub #notification { opacity: 0; pointer-events: none; }
 .hub-stat-row {
   display: flex;
   justify-content: space-between;

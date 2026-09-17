@@ -7,20 +7,17 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-BqLUoQGN.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-J3SO8mCw.css">
+    <script type="module" crossorigin src="./assets/index-DoYbQbNr.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C4qrw63_.css">
   </head>
   <body>
     <div id="game-root">
       <div id="overlay">
-        <!-- Top-left: clock + weather (flush corner) -->
+        <!-- Top-right: clock + weather + ping, same row as the HP bars -->
         <div id="hud-topleft" class="hud-box">
           <span id="hud-clock">--:--</span>
           <span id="hud-daynight" title="Buổi">🌅</span>
           <span id="hud-weather">☀️</span>
-        </div>
-        <!-- Bottom-left: live connection ping (ms) -->
-        <div id="hud-bottomleft" class="hud-box">
           <span id="hud-ping" title="Độ trễ kết nối">--</span>
         </div>
         <!-- Top-right: HP + mana bars (flush corner) -->
@@ -176,10 +173,17 @@
               <div id="profile-stats">
                 <span><span id="profile-level"></span></span>
                 <span><strong>Total Exp:</strong><span id="profile-experience"></span></span>
+                <ul id="attack-style-list">
+                  <li class="attack-style-box"><div class="attack-style attack-style-stab"></div></li>
+                  <li class="attack-style-box"><div class="attack-style attack-style-slash"></div></li>
+                  <li class="attack-style-box"><div class="attack-style attack-style-defensive"></div></li>
+                  <li class="attack-style-box"><div class="attack-style attack-style-chop"></div></li>
+                </ul>
                 <div class="button-row">
                   <div id="guilds-button"></div>
                   <div id="leaderboards-button"></div>
                   <div id="equipment-button"></div>
+                  <div id="pickup-pet-button" hidden></div>
                 </div>
               </div>
               <ul id="profile-equipment-slots">
@@ -197,6 +201,16 @@
                 <li class="equipment-slot equipment-slot-boots slice-list-item"><div class="equipment-slot-image"></div></li>
               </ul>
             </div>
+            <div id="skills-page">
+              <div id="skill-info" class="slice-dialog stroke">
+                <div class="skill-info-header">
+                  <div class="slice-item-slot"><div class="skill-info-image"></div></div>
+                  <div class="skill-info-title"></div>
+                </div>
+                <div class="skill-info-details"></div>
+              </div>
+              <div id="skills-list"><ul></ul></div>
+            </div>
             <div id="profile-navigator"><div class="previous"></div><div class="next"></div></div>
           </div>
 
@@ -209,7 +223,158 @@
             <div id="warp5" class="map-button"></div>
             <div id="close-map-frame" class="close-container"></div>
           </div>
-          </div><!-- /#hud-hub -->
+          <!-- ==== remaining ORIGINAL Kaetram pages (verbatim from game.astro) ====
+               Server systems don't exist yet for most of these — they render
+               with the original structure and stay hidden until wired. -->
+
+          <div id="guilds" class="slice-container">
+            <div id="close-guilds" class="close-container"></div>
+            <div class="banner banner-grey">
+              <div id="banner-outline" class="banner-outline"></div>
+              <div id="banner-crest"></div>
+            </div>
+            <div id="guilds-list-container" class="stroke">
+              <div id="create-guild" class="element-button element-button stroke">Create</div>
+              <div class="title-decoration">Guilds</div>
+              <div id="guilds-list" class="slice-inner-container">
+                <p id="guilds-info" class="stroke">There are no guilds available...</p>
+                <ul></ul>
+              </div>
+            </div>
+          </div>
+
+          <div id="friends-container" class="slice-page">
+            <div id="friends-page">
+              <ul id="friends-list" class="slice-list stroke"></ul>
+              <div class="dialog-buttons">
+                <div id="add-friend" class="add"></div>
+                <div id="remove-friend" class="remove"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="bank">
+            <div id="close-bank" class="close-container"></div>
+            <div id="bank-inventory-container"><ul id="bank-inventory-slots"></ul></div>
+            <div id="bank-container"><ul id="bank-slots"></ul></div>
+          </div>
+
+          <div id="crafting">
+            <div id="close-crafting" class="close-container"></div>
+            <ul id="crafting-options"></ul>
+            <ul id="crafting-requirements"></ul>
+            <div id="crafting-result" class="crafting-option disabled">
+              <div class="crafting-option-icon"></div>
+              <div class="crafting-option-count stroke"></div>
+            </div>
+            <div id="crafting-level" class="crafting-option disabled">
+              <div class="crafting-option-icon"></div>
+              <div class="crafting-option-count stroke"></div>
+            </div>
+            <div id="crafting-result-name" class="stroke"></div>
+            <ul class="crafting-buttons">
+              <li id="craft-one" class="amount-button amount-one active"></li>
+              <li id="craft-five" class="amount-button amount-five"></li>
+              <li id="craft-ten" class="amount-button amount-ten"></li>
+            </ul>
+            <div id="craft-button" class="stroke">Craft</div>
+          </div>
+
+          <div id="trade" class="slice-container">
+            <div id="close-trade" class="close-container"></div>
+            <div id="trade-inventory">
+              <div class="title-decoration">Your Inventory</div>
+              <div id="trade-inventory-slots" class="slice-inner-container"><ul></ul></div>
+            </div>
+            <div id="trade-player">
+              <div id="trade-player-content">
+                <div class="player-trade">
+                  <div id="trade-player-name" class="stroke"></div>
+                  <div id="trade-player-slots" class="slice-inner-container"><ul></ul></div>
+                </div>
+                <div class="player-trade">
+                  <div id="trade-oplayer-name" class="stroke"></div>
+                  <div id="trade-oplayer-slots" class="slice-inner-container"><ul></ul></div>
+                </div>
+              </div>
+              <div id="trade-status"></div>
+              <div id="trade-accept" class="stroke slice-button">ACCEPT</div>
+            </div>
+          </div>
+
+          <div id="enchant" class="slice-container">
+            <div id="close-enchant" class="close-container"></div>
+            <div id="enchant-inventory" class="slice-inner-container"><ul id="enchant-inventory-slots"></ul></div>
+            <div id="enchant-item">
+              <div id="enchant-item-selected" class="slice-item-slot"><div></div></div>
+              <div>
+                <div id="enchant-item-shards" class="slice-item-slot"><div></div></div>
+                <div id="enchant-item-count"></div>
+              </div>
+              <div id="enchant-item-confirm" class="ok-check"></div>
+            </div>
+          </div>
+
+          <div id="store" class="slice-container">
+            <div id="close-store" class="close-container"></div>
+            <div id="store-content">
+              <div id="store-inventory">
+                <div id="store-inventory-slots" class="slice-inner-container"><ul></ul></div>
+                <div id="store-sell">
+                  <div>
+                    <div class="slice-item-slot"><div id="store-sell-slot"></div></div>
+                    <div id="store-sell-text"></div>
+                  </div>
+                  <div>
+                    <div class="slice-item-slot"><div id="store-sell-return-slot"></div></div>
+                    <div id="store-sell-return-text"></div>
+                  </div>
+                  <div id="store-sell-confirm" class="ok-check"></div>
+                </div>
+              </div>
+              <div id="store-slots">
+                <div id="store-slots-content" class="slice-inner-container"><ul></ul></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="lootbag" class="slice-container">
+            <div id="close-lootbag" class="close-container"></div>
+            <div id="lootbag-container">
+              <div id="lootbag-items" class="slice-inner-container"><ul></ul></div>
+              <div id="lootbag-inventory" class="slice-inner-container"><ul></ul></div>
+            </div>
+          </div>
+
+          <div id="book" class="slice-container" hidden>
+            <div id="close-book" class="close-container"></div>
+            <div class="slice-inner-container"></div>
+            <div class="slice-inner-container"></div>
+          </div>
+
+          <div id="notification" class="slice-dialog">
+            <div id="notification-text-title"></div>
+            <div id="notification-text-description"></div>
+          </div>
+
+          <div id="attack-info" class="slice-dialog">
+            <div class="name"></div>
+            <div class="details"></div>
+            <div class="health"></div>
+          </div>
+
+          <div id="action-container" class="slice-dialog">
+            <div id="action-page">
+              <div class="action-item-name stroke"></div>
+              <div class="action-item-description"></div>
+              <ul></ul>
+            </div>
+          </div>
+
+          <div id="inventory" class="slice-dialog">
+            <div id="inventory-container"><ul></ul></div>
+          </div>
+        </div><!-- /#hud-hub -->
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>
