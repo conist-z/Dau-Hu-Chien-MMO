@@ -67,7 +67,7 @@ const MIME = {
 
 function serveStatic(req, res) {
   // /config.json is generated (client_id is public by design).
-  if (req.url === "/config.json") {
+  if (req.url === "/config.json" || req.url === "/app-config.json") {
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
