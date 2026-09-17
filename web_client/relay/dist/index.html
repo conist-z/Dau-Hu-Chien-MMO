@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Discord Map — Web Client</title>
-    <script type="module" crossorigin src="./assets/index-DgRUOspw.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DtiU0UTK.css">
+    <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
+         scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
+         original component rules win over the generic resets. -->
+    <script type="module" crossorigin src="./assets/index-njmpMENl.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DP0U_nFL.css">
   </head>
   <body>
     <div id="game-root">
@@ -48,6 +51,163 @@
                whatever height the log grows to (user spec: sát mép trên
                khung chat, lề phải màn hình). -->
           <div id="hud-hub"></div>
+          <!-- Kaetram ORIGINAL UI (ported verbatim from game.astro): the
+               button bar + every page container, exact ids/classes so the
+               compiled kaetram_ui.css (their own scss) styles it 1:1.
+               Bar is re-laid out vertical via #hud-hub overrides. -->
+          <ul id="buttons">
+            <li><div id="inventory-button"></div></li>
+            <li><div id="achievements-button"></div></li>
+            <li><div id="quests-button"></div></li>
+            <li><div id="warp-button"></div></li>
+            <li><div id="profile-button"></div></li>
+            <li><div id="guildss-button"></div></li>
+            <li><div id="friends-button"></div></li>
+            <li><div id="chat-button"></div></li>
+            <li><div id="settings-button"></div></li>
+          </ul>
+
+          <div id="quests" class="slice-container">
+            <div id="close-quests" class="close-container"></div>
+            <div id="quests-container">
+              <div id="quests-list" class="slice-inner-container stroke"><ul></ul></div>
+              <div id="quests-logs" class="slice-inner-container">
+                <div id="quests-logs-container">
+                  <h1 id="quests-logs-title" class="stroke">Quest Title</h1>
+                  <p id="quests-logs-shortdesc"></p>
+                  <h3 class="stroke">Description</h3>
+                  <p id="quests-logs-description"></p>
+                  <h3 class="stroke">Reward</h3>
+                  <p id="quests-logs-rewards"></p>
+                  <h3 class="stroke">Requirements</h3>
+                  <p id="quests-logs-requirements">None</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="achievements" class="slice-container">
+            <div id="close-achievements" class="close-container"></div>
+            <div id="achievements-tab" class="slice-tab">
+              <div id="achievements-tab-arrow-left" class="slice-list-item"><div class="colour-button-arrow-left"></div></div>
+              <span id="achievements-tab-text"> Mudwich</span>
+              <div id="achievements-tab-arrow-right" class="slice-list-item"><div class="colour-button-arrow-right slice-item"></div></div>
+            </div>
+            <div id="achievements-content" class="slice-inner-container"><ul class="stroke"></ul></div>
+          </div>
+
+          <div id="settings-page" class="slice-container">
+            <div id="close-settings" class="close-container"></div>
+            <div id="settings-container">
+              <div id="input-settings" class="slice-inner-container">
+                <div class="col">
+                  <label><span id="music-volume-text">Music Volume</span><input title="Music Volume" id="music" type="range" min="0" max="100" value="100" step="10" aria-labelledby="music-volume-text" /></label>
+                  <label><span id="sound-volume-text">Sound Volume</span><input title="Sound Volume" id="sound" type="range" min="0" max="100" value="100" step="10" aria-labelledby="sound-volume-text" /></label>
+                  <label><span id="brightness-text">Brightness</span><input title="Brightness" id="brightness" type="range" min="0" max="100" value="100" step="10" aria-labelledby="brightness-text" /></label>
+                  <label id="audio-enabled-checkbox" class="check"><span id="audio-enabled-checkbox-text">Audio Enabled</span><input type="checkbox" aria-labelledby="audio-enabled-checkbox-text" /><span class="checkmark"></span></label>
+                  <label id="low-power-checkbox" class="check"><span id="low-power-checkbox-text">Low Power Mode</span><input type="checkbox" aria-labelledby="low-power-checkbox-text" /><span class="checkmark"></span></label>
+                </div>
+                <div class="col">
+                  <label id="debug-mode-checkbox" class="check"><span id="debug-mode-checkbox-text">Debug Mode</span><input type="checkbox" aria-labelledby="debug-mode-checkbox-text" /><span class="checkmark"></span></label>
+                  <label id="show-names-checkbox" class="check"><span id="show-names-checkbox-text">Show Names</span><input type="checkbox" aria-labelledby="show-names-checkbox-text" /><span class="checkmark"></span></label>
+                  <label id="show-levels-checkbox" class="check"><span id="show-levels-checkbox-text">Show Levels</span><input type="checkbox" aria-labelledby="show-levels-checkbox-text" /><span class="checkmark"></span></label>
+                </div>
+              </div>
+              <div id="action-settings">
+                <div id="game-info" class="slice-inner-container">
+                  <span><strong>Game Version:</strong><span id="game-info-version"></span></span>
+                  <span><strong>Game World:</strong><span id="game-info-world"></span></span>
+                </div>
+                <div role="button" id="logout-button" class="element-button element-button-red stroke" tabindex="0">Log Out</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="leaderboards" class="slice-container stroke">
+            <div id="close-leaderboards" class="close close-container"></div>
+            <div id="leaderboards-search" class="slice-inner-container">
+              <input title="Enter a search term..." id="leaderboards-search-input" class="slice-input" type="text" maxlength="32" autocomplete="off" placeholder="Enter a term to search..." />
+              <ul></ul>
+            </div>
+            <div id="leaderboards-results" class="slice-inner-container"><ul></ul></div>
+          </div>
+
+          <div id="equipments" class="slice-container" hidden>
+            <div id="close-equipments" class="close-container"></div>
+            <div id="equipments-player-visual">
+              <div id="equipments-player-image">
+                <canvas id="equipments-player-image-canvas"></canvas>
+                <div id="equipments-player-image-navigator"><div class="previous"></div><div class="next"></div></div>
+              </div>
+              <ul id="equipment-slots">
+                <li class="equipment-slot equipment-slot-helmet slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-pendant slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-arrows slice-list-item"><div class="equipment-slot-image"></div><div class="equipment-slot-arrows-count stroke"></div></li>
+                <li class="equipment-slot equipment-slot-chestplate slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-weapon slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-shield slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-ring slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-armour-skin slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-weapon-skin slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-legplates slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-cape slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-boots slice-list-item"><div class="equipment-slot-image"></div></li>
+              </ul>
+            </div>
+            <div id="equipments-player-stats">
+              <div id="attack-stats">
+                <p class="title">Attack Stats</p>
+                <p class="crush">Crush:</p><p class="slash">Slash:</p><p class="stab">Stab:</p><p class="archery">Archery:</p><p class="magic">Magic:</p>
+              </div>
+              <div id="defense-stats">
+                <p class="title">Defense Stats</p>
+                <p class="crush">Crush:</p><p class="slash">Slash:</p><p class="stab">Stab:</p><p class="archery">Archery:</p><p class="magic">Magic:</p>
+              </div>
+              <div id="bonuses">
+                <p class="title">Bonuses</p>
+                <p class="accuracy">Accuracy:</p><p class="strength">Strength:</p><p class="archery">Archery:</p><p class="magic">Magic:</p>
+              </div>
+            </div>
+          </div>
+
+          <div id="profile-container" class="slice-page">
+            <div id="state-page">
+              <div id="profile-stats">
+                <span><span id="profile-level"></span></span>
+                <span><strong>Total Exp:</strong><span id="profile-experience"></span></span>
+                <div class="button-row">
+                  <div id="guilds-button"></div>
+                  <div id="leaderboards-button"></div>
+                  <div id="equipment-button"></div>
+                </div>
+              </div>
+              <ul id="profile-equipment-slots">
+                <li class="equipment-slot equipment-slot-helmet slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-pendant slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-arrows slice-list-item"><div class="equipment-slot-image"></div><div class="equipment-slot-arrows-count stroke"></div></li>
+                <li class="equipment-slot equipment-slot-chestplate slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-weapon slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-shield slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-ring slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-armour-skin slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-weapon-skin slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-legplates slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-cape slice-list-item"><div class="equipment-slot-image"></div></li>
+                <li class="equipment-slot equipment-slot-boots slice-list-item"><div class="equipment-slot-image"></div></li>
+              </ul>
+            </div>
+            <div id="profile-navigator"><div class="previous"></div><div class="next"></div></div>
+          </div>
+
+          <div id="map-frame">
+            <div id="warp0" class="map-button"></div>
+            <div id="warp1" class="map-button"></div>
+            <div id="warp2" class="map-button"></div>
+            <div id="warp3" class="map-button"></div>
+            <div id="warp4" class="map-button"></div>
+            <div id="warp5" class="map-button"></div>
+            <div id="close-map-frame" class="close-container"></div>
+          </div>
         </div>
         <!-- Center: toast area -->
         <div id="hud-toast"></div>

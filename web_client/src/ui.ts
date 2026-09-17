@@ -32,6 +32,7 @@ import {
 import { HubBar } from "./hub_bar";
 import type { HubPageId } from "./hub_bar";
 import { HubPages, type SelfInfo } from "./hub_pages";
+import { KaetramMenus, Quests, Achievements, Settings, Leaderboards, Warp, Equipments } from "./kaetram_menus";
 
 // Animated pixel weather icons copied from the Discord hub renderer
 // (assets/gui/weather/<key>/frame_*.png -> public/ui/hud/weather/). One frame
@@ -171,6 +172,14 @@ export class Hud {
 
   // ---- Kaetram-style vertical hub bar (right edge, above chat) ----
   hubBar: HubBar;
+  /** Kaetram original menus (ported menu/*.ts) — one visible at a time. */
+  private kaetramMenus = new KaetramMenus();
+  private kQuests!: Quests;
+  private kAchievements!: Achievements;
+  private kSettings!: Settings;
+  private kLeaderboards!: Leaderboards;
+  private kWarp!: Warp;
+  private kEquipments!: Equipments;
   hubPages: HubPages | null = null;
   /** Live self info mirror for the hub pages (setBars/setPurse/setPing
    *  and main.ts feed it; the map/profile pages read it on render). */
@@ -261,33 +270,14 @@ export class Hud {
   private onCollect: ((slot: number | null) => void) | null = null;
   private onSelectSlot: ((slot: number) => void) | null = null;
   constructor() {
-    // Kaetram hub bar: built FIRST (DOM nodes exist in index.html) so the
-    // pages can be wired before any snapshot arrives.
+    // Kaetram ORIGINAL bar (in index.html, styled by compiled kaetram_ui.css)
+    // is the primary UI; the legacy HubBar wrapper is kept only for its
+    // gate show/hide + inventory/chat routing hooks.
     this.hubBar = new HubBar();
-    this.hubBar.onPage = (page: HubPageId): boolean => {
-      // Inventory button = the EXISTING bag panel (user: bag already own).
-      // Its open/close mirrors the bar's own single-page rule: opening the
-      // bag closes any open hub page; closing the bag does not reopen one.
-      if (page === "inventory") {
-        if (this.invPanel.classList.contains("hidden")) {
-          this.hubBar.close();
-          this.toggleInventory(true);
-        } else {
-          this.toggleInventory(false);
-        }
-        return true;
-      }
-      // Chat button = focus the chat input (typing goes to chat, not world).
-      if (page === "chat") {
-        this.chatInput.focus();
-        return true;
-      }
-      // Any hub page opening closes the bag (one primary window at a time).
-      if (!this.invPanel.classList.contains("hidden")) {
-        this.toggleInventory(false);
-      }
-      return false; // page falls through to the hub container
+    this.hubBar.onPage = (_page: HubPageId): boolean => {
+      return false; // legacy pages are retired; all routing in initKaetramMenus
     };
+    this.initKaetramMenus();
     this.chatForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = this.chatInput.value.trim();
@@ -2447,21 +2437,75 @@ export class Hud {
 
   // ----- Kaetram hub bar wiring (pages fed from live client state) -----
 
-  /** Wire the hub pages to the Phaser scene (map minimap + debug toggle).
-   *  Called once from main.ts after both exist. */
+  /** Wire the ORIGINAL Kaetram menus to their bar buttons (Kaetram
+   *  controllers/menus.ts + main.ts boot parity). Bar click = menu.toggle(). */
+  private initKaetramMenus(): void {
+    this.kQuests = new Quests();
+    this.kAchievements = new Achievements();
+    this.kSettings = new Settings({
+      isDebug: () => this.hubScene?.debugEnabled ?? false,
+      setDebug: (on) => {
+        if (!this.hubScene) return;
+        this.hubScene.debugEnabled = on;
+        const dbg = document.getElementById("desync-debug");
+        if (dbg) dbg.style.display = on ? "block" : "none";
+      },
+      showNamesEnabled: () => this.hubScene?.showNames ?? false,
+      setShowNames: (on) => {
+        if (this.hubScene) this.hubScene.showNames = on;
+      },
+    });
+    this.kLeaderboards = new Leaderboards([
+      { name: "Người chơi online", rows: [] },
+    ]);
+    this.kWarp = new Warp();
+    this.kEquipments = new Equipments();
+    for (const m of [this.kQuests, this.kAchievements, this.kSettings, this.kLeaderboards, this.kWarp, this.kEquipments])
+      this.kaetramMenus.register(m);
+
+    // The bar buttons Kaetram's sprite sheet defines (rows 0-9). Buttons
+    // without a menu (inventory → bag panel, chat → focus input, guilds/
+    // friends → not built server-side yet) get the original toggle feel.
+    const bar = document.getElementById("buttons")!;
+    bar.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
+      if (!btn) return;
+      switch (btn.id) {
+        case "inventory-button":
+          if (this.invPanel.classList.contains("hidden")) {
+            this.kaetramHideAll();
+            this.toggleInventory(true);
+          } else this.toggleInventory(false);
+          break;
+        case "chat-button":
+          this.chatInput.focus();
+          break;
+        case "quests-button": this.kQuests.toggle(); break;
+        case "achievements-button": this.kAchievements.toggle(); break;
+        case "settings-button": this.kSettings.toggle(); break;
+        case "warp-button": this.kWarp.toggle(); break;
+        case "leaderboard-button": this.kLeaderboards.toggle(); break;
+        case "profile-button": this.kEquipments.toggle(); break;
+        case "guildss-button": case "friends-button":
+          this.toast("Chưa có hệ thống này trên server.");
+          break;
+      }
+    });
+  }
+
+  private kaetramHideAll(): void {
+    for (const m of [this.kQuests, this.kAchievements, this.kSettings, this.kLeaderboards, this.kWarp, this.kEquipments])
+      if (m.isVisible()) m.hide();
+  }
+
+  /** Scene reference for settings hooks (set by attachHubPages). */
+  private hubScene: import("./game").WorldScene | null = null;
   attachHubPages(scene: import("./game").WorldScene, onPlayerPick: (p: import("./protocol").PlayerPayload) => void): void {
+    this.hubScene = scene;
     this.hubPages = new HubPages(this.hubBar, scene);
     this.hubPages.onPlayerPick = onPlayerPick;
-    // The bar itself drives rendering: every open/switch paints the page
-    // body here (single path — no stale empty container after clicks).
+    // Legacy simple-page path kept for openHubPage() callers.
     this.hubBar.onOpen = (_page) => this.hubPages?.render();
-    this.hubBar.onToggleDebug = () => {
-      scene.debugEnabled = !scene.debugEnabled;
-      const dbg = document.getElementById("desync-debug");
-      if (dbg) dbg.style.display = scene.debugEnabled ? "block" : "none";
-      if (this.hubBar.current === "settings") this.hubPages?.render();
-    };
-    this.hubBar.onLogout = () => location.reload();
   }
 
   /** Feed the profile/map pages with live self info (cheap mirror —
