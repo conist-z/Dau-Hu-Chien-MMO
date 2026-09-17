@@ -3887,3 +3887,128 @@
   display: none;
   color: #8a8a8a;
 }
+
+/* ---- base utils + check sprite, scoped ---- */
+#hud-hub div, #hud-hub ul, #hud-hub dialog, #hud-hub article {
+  display: flex;
+  flex-direction: column;
+}
+#hud-hub div[hidden], #hud-hub ul[hidden], #hud-hub dialog[hidden], #hud-hub article[hidden] {
+  display: none;
+}
+#hud-hub h1, #hud-hub h2, #hud-hub h3, #hud-hub h4, #hud-hub h5, #hud-hub h6 {
+  margin-bottom: 0.25em;
+}
+#hud-hub h1 {
+  font-size: 1.75em;
+}
+#hud-hub h2 {
+  font-size: 1.375em;
+}
+#hud-hub h3 {
+  font-size: 1.25em;
+}
+#hud-hub h4 {
+  font-size: 1.125em;
+}
+#hud-hub h5 {
+  font-size: 1em;
+}
+#hud-hub h6 {
+  font-size: 0.875em;
+}
+#hud-hub p {
+  margin-bottom: 0.25em;
+  font-size: 1em;
+}
+
+#hud-hub .row {
+  display: flex;
+  flex-direction: row;
+}
+#hud-hub .col {
+  display: flex;
+  flex-direction: column;
+}
+#hud-hub .stroke {
+  text-shadow: 0.0625em 0.0625em 0 #373737, 0.0625em -0.0625em 0 #373737, 0 0.0625em 0 #373737, 0.0625em 0 0 #373737, -0.0625em 0.0625em 0 #373737, -0.0625em -0.0625em 0 #373737, 0 -0.0625em 0 #373737, 0 0.0625em 0 #373737, -0.0625em 0 0 #373737;
+}
+#hud-hub .text-red {
+  color: #e00a0a;
+}
+#hud-hub .text-green {
+  color: #00a800;
+}
+#hud-hub .text-yellow {
+  color: #e0e000;
+}
+#hud-hub .dimmed {
+  pointer-events: none;
+  user-select: none;
+  filter: brightness(25%);
+}
+
+@custom-media --lg only screen and (min-width: 1501px);
+@custom-media --md only screen and (max-width: 1500px), only screen and (max-height: 870px);
+@custom-media --sm only screen and (max-width: 1000px);
+@custom-media --portrait only screen and (orientation: portrait);
+.check .checkmark::before {
+  width: 1em;
+  height: 1em;
+  background-image: url("/ui/kaetram/interface/characterdialogsheet.png");
+  background-repeat: no-repeat;
+  background-size: 77.5em 54.25em;
+}
+#hud-hub .check .checkmark::before:hover {
+  background-position-x: -14.625em;
+}
+#hud-hub .check .checkmark::before:active, #hud-hub .check .checkmark::before.active {
+  background-position-x: -15.625em;
+}
+#hud-hub .check .checkmark::before:disabled, #hud-hub .check .checkmark::before.disabled {
+  background-position-x: -13.625em;
+}
+#hud-hub .check .checkmark::before {
+  background-position-x: -13.625em;
+  background-position-y: -30em;
+}
+#hud-hub .check {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  gap: 0.5em;
+  align-items: center;
+  line-height: 1;
+  text-align: left;
+}
+#hud-hub .check input[type=checkbox] {
+  cursor: pointer;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+}
+#hud-hub .check .checkmark {
+  display: block;
+}
+#hud-hub .check .checkmark::before {
+  content: "";
+  display: block;
+}
+#hud-hub .check:hover input ~ .checkmark::before, #hud-hub .check input:focus ~ .checkmark::before {
+  background-position-x: -14.75em;
+}
+#hud-hub .check input:active ~ .checkmark::before {
+  background-position-x: -15.875em;
+}
+#hud-hub .check input:checked ~ .checkmark::before {
+  background-position-x: -17em;
+}
+#hud-hub .check:hover input:checked ~ .checkmark::before, #hud-hub .check input:focus:checked ~ .checkmark::before {
+  background-position-x: -18.125em;
+}

@@ -149,8 +149,42 @@ const BASE = path.join(REPO, "scss/base/impl/_fonts.scss");
 const fontResult = sass.compile(BASE, { quietDeps: true });
 const fontCss = fontResult.css;
 
+// ---- VISUAL FIDELITY LAYER ----
+// The game's look depends on base/_utils.scss (.stroke pixel text-shadow,
+// .text-green/.text-yellow/.text-red, .row/.col utilities) and
+// app/_check.scss (sprite checkbox). These define classes used INSIDE the
+// pages, so we compile them and scope them to #hud-hub like everything
+// else — original look, zero leak.
+function scopedStyles(source) {
+  return transformCss(source.replaceAll("/img/interface/", "/ui/kaetram/interface/"));
+}
+const utilsResult = sass.compile(path.join(REPO, "scss/base/impl/_utils.scss"), { quietDeps: true });
+// defaults.scss: div/ul flex-column default + heading sizes — the quests /
+// settings internals depend on this stack. Elements are scoped, [hidden]
+// variant kept so the original hidden-attribute toggling still works.
+const defaultsResult = sass.compile(path.join(REPO, "scss/base/impl/defaults.scss"), { quietDeps: true });
+const checkResult = sass.compile(path.join(REPO, "scss/app/impl/_check.scss"), {
+  loadPaths: [path.join(REPO, "scss"), path.join(REPO, "scss/app")],
+  functions: {
+    "width($image)"([image]) {
+      return new sass.SassNumber(getImageSize(image.text).width);
+    },
+    "height($image)"([image]) {
+      return new sass.SassNumber(getImageSize(image.text).height);
+    },
+  },
+  quietDeps: true,
+});
+// app/_check.scss references app/_index context; compile standalone works
+// because it only @uses abstracts/sprite.
+const fidelity = [
+  scopedStyles(defaultsResult.css),
+  scopedStyles(utilsResult.css),
+  scopedStyles(checkResult.css),
+].join("\n");
+
 fs.writeFileSync(
   OUT,
-  `/* GENERATED from Kaetram-Open scss (MPL-2.0) by scripts/compile_kaetram_css.mjs — do not edit by hand. Re-run: node scripts/compile_kaetram_css.mjs */\n${fontCss}\n${css}`
+  `/* GENERATED from Kaetram-Open scss (MPL-2.0) by scripts/compile_kaetram_css.mjs — do not edit by hand. Re-run: node scripts/compile_kaetram_css.mjs */\n${fontCss}\n${css}\n/* ---- base utils + check sprite, scoped ---- */\n${fidelity}`
 );
-console.log(`merged font-faces (${fontCss.length}) + scoped game css (${css.length})`);
+console.log(`merged font-faces (${fontCss.length}) + game (${css.length}) + utils/check (${fidelity.length})`);
