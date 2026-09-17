@@ -9,6 +9,13 @@ import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appea
 import { ICON_ITEM_IDS } from "./pixel_ui";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
+
+// World pixel size of ONE TILE. Most maps are 32px (bigmap/kaetram), but
+// ekonia maps are 16px — every `* 32` against the map grid MUST go through
+// this per-scene value (set from the welcome payload's tile_width) or the
+// actors/collision overlay land at 2x the art coordinates ("box chặn lệch
+// hẳn khỏi map").
+const BASE_TILE = 32;
 // Per-kind night-mob sheet geometry (Kaetram client sprites.json, mob rows:
 // atk/walk/idle x right/up/down; LEFT mirrors the right row). Sizes in px
 // (32 = cell size); scale keeps every mob about one tile tall on screen.
@@ -200,6 +207,8 @@ export class WorldScene extends Phaser.Scene {
   private selfY = 0;
   private collision: number[][] = []; // collision[y][x] = 1 blocks
   private collisionDebug: Phaser.GameObjects.Graphics | null = null;
+  /** World px per tile for the CURRENT map (welcome.tile_width; default 32). */
+  private tilePx = BASE_TILE;
   // Sub-tile alpha masks (server: rendering/tile_masks.py). Key "x,y" ->
   // bitfield (res=8): bit my*res+mx = opaque sub-cell. Only PARTIAL tiles
   // (server strips near-full/empty ones) appear here — everything else uses
@@ -602,7 +611,12 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
-    this.cameras.main.setZoom(2.0); // zoom IN — close-up view (+25%)
+    // Zoom 2.0 for EVERY map: actor sprites (paperdoll 64px, mobs, drops)
+    // are authored in 32px world space — zooming 16px maps to 4.0 doubled
+    // every actor on screen (doll = 4 tiles next to 2-tile trees, blocking
+    // box 0.6 tiles → "nhân vật lệch khỏi box chặn"). At 2.0 a 16px tile
+    // shows at 32 screen px and ALL proportions match the classic maps.
+    this.cameras.main.setZoom(2.0);
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
@@ -613,6 +627,9 @@ export class WorldScene extends Phaser.Scene {
     this.selfServerPos = { x: welcome.self.x, y: welcome.self.y };
     this.lastServerRecv = performance.now();
     this.collision = welcome.map.collision ?? [];
+    // Per-map tile size: ekonia maps ship 16px tiles while the classic maps
+    // are 32px. Every grid->world conversion below must use THIS value.
+    this.tilePx = welcome.map.tile_width || BASE_TILE;
     // Sub-tile masks: sparse {y:{x:mask}} -> flat "x,y" map (server parity).
     this.tileMasks.clear();
     const tm = welcome.map.tile_masks;
@@ -920,9 +937,9 @@ export class WorldScene extends Phaser.Scene {
         // New block: sprite (or placeholder rectangle until the face
         // texture arrives — see onBlockTexture).
         if (hasTex) {
-          go = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+          go = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
         } else {
-          const r = this.add.rectangle(x * 32 + 16, y * 32 + 16, 30, 30, 0x6b5a3e);
+          const r = this.add.rectangle(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, 30, 30, 0x6b5a3e);
           r.setStrokeStyle(2, 0x8a7550);
           go = r;
         }
@@ -930,7 +947,7 @@ export class WorldScene extends Phaser.Scene {
         this.blockSprites.set(tileKey, go);
       } else if (hasTex && go instanceof Phaser.GameObjects.Rectangle) {
         // Texture arrived: upgrade the placeholder in place (no churn).
-        const img = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+        const img = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
         this.blockLayer.add(img);
         this.blockSprites.set(tileKey, img);
         go.destroy();
@@ -1074,7 +1091,7 @@ export class WorldScene extends Phaser.Scene {
     let img = this.crackOverlays.get(key);
     if (!img || !img.active) {
       this.crackOverlays.get(key)?.destroy();
-      img = this.add.image(tx * 32 + 16, ty * 32 + 16, "fx-cracks", 0);
+      img = this.add.image(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx + this.tilePx / 2, "fx-cracks", 0);
       if (this.blockLayer) this.blockLayer.add(img);
       img.setDepth(1); // above the block sprite, below actors
       this.crackOverlays.set(key, img);
@@ -1171,7 +1188,7 @@ export class WorldScene extends Phaser.Scene {
   private spawnSelfDoll(): void {
     if (!this.playersManifest || this.selfDoll) return;
     this.selfDoll = new PaperdollBody(this, this.playersManifest);
-    this.selfDoll.spawn(this.selfX * 32, this.selfY * 32 + 16, 7);
+    this.selfDoll.spawn(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, 7);
     this.hideSelfHand(); // Kaetram body carries its own weapon layer
     if (this.selfHeld) this.selfDoll.setWeapon(weapon_sheet_for(this.selfHeld));
   }
@@ -1208,7 +1225,7 @@ export class WorldScene extends Phaser.Scene {
       // Re-welcome (re-login / reconnect without a page reload): reuse the
       // existing marker — spawning a second one left a frozen "clone" at
       // the spawn point that looked exactly like the player.
-      this.selfMarker.setPosition(s.x * 32, s.y * 32);
+      this.selfMarker.setPosition(s.x * this.tilePx, s.y * this.tilePx);
       this.ensureSelfHand();
       this.setSelfHeld(welcome.held ?? null);
       return;
@@ -1216,12 +1233,12 @@ export class WorldScene extends Phaser.Scene {
     // NOTE: server positions are already TILE-CENTER based (x_f = x + 0.5),
     // so x*32 lands exactly in the middle of the tile. Never add +16 here —
     // that shifts the avatar half a tile off the collision grid.
-    this.selfMarker = this.add.rectangle(s.x * 32, s.y * 32, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
+    this.selfMarker = this.add.rectangle(s.x * this.tilePx, s.y * this.tilePx, PLAYER_SIZE, PLAYER_SIZE, 0x5865f2);
     this.selfMarker.setStrokeStyle(2, 0xffffff, 0.9);
     this.selfMarker.setName("self");
     // Permanent role color label above self (same rule as remote labels).
     if (s.name) {
-      this.selfLabel = this.add.text(s.x * 32, s.y * 32 + 22, s.name, {
+      this.selfLabel = this.add.text(s.x * this.tilePx, s.y * this.tilePx + 22, s.name, {
         fontSize: "10px", color: s.color || "#ffffff",
         stroke: "#000000", strokeThickness: 3,
       }).setOrigin(0.5).setDepth(9);
@@ -1308,7 +1325,7 @@ export class WorldScene extends Phaser.Scene {
     let rp = this.players.get(p.id);
     const now = performance.now();
     if (!rp) {
-      const container = this.add.container(p.x * 32, p.y * 32);
+      const container = this.add.container(p.x * this.tilePx, p.y * this.tilePx);
       // Chat-client players render as ROUND avatar tokens (the Discord
       // avatar circle); web players keep the square + paperdoll body.
       const isChat = p.mode === "chat";
@@ -1354,7 +1371,7 @@ export class WorldScene extends Phaser.Scene {
       this.upsertPlayer(p);
       return;
     }
-    rp.buf.push([now, p.x * 32, p.y * 32]);
+    rp.buf.push([now, p.x * this.tilePx, p.y * this.tilePx]);
     if (rp.buf.length > 12) rp.buf.shift();
     rp.dir = p.dir;
     rp.profile = p; // fresh stats for the profile popup
@@ -1424,14 +1441,14 @@ export class WorldScene extends Phaser.Scene {
     // timer); we only feed the base idle/walk action here.
     const nowMs = performance.now();
     if (this.selfLabel) {
-      this.selfLabel.setPosition(this.selfX * 32, this.selfY * 32 + 22);
+      this.selfLabel.setPosition(this.selfX * this.tilePx, this.selfY * this.tilePx + 22);
     }
     if (this.selfDoll?.ready && this.selfMarker) {
       // MOVING = any movement input, not Shift-running. The old check read
       // inputVec.running (Shift only), so plain walking never left the idle
       // row — no leg animation.
       const moving = this.inputVec.dx !== 0 || this.inputVec.dy !== 0;
-      this.selfDoll.animate(this.selfX * 32, this.selfY * 32 + 16, moving ? "walk" : "idle", this.selfDir, nowMs);
+      this.selfDoll.animate(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, moving ? "walk" : "idle", this.selfDir, nowMs);
     }
 
     const now = performance.now() - INTERP_BUFFER_MS;
@@ -1489,7 +1506,7 @@ export class WorldScene extends Phaser.Scene {
       let d = this.drops.get(id);
       if (!d) {
         if (!this.dropLayer) this.dropLayer = this.add.layer();
-        const container = this.add.container(x * 32, y * 32);
+        const container = this.add.container(x * this.tilePx, y * this.tilePx);
         const glow = this.add.circle(0, 0, 7, 0x8fd6ff, 0.35);
         // Icon: Kaetram pixel-art PNG (Image) when the texture is already
         // registered, emoji Text otherwise — flipped later by onIconTexture.
@@ -1515,7 +1532,7 @@ export class WorldScene extends Phaser.Scene {
         this.dropLayer.add(container);
         d = {
           container, glow, itemId, icon, label,
-          tx: x * 32, ty: y * 32, z: z * 32,
+          tx: x * this.tilePx, ty: y * this.tilePx, z: z * this.tilePx,
           phase, bornT: now, collectedT: 0, target,
           bobSeed: Math.random() * Math.PI * 2,
         };
@@ -1523,9 +1540,9 @@ export class WorldScene extends Phaser.Scene {
         // Spawn pop: scale from 0 with a small overshoot.
         container.setScale(0.1);
       } else {
-        d.tx = x * 32;
-        d.ty = y * 32;
-        d.z = z * 32;
+        d.tx = x * this.tilePx;
+        d.ty = y * this.tilePx;
+        d.z = z * this.tilePx;
         d.target = target;
         if (d.phase !== phase) {
           d.phase = phase;
@@ -1607,7 +1624,7 @@ export class WorldScene extends Phaser.Scene {
         const lx = latest[1];
         const ly = latest[2];
         const dist = Math.hypot(lx - z.lastX, ly - z.lastY);
-        if (dist > 96) {
+        if (dist > this.tilePx * 3) {
           // Teleport (>3 tiles): respawn/despawn lag — snap, don't glide.
           z.lastX = lx;
           z.lastY = ly;
@@ -1676,7 +1693,7 @@ export class WorldScene extends Phaser.Scene {
       // Dead: the server drops our movement inputs — integrating locally only
       // created the invisible-ring effect (server kept snapping us back).
       // Hold position on the authority, keep the aim visuals updating.
-      marker.setPosition(this.selfServerPos.x * 32, this.selfServerPos.y * 32);
+      marker.setPosition(this.selfServerPos.x * this.tilePx, this.selfServerPos.y * this.tilePx);
       return;
     }
     const dt = this.frameDtSec;
@@ -1745,7 +1762,7 @@ export class WorldScene extends Phaser.Scene {
     this.resolveSolidOverlap();
     this.correctMaskOverlap();
     this.updateFacing();
-    marker.setPosition(this.selfX * 32, this.selfY * 32);
+    marker.setPosition(this.selfX * this.tilePx, this.selfY * this.tilePx);
   }
 
   /** Sub-tile mask refinement — client mirror of the server's
@@ -1893,7 +1910,7 @@ export class WorldScene extends Phaser.Scene {
       const mh = map.height * map.tile_height;
       if (w.x >= mw || w.y >= mh) return null;
     }
-    return { x: Math.floor(w.x / 32), y: Math.floor(w.y / 32) };
+    return { x: Math.floor(w.x / this.tilePx), y: Math.floor(w.y / this.tilePx) };
   }
 
   private ensureHoverSquare(): void {
@@ -1911,7 +1928,7 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.hoverSquare
-      .setPosition(this.mouseTile.x * 32 + 16, this.mouseTile.y * 32 + 16)
+      .setPosition(this.mouseTile.x * this.tilePx + this.tilePx / 2, this.mouseTile.y * this.tilePx + this.tilePx / 2)
       .setVisible(true)
       .setDepth(100)
       .setActive(true)
@@ -1926,7 +1943,7 @@ export class WorldScene extends Phaser.Scene {
     for (const s of this.npcSprites.values()) s.container.destroy();
     this.npcSprites.clear();
     for (const n of npcs) {
-      const container = this.add.container(n.x * 32 + 16, n.y * 32 + 16);
+      const container = this.add.container(n.x * this.tilePx + this.tilePx / 2, n.y * this.tilePx + this.tilePx / 2);
       const label = this.add
         .text(0, -30, n.name, {
           fontFamily: "Verdana, sans-serif", fontSize: "10px",
@@ -2001,7 +2018,7 @@ export class WorldScene extends Phaser.Scene {
       const rise = (1 - this.promptAlpha) * 8; // drifts up while fading out
       const sincePunch = now - this.promptPunchAt;
       const punch = sincePunch < 160 ? 1 + 0.35 * (1 - sincePunch / 160) : 1;
-      this.stationPrompt.setPosition(p.x * 32 + 16, p.y * 32 - 24 + bob + rise);
+      this.stationPrompt.setPosition(p.x * this.tilePx + this.tilePx / 2, p.y * this.tilePx - 24 + bob + rise);
       this.stationPrompt.setScale(punch);
       this.stationPrompt.setAlpha(this.promptAlpha);
       this.stationPrompt.setVisible(true).setDepth(150);
@@ -2078,7 +2095,7 @@ export class WorldScene extends Phaser.Scene {
     this.promptAlpha = 0;
     this.stationPrompt?.setVisible(false);
     this.suppressPrompt = true;
-    this.spawnPromptExplosion(p.x * 32 + 16, p.y * 32 - 24);
+    this.spawnPromptExplosion(p.x * this.tilePx + this.tilePx / 2, p.y * this.tilePx - 24);
     this.onStationInteract?.();
   }
 
@@ -2221,8 +2238,8 @@ export class WorldScene extends Phaser.Scene {
     if (rp) {
       rp.swingT0 = performance.now();
       // Face the acted tile so the arc points where the swing went.
-      const dx = tx * 32 + 16 - rp.container.x;
-      const dy = ty * 32 + 16 - rp.container.y;
+      const dx = tx * this.tilePx + this.tilePx / 2 - rp.container.x;
+      const dy = ty * this.tilePx + this.tilePx / 2 - rp.container.y;
       if (Math.abs(dx) > Math.abs(dy)) {
         rp.dir = dx > 0 ? "EAST" : "WEST";
       } else {
@@ -2351,7 +2368,7 @@ export class WorldScene extends Phaser.Scene {
     if (!self) return;
     // Green heal splat (Kaetram: "++" prefix for points).
     this.spawnSplatAt(
-      Math.floor(self.x / 32), Math.floor(self.y / 32), "+", "#6fe26f", "#1d5c22",
+      Math.floor(self.x / this.tilePx), Math.floor(self.y / this.tilePx), "+", "#6fe26f", "#1d5c22",
     );
     // Kaetram heal.png: 8 frames of 48x48 — register once, play once.
     if (!this.textures.exists("fx-heal")) {
@@ -2396,8 +2413,8 @@ export class WorldScene extends Phaser.Scene {
     } else {
       const rp = this.players.get(userId);
       if (rp) {
-        tx = Math.floor(rp.container.x / 32);
-        ty = Math.floor(rp.container.y / 32);
+        tx = Math.floor(rp.container.x / this.tilePx);
+        ty = Math.floor(rp.container.y / this.tilePx);
       }
     }
     // Purple-red to distinguish INCOMING damage from player-dealt red.
@@ -2405,7 +2422,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private spawnSplatAt(tx: number, ty: number, text: string, fill: string, stroke: string): void {
-    const txt = this.add.text(tx * 32 + 16, ty * 32 - 4, text, {
+    const txt = this.add.text(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx - 4, text, {
       fontSize: "12px",
       fontStyle: "bold",
       color: fill,
@@ -2428,7 +2445,7 @@ export class WorldScene extends Phaser.Scene {
     const text = missed || damage <= 0 ? "MISS" : String(damage);
     const fill = missed ? "#cfd6e4" : critical ? "#ffd75e" : "#ff3232";
     const stroke = missed ? "#2a2f3a" : critical ? "#7a5b00" : "#ffb4b4";
-    const txt = this.add.text(tx * 32 + 16, ty * 32 - 4, text, {
+    const txt = this.add.text(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx - 4, text, {
       fontSize: critical ? "15px" : "12px",
       fontStyle: critical ? "bold" : "bold",
       color: fill,
@@ -2497,7 +2514,7 @@ export class WorldScene extends Phaser.Scene {
     for (const [x, y, gid] of tiles) {
       const texKey = this.textureForGid(gid);
       if (!texKey) continue;
-      const img = this.add.image(x * 32 + 16, y * 32 + 16, texKey);
+      const img = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
       this.resourceLayer.add(img);
       this.resourceTiles.set(`${x},${y}`, img);
     }
@@ -2522,7 +2539,8 @@ export class WorldScene extends Phaser.Scene {
 
   /** World key of a resource image ("x,y" from its centre position). */
   private keyOf(img: Phaser.GameObjects.Image): string {
-    return `${Math.round((img.x - 16) / 32)},${Math.round((img.y - 16) / 32)}`;
+    const half = this.tilePx / 2;
+    return `${Math.round((img.x - half) / this.tilePx)},${Math.round((img.y - half) / this.tilePx)}`;
   }
 
   /** Gid the resource image was cropped from ("res-<gid>" texture). */
@@ -2651,7 +2669,7 @@ export class WorldScene extends Phaser.Scene {
         onComplete: () => {
           this.tweens.add({
             targets: img,
-            angle: img.x < this.selfX * 32 ? 12 : -12,
+            angle: img.x < this.selfX * this.tilePx ? 12 : -12,
             y: baseY + 4,
             alpha: 0,
             duration: 280,
@@ -2742,9 +2760,9 @@ export class WorldScene extends Phaser.Scene {
       // Node bbox in pixels -> bar spans the whole sprite, centred.
       const xs = bbox.map(([bx]) => bx);
       const ys = bbox.map(([, by]) => by);
-      const minX = Math.min(...xs) * 32;
-      const maxX = (Math.max(...xs) + 1) * 32;
-      const maxY = (Math.max(...ys) + 1) * 32;
+      const minX = Math.min(...xs) * this.tilePx;
+      const maxX = (Math.max(...xs) + 1) * this.tilePx;
+      const maxY = (Math.max(...ys) + 1) * this.tilePx;
       const cx = (minX + maxX) / 2;
       const width = Math.min(72, Math.max(30, maxX - minX - 8));
       const needed = this.neededByAnchor.get(key) ?? entry[1] ?? 4;
@@ -2853,7 +2871,7 @@ export class WorldScene extends Phaser.Scene {
       let z = this.zombies.get(id);
       if (!z) {
         if (!this.zombieLayer) this.zombieLayer = this.add.layer();
-        const container = this.add.container(x * 32, y * 32);
+        const container = this.add.container(x * this.tilePx, y * this.tilePx);
         const body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle =
           ready
             ? this.add.image(0, 0, sheet.texKey)
@@ -2873,7 +2891,7 @@ export class WorldScene extends Phaser.Scene {
         this.zombieLayer.add(container);
         z = {
           container, body, label, hpBg, hpFill,
-          buf: [], lastX: x * 32, lastY: y * 32,
+          buf: [], lastX: x * this.tilePx, lastY: y * this.tilePx,
           anim: anim ?? "idle", animT0: performance.now(),
           serverAnimT: animT ?? 0,
           frame: 0, frameT0: performance.now(),
@@ -2883,7 +2901,7 @@ export class WorldScene extends Phaser.Scene {
         this.zombies.set(id, z);
       }
       const now = performance.now();
-      z.buf.push([now, x * 32, y * 32]);
+      z.buf.push([now, x * this.tilePx, y * this.tilePx]);
       if (z.buf.length > 12) z.buf.shift();
       z.hunter = hunter === "hunter";
       z.facing = facing ?? z.facing;
@@ -3032,8 +3050,8 @@ export class WorldScene extends Phaser.Scene {
   zombieNear(tile: { x: number; y: number }): boolean {
     for (const z of this.zombies.values()) {
       if (z.dieT0 !== 0) continue;
-      const zx = z.lastX / 32;
-      const zy = z.lastY / 32;
+      const zx = z.lastX / this.tilePx;
+      const zy = z.lastY / this.tilePx;
       if (Math.hypot(zx - (tile.x + 0.5), zy - (tile.y + 0.5)) <= 0.75) return true;
     }
     return false;
@@ -3069,12 +3087,17 @@ export class WorldScene extends Phaser.Scene {
       this.collisionDebug = null;
     }
     if (!on) return;
+    // Tile size MUST come from the map payload: ekonia maps are 16px tiles
+    // (hard-coding 32 painted each red rect over 2x2 tiles — the overlay
+    // looked shifted half a map off the real blocking).
+    const tw = this.welcome?.map?.tile_width ?? 32;
+    const th = this.welcome?.map?.tile_height ?? tw;
     const g = this.add.graphics().setDepth(900);
     g.fillStyle(0xff2020, 0.45);
     for (let y = 0; y < this.collision.length; y++) {
       const row = this.collision[y];
       for (let x = 0; x < row.length; x++) {
-        if (row[x]) g.fillRect(x * 32, y * 32, 32, 32);
+        if (row[x]) g.fillRect(x * tw, y * th, tw, th);
       }
     }
     this.collisionDebug = g;
@@ -3409,7 +3432,7 @@ export class WorldScene extends Phaser.Scene {
   // Local self position in tile units (for the HUD + camera sanity).
   get selfPos(): { x: number; y: number } {
     if (this.selfMarker) {
-      return { x: this.selfMarker.x / 32, y: this.selfMarker.y / 32 };
+      return { x: this.selfMarker.x / this.tilePx, y: this.selfMarker.y / this.tilePx };
     }
     return { x: 0, y: 0 };
   }
