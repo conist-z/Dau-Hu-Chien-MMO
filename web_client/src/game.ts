@@ -381,6 +381,7 @@ export class WorldScene extends Phaser.Scene {
   // PIXEL (not per tile) so the dim halo is a smooth radial gradient.
   private occluderCtx: CanvasRenderingContext2D | null = null;
   private occluderPix: Uint8ClampedArray | null = null; // opaque alpha snapshot
+  private occluderTexKey = ""; // texture key of the OVER canvas (for GL re-upload)
   private static readonly FADE_RADIUS_CELLS = 2; // Ekonia fade_radius_cells
   private static readonly FADE_MIN_ALPHA = 0.35; // Ekonia min_alpha
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
@@ -945,6 +946,7 @@ export class WorldScene extends Phaser.Scene {
       // inside the player's fade window can dip alpha and RESTORE exactly
       // when the player walks away (no bake-redraw, no sticky dimming).
       this.occluderCtx = aboveCtx;
+      this.occluderTexKey = akey;
       try {
         this.occluderPix = aboveCtx.getImageData(0, 0, aboveCanvas.width, aboveCanvas.height).data;
       } catch {
@@ -1487,6 +1489,31 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     ctx.putImageData(img, x0, y0);
+    // CRITICAL: putImageData only edits the 2D backing store — the WebGL
+    // texture Phaser sampled at bake time never updates, so without this
+    // the fade is computed but never rendered ("no visible change").
+    // Re-upload JUST the dirty window (~200-400 KB) — cheap per frame.
+    const tex = this.textures.get(this.occluderTexKey);
+    const src = tex ? tex.getSourceImage() : null;
+    const glt = (tex as unknown as { glTexture?: { glTexture: WebGLTexture } })?.glTexture;
+    const gl = (this.game.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
+    if (src === ctx.canvas && gl && glt) {
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.bindTexture(gl.TEXTURE_2D, glt.glTexture);
+      const rowH = 256; // chunk rows to bound the scratch buffer
+      for (let yy = 0; yy < bh; yy += rowH) {
+        const rows = Math.min(rowH, bh - yy);
+        const tmp = ctx.createImageData(bw, rows);
+        new Uint8Array(tmp.data.buffer).set(
+          new Uint8Array(ctx.getImageData(x0, y0 + yy, bw, rows).data.buffer)
+        );
+        gl.texSubImage2D(
+          gl.TEXTURE_2D, 0, x0, y0 + yy, bw, rows,
+          gl.RGBA, gl.UNSIGNED_BYTE, tmp.data as unknown as ArrayBufferView
+        );
+      }
+    }
   }
 
   update(_time: number, delta?: number): void {
