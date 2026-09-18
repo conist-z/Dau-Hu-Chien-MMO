@@ -25,6 +25,14 @@ export interface WelcomePayload {
     tile_height: number;
     collision: number[][];
     layers: { name: string; data: number[][] }[];
+    /** Above-player layer names (roofs/canopies): baked to a separate image
+     *  drawn OVER actors. Absent on old servers = none. */
+    above_layers?: string[];
+    /** Godot y-sorted canopy cells (Ekonia parity): flat [x0,y0,x1,y1,...]
+     *  grid coords of tiles that belong to a sprite part ABOVE its base row
+     *  — baked into the OVER-player canvas so the player walking behind a
+     *  tree is covered by its crown. Absent on old servers = none. */
+    ysort_cells?: number[];
     tilesets: {
       index: number;
       firstgid: number;

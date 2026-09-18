@@ -31,6 +31,10 @@ class MapData:
     # Tiles carved walkable by "stairs" layers (mountain staircases); up and
     # down share the same carved path. Empty for maps without stairs.
     stair_walkable: Tuple[Tuple[int, int], ...] = ()
+    # Y-sorted cells (Ekonia/Godot parity): tiles that belong to a sprite
+    # part ABOVE its base row (canopy) — drawn OVER actors by the web client.
+    # Empty for maps without a y-sorted layer set (Kaetram/bigmap).
+    ysort_cells: Tuple[Tuple[int, int], ...] = ()
     display_name: str = ""
 
     def is_walkable(self, x: int, y: int) -> bool:
@@ -457,15 +461,34 @@ def _load_solids_cells(assets_dir: Path, map_id: str) -> List[Tuple[int, int]]:
     "black" region outside the drawn art, which IS solid in Ekonia). Missing
     file = no extras (Kaetram/bigmap don't ship one).
     """
+    return _load_ekonia_cells(assets_dir, map_id)[0]
+
+
+def _load_ekonia_cells(
+        assets_dir: Path, map_id: str,
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]]:
+    """``(solid_cells, poly_cells, above_cells)`` from ``<map>.solids.json``.
+
+    - solid_cells: Godot-authoritative per-tile blocking (OR into collision).
+    - poly_cells: cells covered by a tile's physics POLYGON (trunk/L-shape of
+      big props). Blocked FULL SQUARE — alpha refinement must never punch
+      holes through a trunk ("vật to mà box chặn nhỏ ở giữa" fix).
+    - above_cells: y-sorted cells that belong to a sprite's part ABOVE its
+      base row (canopy). The web client bakes these into the OVER-player
+      canvas — the "layer lá cây đè lên player" mechanism of the source game.
+    """
     p = assets_dir / f"{map_id}.solids.json"
     if not p.exists():
-        return []
+        return [], [], []
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
-        cells = d.get("solid_cells") or []
-        return [(int(c[0]), int(c[1])) for c in cells]
+
+        def _cells(key: str) -> List[Tuple[int, int]]:
+            return [(int(c[0]), int(c[1])) for c in (d.get(key) or [])]
+
+        return _cells("solid_cells"), _cells("poly_cells"), _cells("above_cells")
     except Exception:
-        return []  # malformed solids: never block map load
+        return [], [], []  # malformed solids: never block map load
 
 
 def load_map(map_id: str, assets_dir: Path) -> MapData:
@@ -476,7 +499,9 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # authoritative per-tile blocking ("các vật thể sẽ có box chạm") — pixel
     # rects converted to tile coords, INCLUDING negative cells outside the
     # drawn art. OR it into the derived collision so author intent wins.
-    solids_cells = _load_solids_cells(assets_dir, map_id)
+    solids_cells, poly_cells, above_cells = _load_ekonia_cells(
+        assets_dir, map_id,
+    )
 
     if not is_tiled:
         # Simple format (legacy test-map.json): width/height/collision/spawn.
@@ -519,11 +544,12 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         width = mx - ox + 1
         height = my - oy + 1
         tile_layers = _remap_layers(tile_layers, ox, oy, width, height)
-    elif solids_cells:
+    elif solids_cells or poly_cells or above_cells:
         # A map whose art bbox is smaller than its solids (or vice versa):
-        # grow the grid to cover the solids too so no blocking cell is lost.
-        sx = [c[0] for c in solids_cells]
-        sy = [c[1] for c in solids_cells]
+        # grow the grid to cover the solids + above/canopy cells too so no
+        # blocking or canopy cell is lost.
+        sx = [c[0] for c in solids_cells + poly_cells + above_cells]
+        sy = [c[1] for c in solids_cells + poly_cells + above_cells]
         min_x, min_y = min(0, min(sx)), min(0, min(sy))
         max_x = max(width - 1, max(sx))
         max_y = max(height - 1, max(sy))
@@ -538,6 +564,15 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         gx, gy = cx - ox, cy - oy
         if 0 <= gx < width and 0 <= gy < height:
             collision[gy][gx] = 1
+    # Physics-polygon cells (Godot TileSet sub-tile shapes): FULL SQUARE
+    # block, recorded so the alpha refinement below never punches holes
+    # through a tree trunk ("box chặn nhỏ hơn vật thể" fix).
+    poly_set: set = set()
+    for cx, cy in poly_cells:
+        gx, gy = cx - ox, cy - oy
+        if 0 <= gx < width and 0 <= gy < height:
+            collision[gy][gx] = 1
+            poly_set.add((gx, gy))
     # Sub-tile masks: for every blocked tile, remember the blocking layer's
     # GID (topmost blocking layer wins) so tile_masks can derive the sprite's
     # real opaque shape from the tileset alpha.
@@ -570,6 +605,10 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
                     blocking_gids[(gx, gy)] = gid
     for tile in wall_owned:
         blocking_gids.pop(tile, None)
+    # Physics-polygon cells are FULL SQUARE regardless of alpha: a tree
+    # trunk's canopy is transparent at the top of its anchor cell, but the
+    # trunk footprint must never gain a walkable hole (Godot polygon parity).
+    wall_owned.update(poly_set)
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
@@ -671,5 +710,10 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         tile_layers=tile_layers,
         tile_masks=tile_masks,
         stair_walkable=tuple(stair_overrides),
+        # Godot y-sorted canopy cells (bbox-shifted into grid space).
+        ysort_cells=tuple(sorted(
+            (x - ox, y - oy) for (x, y) in above_cells
+            if 0 <= x - ox < width and 0 <= y - oy < height
+        )),
         display_name=data.get("name", map_id),
     )

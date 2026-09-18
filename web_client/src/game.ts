@@ -371,6 +371,9 @@ export class WorldScene extends Phaser.Scene {
   private resourceLayer: Phaser.GameObjects.Layer | null = null;
   /** Above-player bake (roofs/canopies) — drawn OVER actors. */
   private mapAbove: Phaser.GameObjects.Image | null = null;
+  /** Per-cell y-sorted canopy membership (Ekonia parity): "x,y" -> tile
+   *  bakes into the OVER-player canvas. Rebuilt on every buildWorld. */
+  private ysortCells: Set<string> = new Set();
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
   // Tile count at the last base-map bake: the rebake trigger (chop/regrow
@@ -842,9 +845,20 @@ export class WorldScene extends Phaser.Scene {
     );
     // Above-player layers (roofs/canopies) bake to a SEPARATE canvas drawn
     // OVER the actors (depth 30) — Ekonia "Roof"/Kaetram "02_high" parity:
-    // the player walks under the art and is visually covered.
+    // the player walks under the art and is visually covered. The server may
+    // also send per-cell ysort membership (Godot y_sort_enabled parity):
+    // those exact cells join the OVER canvas too — the canopy covers the
+    // player walking BEHIND the tree while the trunk row still renders
+    // underfoot ("layer lá cây đè lên player", y hệt game gốc).
+    this.ysortCells = new Set(
+      (map.ysort_cells ?? []).map((v, i, arr) =>
+        i % 2 === 0 ? `${v},${arr[i + 1]}` : "",
+      ).filter((s) => s !== ""),
+    );
     const aboveSet = new Set((map.above_layers ?? []).map((n) => foldName(n)));
-    const aboveCanvas = aboveSet.size ? document.createElement("canvas") : null;
+    const aboveCanvas = aboveSet.size || this.ysortCells.size
+      ? document.createElement("canvas")
+      : null;
     if (aboveCanvas) {
       aboveCanvas.width = map.width * tw;
       aboveCanvas.height = map.height * th;
@@ -855,7 +869,8 @@ export class WorldScene extends Phaser.Scene {
       // render as choppable sprites instead). Node-less tiles (lobbytrade's
       // Pipoya decor trees) MUST bake, or they become invisible walls.
       const isResourceLayer = RESOURCE_LAYERS.has(foldName(layer.name || ""));
-      // Above-player tiles go to the OVER canvas (never the base bake).
+      // Above-player tiles go to the OVER canvas (never the base bake):
+      // whole roof/canopy layers, or single y-sorted cells (Ekonia trees).
       const isAboveLayer = aboveSet.has(foldName(layer.name || ""));
       for (let y = 0; y < map.height; y++) {
         const row = layer.data[y];
@@ -883,7 +898,8 @@ export class WorldScene extends Phaser.Scene {
           const tileW = ts.tilewidth ?? tw;
           const tileH = th;
           if (col * tileW >= src.width) continue;
-          const dest = isAboveLayer ? aboveCtx : ctx;
+          const dest =
+            isAboveLayer || this.ysortCells.has(`${x},${y}`) ? aboveCtx : ctx;
           if (!dest) continue;
           dest.drawImage(
             src, col * tileW, rowIdx * tileH, tileW, tileH,

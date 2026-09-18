@@ -34,6 +34,7 @@ FLIP_H, FLIP_V, TRANSPOSE = 0x1000, 0x2000, 0x4000
 
 BAKED_SHEET = "ekonia_baked.png"
 BAKED_COLS = 64  # tiles per row in the baked sheet
+SUBCELL = 2  # px per sub-cell in physics-polygon sampling (8x8 per tile)
 
 
 def load_tres(path: str) -> list[dict]:
@@ -58,8 +59,21 @@ def load_tres(path: str) -> list[dict]:
         if not texpath:
             continue
         tiles, sizes, origins, solids = set(), {}, {}, set()
+        polys: dict = {}
         for m in re.finditer(r"^(\d+):(\d+)/0 = 0", block, re.M):
             tiles.add((int(m.group(1)), int(m.group(2))))
+        # Physics polygon per tile (Godot TileSet): sub-tile blocking shape
+        # in local px, origin at the tile CENTER. A tree trunk ships an
+        # L/half-cell poly — the real "box chạm". Cells whose poly covers
+        # the whole tile keep the square flag (below); partial polys are
+        # carried through so the converter can emit sub-cell collision.
+        for m in re.finditer(
+                r"^(\d+):(\d+)/0/physics_layer_0/polygon_0/points = "
+                r"PackedVector2Array\(([^)]*)\)", block, re.M):
+            nums = [float(t) for t in m.group(3).replace(",", " ").split()]
+            polys[(int(m.group(1)), int(m.group(2)))] = [
+                (nums[i], nums[i + 1]) for i in range(0, len(nums), 2)
+            ]
         for m in re.finditer(r"^(\d+):(\d+)/0/physics", block, re.M):
             solids.add((int(m.group(1)), int(m.group(2))))
         for m in re.finditer(
@@ -73,7 +87,8 @@ def load_tres(path: str) -> list[dict]:
             origins[(int(m.group(1)), int(m.group(2)))] = (
                 int(m.group(3)), int(m.group(4)))
         by_id[idm.group(1)] = {"tex": texpath, "tiles": tiles, "sizes": sizes,
-                               "origins": origins, "solids": solids}
+                               "origins": origins, "solids": solids,
+                               "polys": polys}
     # TileSet resource body maps source index -> sub_resource id
     atlases: list[dict | None] = []
     body = txt.split("[resource]", 1)[-1]
@@ -88,6 +103,47 @@ def load_tres(path: str) -> list[dict]:
     return atlases
 
 
+def _poly_solid_cells(
+        poly: list[tuple[float, float]], cell: tuple[int, int]) -> bool:
+    """Does one Godot physics polygon overlap the sub-cell grid of ``cell``?
+
+    Polygon points are tile-local px with the origin at the tile CENTER
+    (Godot TileSet convention), so absolute point = cell*TS + TS/2 + p.
+    Returns True when ANY 2x2-px sub-cell of the tile intersects the polygon —
+    the same resolution tile_masks uses for alpha masks. Used to reproduce
+    Godot's L-shaped trunk collision for big props ("vật to mà box chặn nhỏ
+    ở giữa" fix): the converter used to flag only the anchor cell.
+    """
+    bx, by = cell[0] * TS + TS / 2, cell[1] * TS + TS / 2
+    pts = [(bx + px, by + py) for px, py in poly]
+    half = SUBCELL / 2
+    # Bounding-box quick reject (polygons are tiny relative to the sweep).
+    minx = min(p[0] for p in pts) - half
+    maxx = max(p[0] for p in pts) + half
+    miny = min(p[1] for p in pts) - half
+    maxy = max(p[1] for p in pts) + half
+    if maxx < (cell[0] * TS) or minx > ((cell[0] + 1) * TS):
+        return False
+    if maxy < (cell[1] * TS) or miny > ((cell[1] + 1) * TS):
+        return False
+    for sy in range(8):
+        for sx in range(8):
+            cx = cell[0] * TS + sx * SUBCELL + half
+            cy = cell[1] * TS + sy * SUBCELL + half
+            if not (minx <= cx <= maxx and miny <= cy <= maxy):
+                continue
+            inside = True
+            for i in range(len(pts)):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % len(pts)]
+                if (x2 - x1) * (cy - y1) - (y2 - y1) * (cx - x1) < 0:
+                    inside = False
+                    break
+            if inside:
+                return True
+    return False
+
+
 class Baker:
     """Shared per-run baked tileset: unique 16px slices -> sequential gids."""
 
@@ -97,6 +153,13 @@ class Baker:
         self.piece_imgs: list[Image.Image] = []  # gid-1
         self.solid_gids: set[int] = set()
         self._solid_cells: set[tuple[int, int]] = set()  # absolute solid cells
+        # Cells whose Godot physics polygon covers at least one SUB-CELL —
+        # trunk/L-shaped footprints of big props ("vật to box nhỏ" fix).
+        self._poly_cells: set[tuple[int, int]] = set()
+        # Cells on y-sorted layers (Godot y_sort_enabled, z>=0): they join the
+        # global Y-sort tree and draw OVER the player from behind — canopy set
+        # for the client's above-player canvas.
+        self._ysort_cells: set[tuple[int, int]] = set()
         self._pending: list[Image.Image] = []          # pieces awaiting gids
         self._gid_by_piece: dict[int, int] = {}        # id(piece) -> gid
 
@@ -354,6 +417,12 @@ def expand_nested_tscn(tscn_path: str, px: int, py: int,
                 ayp = py + lpy + y * TS + gy * TS
                 key = (math.floor(axp / TS), math.floor(ayp / TS))
                 lay["cells"][key] = _blend(lay["cells"].get(key), piece)
+        # Building props join the global Y-sort too (same rule as outdoor
+        # maps): furniture/props draw over the player standing behind them.
+        if "y_sort_enabled = true" in part:
+            zm = re.search(r"z_index = (-?\d+)", part)
+            if not zm or int(zm.group(1)) >= 0:
+                BAKER._ysort_cells.update(lay["cells"].keys())
 
 
 def tres_for(path: str) -> list[dict]:
@@ -424,13 +493,14 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
             if (ax, ay) not in at["tiles"]:
                 continue
             painted.append((x, y, sid, ax, ay, alt))
-        # deterministic order: bottom-up so upper tiles overwrite
+        # Deterministic order: bottom-up so upper tiles overwrite. Separate
+        # pass lists because multi-cell tiles must record their sub-cell
+        # polygons ONLY for the ANCHOR cell's destination cells (the same
+        # physical shape must not be stamped again for every covered slice).
         for x, y, sid, ax, ay, alt in sorted(painted, key=lambda c: (c[1],
                                                                      c[0])):
             at = atlases[sid]
             grid: dict = {}
-            # bake slices on the layer's own sub-grid (lpx/lpy residual
-            # pixels land inside each 16px piece, pixel-perfect placement)
             # bake slices on the layer's own sub-grid (lpx/lpy residual
             # pixels land inside each 16px piece, pixel-perfect placement)
             BAKER.bake(at["tex"], ax, ay, alt, grid,
@@ -442,6 +512,21 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
             if (ax, ay) in at["solids"]:
                 BAKER._solid_cells.add(
                     (x + math.floor(lpx / TS), y + math.floor(lpy / TS)))
+            # Sub-cell physics from the tile's Godot polygon: sampled at the
+            # ANCHOR cell center, so big props (trees, 2x2/1x2) produce their
+            # trunk-shaped footprint on the destination grid ("vật to mà box
+            # nhỏ ở giữa" fix — the old code blocked only the anchor cell).
+            poly = at.get("polys", {}).get((ax, ay))
+            if poly:
+                cells_list = [
+                    (x + math.floor(lpx / TS) + gx,
+                     y + math.floor(lpy / TS) + gy)
+                    for gx in range(-2, 3) for gy in range(-2, 3)
+                ]
+                for c in cells_list:
+                    if _poly_solid_cells(poly, c):
+                        BAKER._poly_cells.add(c)
+                        BAKER._ysort_cells.add(c)  # Godot: solids y-sort
         if cells:
             xs = [c[0] for c in cells]
             ys = [c[1] for c in cells]
@@ -468,6 +553,24 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
             continue
         expand_instance(scene, m.group(1), int(round(float(posm.group(1)))),
                         int(round(float(posm.group(2)))), layers)
+    # Godot parity: every y-sorted TileMapLayer (Props/Walls/Props2/...) joins
+    # the global Y-sort tree — its tiles draw OVER the player when the player
+    # stands ABOVE them. Record each y-sorted layer's painted cells so the
+    # client can bake them into the OVER-canvas (canopy/roof parity) instead
+    # of the base bake. Ground/Mountain run z_index=-1 (always under), and
+    # Roof/Lower_roof/Top_roof already map to the client's above-player set.
+    for part in re.split(r"(?=\[node )", txt):
+        m = re.match(r'\[node name="([^"]+)" type="TileMapLayer"', part)
+        if not m:
+            continue
+        if "y_sort_enabled = true" not in part:
+            continue
+        zm = re.search(r"z_index = (-?\d+)", part)
+        if zm and int(zm.group(1)) < 0:
+            continue
+        lay = next((l for l in layers if l["name"] == m.group(1)), None)
+        if lay is not None:
+            BAKER._ysort_cells.update(lay["cells"].keys())
     for l in layers:
         l["gids"] = {k: BAKER.gid_of(v) for k, v in l["cells"].items()}
         xs = [c[0] for c in l["gids"]]
@@ -552,6 +655,18 @@ def main() -> int:
             # blocking empty ground while trees/núi stayed walkable.
             "solid_cells": sorted(
                 (x - minx, y - miny) for (x, y) in BAKER._solid_cells
+            ),
+            # Physics-polygon cells (Godot TileSet sub-tile shapes): the real
+            # trunk/L-shaped footprint of big props — full BLOCK of every
+            # covered tile, no alpha refinement. Emitted already bbox-shifted.
+            "poly_cells": sorted(
+                (x - minx, y - miny) for (x, y) in BAKER._poly_cells
+            ),
+            # Y-sorted cells (Godot y_sort_enabled layers): the client bakes
+            # these into the OVER-player canvas so canopies cover the player
+            # walking behind them — Ekonia's "layer lá đè lên player".
+            "above_cells": sorted(
+                (x - minx, y - miny) for (x, y) in BAKER._ysort_cells
             ),
         }
         with open(os.path.join(OUT, f"{fname}.solids.json"), "w") as f:

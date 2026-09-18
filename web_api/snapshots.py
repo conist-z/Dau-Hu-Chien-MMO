@@ -98,6 +98,23 @@ def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
     return out
 
 
+def _fold(name: str) -> str:
+    import unicodedata
+    nfkd = unicodedata.normalize("NFD", name or "")
+    return "".join(c for c in nfkd if not unicodedata.combining(c)) \
+        .replace("đ", "d").replace("Đ", "d").lower().strip()
+
+
+#: Mirrors rendering.renderer.ABOVE_PLAYER_MARKERS (kept in sync manually —
+#: importing the renderer here would drag PIL into every snapshot build).
+_ABOVE_MARKERS = ("ben tren player", "above player", "roof", "02_high")
+
+
+def _is_above_layer(name: str) -> bool:
+    nl = _fold(name)
+    return any(m in nl for m in _ABOVE_MARKERS)
+
+
 def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict]:
     out = []
     for p in rt.state.get_visible_players():
@@ -341,6 +358,20 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
                 {"name": name, "data": grid}
                 for name, grid in md.tile_layers
             ],
+            # Above-player layer names (ASCII-folded client-side too): the web
+            # client bakes these to a separate image drawn OVER actors —
+            # canopies/roofs visually cover the player (Ekonia/Kaetram parity).
+            "above_layers": [
+                name for name, _grid in md.tile_layers
+                if _is_above_layer(name)
+            ],
+            # Godot y-sorted cells (Ekonia parity): per-cell canopy membership
+            # — these tiles bake into the OVER-player canvas so the player
+            # walking behind a tree is covered by its crown. Flat
+            # [x0,y0,x1,y1,...] keeps the payload small (forest ~14k cells).
+            "ysort_cells": (
+                [c for xy in getattr(md, "ysort_cells", ()) for c in xy]
+            ),
             "tilesets": _tilesets_payload(rt),
             "spawn": list(md.spawn),
             # Sub-tile alpha masks (rendering/tile_masks.py): per-tile opaque
