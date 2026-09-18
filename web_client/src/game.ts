@@ -375,13 +375,12 @@ export class WorldScene extends Phaser.Scene {
    *  bakes into the OVER-player canvas. Rebuilt on every buildWorld. */
   private ysortCells: Set<string> = new Set();
   // --- Ekonia FadeOccluderLayer parity (port of fade_occluder_layer.gd) ---
-  // The OVER canvas is an opaque sheet; cells inside a Chebyshev window
-  // around the local player fade toward FADE_MIN_ALPHA (the tile the player
-  // stands under is most see-through, rings fade back to opaque) — exactly
-  // Godot `_tile_data_runtime_update`'s lerp(1, min_alpha, closeness).
+  // The OVER canvas is an opaque sheet; canopy pixels near the local player
+  // fade toward FADE_MIN_ALPHA and restore to full opacity outside the
+  // window — Ekonia's lerp(1, min_alpha, closeness) curve, evaluated per
+  // PIXEL (not per tile) so the dim halo is a smooth radial gradient.
   private occluderCtx: CanvasRenderingContext2D | null = null;
   private occluderPix: Uint8ClampedArray | null = null; // opaque alpha snapshot
-  private occluderCell: { x: number; y: number } | null = null;
   private static readonly FADE_RADIUS_CELLS = 2; // Ekonia fade_radius_cells
   private static readonly FADE_MIN_ALPHA = 0.35; // Ekonia min_alpha
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
@@ -552,7 +551,6 @@ export class WorldScene extends Phaser.Scene {
       }
       this.occluderCtx = null;
       this.occluderPix = null;
-      this.occluderCell = null;
       if (this.textures.exists("map-bake")) this.textures.remove("map-bake");
       if (this.textures.exists("map-above")) this.textures.remove("map-above");
       // Drop the old map's resource sprites NOW (they render above the baked
@@ -952,7 +950,6 @@ export class WorldScene extends Phaser.Scene {
       } catch {
         this.occluderPix = null; // tainted canvas — degrade to opaque sheet
       }
-      this.occluderCell = null;
       if (this.mapAbove) {
         this.mapAbove.setTexture(akey);
         this.mapAbove.setVisible(true);
@@ -1432,72 +1429,64 @@ export class WorldScene extends Phaser.Scene {
   // ---- per-frame update (60fps) ----
 
   /**
-   * Port of Ekonia's fade_occluder_layer.gd (tile_data_runtime_update):
-   * cells of the OVER-player sheet inside a Chebyshev window of radius 2
-   * around the player's cell fade toward FADE_MIN_ALPHA — the cell directly
-   * above the player is most see-through (0.35), ring 1 ≈ 0.575, ring 2 ≈
-   * 0.775, everything outside stays 1.0 (opaque). Exactly the same lerp:
-   *   alpha = lerp(1, min_alpha, 1 - dist / radius)
-   * Refresh happens only when the player's TILE changes (Godot does the
-   * same — notify_cell_changed), and every touched pixel is restored from
-   * the opaque snapshot, so walking away undoes the fade with zero bake
-   * redraws. d == 0 (the cell the player stands under) still fades — that
-   * is the whole point: the canopy overhead becomes translucent.
+   * Ekonia FadeOccluderLayer — SMOOTH edition. Godot's fade_occluder_layer.gd
+   * drops alpha per TILE (alpha = lerp(1, min_alpha, closeness), closeness =
+   * 1 - ring/(radius+1)) which reads as hard square rings when tiles are
+   * zoomed to 64 screen-px. We evaluate the SAME curve per PIXEL from the
+   * player's continuous position, every frame: the dim halo follows the
+   * avatar as a soft radial gradient (distance in cell units, opaque at the
+   * window edge), recomputed from the opaque snapshot — so walking away
+   * restores the canopy exactly, with zero bake redraws.
    */
   private updateOccluderFade(): void {
     const ctx = this.occluderCtx;
     const pix = this.occluderPix;
     if (!ctx || !pix || !this.mapAbove || !this.mapAbove.visible) return;
-    const cx = Math.floor(this.selfX);
-    const cy = Math.floor(this.selfY);
-    if (this.occluderCell && this.occluderCell.x === cx && this.occluderCell.y === cy) return;
-    const prev = this.occluderCell;
-    this.occluderCell = { x: cx, y: cy };
     const R = WorldScene.FADE_RADIUS_CELLS;
     const MIN = WorldScene.FADE_MIN_ALPHA;
-    // Touch both the old and the new window (union) so walking away RESTORES
-    // the previous window instead of leaving a permanent hole.
-    const windows: Array<[number, number]> = [];
-    if (prev && (prev.x !== cx || prev.y !== cy)) windows.push([prev.x, prev.y]);
-    windows.push([cx, cy]);
-    const touched: { x: number; y: number; a: number }[] = [];
-    for (const [wx, wy] of windows) {
-      for (let dy = -R; dy <= R; dy++) {
-        for (let dx = -R; dx <= R; dx++) {
-          const d = Math.max(Math.abs(dx), Math.abs(dy)); // Chebyshev — Godot int_dist
-          const a = d >= R ? 1 : MIN + (1 - MIN) * (d / R);
-          touched.push({ x: wx + dx, y: wy + dy, a });
-        }
-      }
-    }
-    for (const t of touched) {
-      if (t.x < 0 || t.y < 0) continue;
-      const w = ctx.canvas.width;
-      const h = ctx.canvas.height;
-      const x0 = t.x * this.tilePx;
-      const y0 = t.y * this.tilePx;
-      if (x0 >= w || y0 >= h) continue;
-      const bw = Math.min(this.tilePx, w - x0);
-      const bh = Math.min(this.tilePx, h - y0);
-      const img = ctx.createImageData(bw, bh);
-      const dst = img.data;
-      let any = false;
-      for (let py = 0; py < bh; py++) {
-        let si = ((y0 + py) * w + x0) * 4;
-        let di = py * bw * 4;
-        for (let px = 0; px < bw; px++, si += 4, di += 4) {
-          const a0 = pix[si + 3];
-          if (a0 === 0) continue;
+    const reach = R + 1; // curve hits exactly opaque at the window edge
+    const tile = this.tilePx;
+    // Player center in canvas pixels (bake canvas: 1px = 1 world px).
+    const pcx = (this.selfX + 0.5) * tile;
+    const pcy = (this.selfY + 0.5) * tile;
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
+    const half = reach * tile;
+    const x0 = Math.max(0, Math.floor(pcx - half));
+    const y0 = Math.max(0, Math.floor(pcy - half));
+    const x1 = Math.min(w, Math.ceil(pcx + half));
+    const y1 = Math.min(h, Math.ceil(pcy + half));
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+    if (bw <= 0 || bh <= 0) return;
+    const img = ctx.createImageData(bw, bh);
+    const dst = img.data;
+    const falloff = 1 - MIN; // lerp(1, MIN, c) == 1 - falloff * c
+    for (let py = 0; py < bh; py++) {
+      const dy = (y0 + py + 0.5 - pcy) / tile; // player-relative, in cells
+      let si = ((y0 + py) * w + x0) * 4;
+      let di = py * bw * 4;
+      for (let px = 0; px < bw; px++, si += 4, di += 4) {
+        const a0 = pix[si + 3];
+        if (a0 === 0) continue; // transparent bake pixel — nothing to fade
+        const dx = (x0 + px + 0.5 - pcx) / tile;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        let c = 1 - d / reach;
+        if (c <= 0) {
           dst[di] = pix[si];
           dst[di + 1] = pix[si + 1];
           dst[di + 2] = pix[si + 2];
-          dst[di + 3] = a0 * t.a;
-          any = true;
+          dst[di + 3] = a0;
+          continue;
         }
+        if (c > 1) c = 1;
+        dst[di] = pix[si];
+        dst[di + 1] = pix[si + 1];
+        dst[di + 2] = pix[si + 2];
+        dst[di + 3] = a0 * (1 - falloff * c);
       }
-      if (any) ctx.putImageData(img, x0, y0);
     }
-    // Texture needs no refresh — putImageData edits the backing canvas.
+    ctx.putImageData(img, x0, y0);
   }
 
   update(_time: number, delta?: number): void {
@@ -1540,8 +1529,8 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
-    // Ekonia FadeOccluderLayer parity: fade canopy alpha in a Chebyshev
-    // window around the player (per-cell, only on cell change — cheap).
+    // Ekonia FadeOccluderLayer parity: smooth per-pixel canopy fade that
+    // follows the player every frame (cheap — small window, typed loop).
     this.updateOccluderFade();
     // Facing vector still feeds the hover square + swing geometry (the hand
     // dot itself is hidden once the paperdoll body renders).
