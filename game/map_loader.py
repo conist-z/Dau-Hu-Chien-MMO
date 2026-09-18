@@ -609,6 +609,12 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # trunk's canopy is transparent at the top of its anchor cell, but the
     # trunk footprint must never gain a walkable hole (Godot polygon parity).
     wall_owned.update(poly_set)
+    # Canopy set for the OVER-player canvas = y-sorted cells MINUS the
+    # trunk/poly cells: the trunk row is the sprite's BASE row — a player
+    # standing IN FRONT (south) must draw OVER it (Godot Y-sort: bigger y
+    # wins), so it stays in the base bake. Only the art rows ABOVE the base
+    # (crown) cover the player walking behind the tree.
+    above_cells = [c for c in above_cells if tuple(c) not in poly_set]
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
