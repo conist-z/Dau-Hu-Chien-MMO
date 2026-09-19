@@ -466,29 +466,44 @@ def _load_solids_cells(assets_dir: Path, map_id: str) -> List[Tuple[int, int]]:
 
 def _load_ekonia_cells(
         assets_dir: Path, map_id: str,
-) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]]:
-    """``(solid_cells, poly_cells, above_cells)`` from ``<map>.solids.json``.
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]], list, list]:
+    """``(solid_cells, poly_cells, above_cells, poly_masks, poly_albedo)``
+    from ``<map>.solids.json``.
 
     - solid_cells: Godot-authoritative per-tile blocking (OR into collision).
     - poly_cells: cells covered by a tile's physics POLYGON (trunk/L-shape of
       big props). Blocked FULL SQUARE — alpha refinement must never punch
       holes through a trunk ("vật to mà box chặn nhỏ ở giữa" fix).
+    - poly_masks: [x, y, mask] triples — the exact 8x8 sub-cell polygon
+      shape; web-side tile_masks override so the player box HUGS the shape.
+    - poly_albedo: [x, y, mask] triples — the SPRITE silhouette (ground-free
+      composited alpha >=128). Wins over poly_masks on the web: the box
+      hugs what the player SEES.
     - above_cells: y-sorted cells that belong to a sprite's part ABOVE its
       base row (canopy). The web client bakes these into the OVER-player
       canvas — the "layer lá cây đè lên player" mechanism of the source game.
     """
     p = assets_dir / f"{map_id}.solids.json"
     if not p.exists():
-        return [], [], []
+        return [], [], [], [], []
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
 
         def _cells(key: str) -> List[Tuple[int, int]]:
             return [(int(c[0]), int(c[1])) for c in (d.get(key) or [])]
 
-        return _cells("solid_cells"), _cells("poly_cells"), _cells("above_cells")
+        def _masks(key: str) -> list:
+            return [
+                (int(c[0]), int(c[1]), int(c[2])) for c in (d.get(key) or [])
+            ]
+
+        return (
+            _cells("solid_cells"), _cells("poly_cells"),
+            _cells("above_cells"), _masks("poly_masks"),
+            _masks("poly_albedo"),
+        )
     except Exception:
-        return [], [], []  # malformed solids: never block map load
+        return [], [], [], [], []  # malformed solids: never block map load
 
 
 def load_map(map_id: str, assets_dir: Path) -> MapData:
@@ -499,8 +514,8 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # authoritative per-tile blocking ("các vật thể sẽ có box chạm") — pixel
     # rects converted to tile coords, INCLUDING negative cells outside the
     # drawn art. OR it into the derived collision so author intent wins.
-    solids_cells, poly_cells, above_cells = _load_ekonia_cells(
-        assets_dir, map_id,
+    solids_cells, poly_cells, above_cells, poly_masks, poly_albedo = (
+        _load_ekonia_cells(assets_dir, map_id)
     )
 
     if not is_tiled:
@@ -567,12 +582,32 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # Physics-polygon cells (Godot TileSet sub-tile shapes): FULL SQUARE
     # block, recorded so the alpha refinement below never punches holes
     # through a tree trunk ("box chặn nhỏ hơn vật thể" fix).
+    # Web refinement: the converter also emits the exact 8x8 sub-cell
+    # polygon masks (poly_masks). These override the tile square on the WEB
+    # side only (tile_masks) — the player box HUGS the authored shape (rock
+    # edge, L-trunk) instead of the square: "cây thừa viền / đá box quá to"
+    # fixed at the data source. Edge-graze cells (poly never reaching the
+    # central 4x4) are already trimmed by the converter.
     poly_set: set = set()
+    poly_exact_masks: dict = {}
     for cx, cy in poly_cells:
         gx, gy = cx - ox, cy - oy
         if 0 <= gx < width and 0 <= gy < height:
             collision[gy][gx] = 1
             poly_set.add((gx, gy))
+    if poly_masks:
+        for cx, cy, m in poly_masks:
+            gx, gy = cx - ox, cy - oy
+            if 0 <= gx < width and 0 <= gy < height and m:
+                poly_exact_masks[(gx, gy)] = int(m) & ((1 << 64) - 1)
+    # The SPRITE silhouette (ground-free alpha >=128) wins where present —
+    # the box must hug what the player SEES; the authored poly (often a
+    # full-tile rect) only fills cells the sprite silhouette misses.
+    if poly_albedo:
+        for cx, cy, m in poly_albedo:
+            gx, gy = cx - ox, cy - oy
+            if 0 <= gx < width and 0 <= gy < height and m:
+                poly_exact_masks[(gx, gy)] = int(m) & ((1 << 64) - 1)
     # Sub-tile masks: for every blocked tile, remember the blocking layer's
     # GID (topmost blocking layer wins) so tile_masks can derive the sprite's
     # real opaque shape from the tileset alpha.
@@ -657,7 +692,9 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
 
         full = (1 << (MASK_RES * MASK_RES)) - 1
         md_stub = type("_MD", (), {"width": width, "height": height, "tilesets": tilesets})()
-        tile_masks = build_map_masks(md_stub, blocking_gids)
+        tile_masks = build_map_masks(
+            md_stub, blocking_gids, extra_masks=poly_exact_masks or None
+        )
         # Tiles whose sprite is (near-)opaque AND covers the whole cell keep
         # square collision (None) — refining them changes nothing visually
         # but bloats the welcome payload and slows every sweep.

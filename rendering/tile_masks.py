@@ -197,6 +197,77 @@ def encode_masks(tm: TilesetMasks) -> Dict[str, object]:
     }
 
 
+def _mask_from_objectgroup(og: Dict, tw: int, th: int) -> Mask:
+    """Rasterize a Tiled Tile Collision Editor objectgroup (hand-drawn
+    rect/ellipse/polygon on one tile) into a MASK_RES bitmask. Points are in
+    PIXELS relative to the tile's top-left; a pixel is solid when its center
+    falls inside the drawn shape. Manual shapes override the alpha mask —
+    what the author draws in Tiled IS the collision, "cho chắc"."""
+    mask = _empty_mask()
+    cell = 1.0 / MASK_RES
+    for obj in og.get("objects", []):
+        if not isinstance(obj, dict):
+            continue
+        ox = float(obj.get("x", 0))
+        oy = float(obj.get("y", 0))
+        ow = float(obj.get("width", 0))
+        oh = float(obj.get("height", 0))
+        poly = obj.get("polygon") or obj.get("polyline")
+        shape_kind = (obj.get("ellipse") and "ellipse") or ("poly" if poly else "rect")
+        pts: list = []
+        if poly:
+            pts = [(ox + p.get("x", 0), oy + p.get("y", 0)) for p in poly]
+            if obj.get("polyline") and len(pts) >= 2:
+                # Treat a polyline as a closed polygon too (Tiled semantics
+                # for collision are usually drawn closed anyway).
+                pass
+            if len(pts) < 3:
+                continue
+        elif shape_kind == "ellipse":
+            # Ellipse bounding box -> parametric polygon (32 segments).
+            if ow <= 0 or oh <= 0:
+                continue
+            cx, cy = ox + ow / 2, oy + oh / 2
+            import math as _m
+
+            pts = [
+                (cx + (ow / 2) * _m.cos(2 * _m.pi * i / 32),
+                 cy + (oh / 2) * _m.sin(2 * _m.pi * i / 32))
+                for i in range(32)
+            ]
+        else:
+            if ow <= 0 or oh <= 0:
+                continue
+            pts = [(ox, oy), (ox + ow, oy), (ox + ow, oy + oh), (ox, oy + oh)]
+        if len(pts) < 3:
+            continue
+        for my in range(MASK_RES):
+            for mx in range(MASK_RES):
+                if mask >> (my * MASK_RES + mx) & 1:
+                    continue
+                px = (mx + 0.5) * cell * tw
+                py = (my + 0.5) * cell * th
+                if _point_in_poly(px, py, pts):
+                    mask |= 1 << (my * MASK_RES + mx)
+    return mask
+
+
+def _point_in_poly(px: float, py: float, pts: list) -> bool:
+    """Ray-casting point-in-polygon (Tiled collision shapes are simple)."""
+    inside = False
+    n = len(pts)
+    j = n - 1
+    for i in range(n):
+        xi, yi = pts[i]
+        xj, yj = pts[j]
+        if (yi > py) != (yj > py):
+            xint = (xj - xi) * (py - yi) / (yj - yi) + xi
+            if px < xint:
+                inside = not inside
+        j = i
+    return inside
+
+
 def refine_tile_mask(
     base_mask: Mask, tileset: Dict, gid: Gid
 ) -> Mask:
@@ -369,12 +440,20 @@ class MapTileMasks:
         return {"res": MASK_RES, "tiles": rows}
 
 
-def build_map_masks(map_data, blocking_gids: Dict[Tuple[int, int], Gid]) -> Optional[MapTileMasks]:
+def build_map_masks(
+    map_data, blocking_gids: Dict[Tuple[int, int], Gid],
+    extra_masks: Optional[Dict[Tuple[int, int], Mask]] = None,
+) -> Optional[MapTileMasks]:
     """Derive MapTileMasks for a loaded MapData.
 
     ``blocking_gids`` maps (x, y) -> the GID responsible for the static block
     on that tile (caller picks the topmost blocking-layer GID). Tiles without
     an entry keep plain square collision (None).
+
+    ``extra_masks``: caller-computed per-cell masks OVERRIDING the
+    gid-derived shape — the Ekonia loader passes the Godot physics-polygon
+    sub-cell masks (the authored collision shape) so the web player's box
+    HUGS rock edges / L-trunks instead of the tile square.
     """
     if not map_data.tilesets:
         return None
@@ -384,14 +463,42 @@ def build_map_masks(map_data, blocking_gids: Dict[Tuple[int, int], Gid]) -> Opti
         if not (0 <= y < out.height and 0 <= x < out.width):
             continue
         mask = None
-        for tm in sets:
-            m = tm.mask_for_gid(gid)
+        # 1) Hand-drawn Tile Collision Editor shape WINS (manual > alpha).
+        for ts in map_data.tilesets:
+            hand = ts.get("hand_collision")
+            if not hand:
+                continue
+            firstgid = ts.get("firstgid", 1)
+            if not (firstgid <= gid):
+                continue
+            local = gid - firstgid
+            og = hand.get(local)
+            if og is None:
+                continue
+            try:
+                m = _mask_from_objectgroup(
+                    og, int(ts.get("tilewidth", 32)), int(ts.get("tileheight", 32))
+                )
+            except Exception:
+                m = None
             if m is not None:
                 mask = m
                 break
+        # 2) Fall back to the alpha-derived sprite shape.
+        if mask is None:
+            for tm in sets:
+                m = tm.mask_for_gid(gid)
+                if m is not None:
+                    mask = m
+                    break
         if mask is None:
             continue  # unknown gid -> plain square block
         out.grid[y][x] = mask
+    # Caller overrides last (Ekonia poly cells: authored polygon shape).
+    if extra_masks:
+        for (x, y), m in extra_masks.items():
+            if 0 <= y < out.height and 0 <= x < out.width and m:
+                out.grid[y][x] = m
     return out
 
 

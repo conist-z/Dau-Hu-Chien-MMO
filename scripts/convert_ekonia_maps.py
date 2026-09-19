@@ -103,16 +103,36 @@ def load_tres(path: str) -> list[dict]:
     return atlases
 
 
+def _albedo_mask(img: Image.Image, thresh: int = 128) -> int:
+    """8x8 sub-cell mask of a cell's composited SPRITE alpha (>= thresh).
+    This is the silhouette the player actually sees — ground-free, so the
+    threshold is meaningful (unlike the baked sheet, where ground tiles
+    are opaque under everything)."""
+    a = img.getchannel("A").resize((8, 8), Image.BOX)
+    px = a.load()
+    m = 0
+    for my in range(8):
+        for mx in range(8):
+            if px[mx, my] >= thresh:
+                m |= 1 << (my * 8 + mx)
+    return m
+
+
 def _poly_solid_cells(
-        poly: list[tuple[float, float]], cell: tuple[int, int]) -> bool:
+        poly: list[tuple[float, float]], cell: tuple[int, int]) -> tuple:
     """Does one Godot physics polygon overlap the sub-cell grid of ``cell``?
 
     Polygon points are tile-local px with the origin at the tile CENTER
     (Godot TileSet convention), so absolute point = cell*TS + TS/2 + p.
-    Returns True when ANY 2x2-px sub-cell of the tile intersects the polygon —
-    the same resolution tile_masks uses for alpha masks. Used to reproduce
-    Godot's L-shaped trunk collision for big props ("vật to mà box chặn nhỏ
-    ở giữa" fix): the converter used to flag only the anchor cell.
+    Returns ``(total, center, mask)`` — the number of 2x2-px sub-cells
+    covered by the polygon (0 = no overlap), how many of them sit in the
+    CENTER 4x4 window (tile-space 0.25..0.75 — where the player's
+    0.6-tile box lives), and the 64-bit MASK_RES=8 sub-cell bitmask
+    (bit my*8+mx = the polygon covers that 2x2-px sub-cell — the exact
+    authored collision shape, ready for tile_masks refinement).
+    ``center == 0`` means the polygon only grazes the tile's outer ring:
+    the box can never reach it, so the caller trims the cell from
+    collision (Godot blocks the polygon itself, never the tile square).
     """
     bx, by = cell[0] * TS + TS / 2, cell[1] * TS + TS / 2
     pts = [(bx + px, by + py) for px, py in poly]
@@ -123,9 +143,12 @@ def _poly_solid_cells(
     miny = min(p[1] for p in pts) - half
     maxy = max(p[1] for p in pts) + half
     if maxx < (cell[0] * TS) or minx > ((cell[0] + 1) * TS):
-        return False
+        return 0, 0, 0
     if maxy < (cell[1] * TS) or miny > ((cell[1] + 1) * TS):
-        return False
+        return 0, 0, 0
+    n = 0
+    nc = 0
+    mask = 0
     for sy in range(8):
         for sx in range(8):
             cx = cell[0] * TS + sx * SUBCELL + half
@@ -140,8 +163,11 @@ def _poly_solid_cells(
                     inside = False
                     break
             if inside:
-                return True
-    return False
+                n += 1
+                mask |= 1 << (sy * 8 + sx)
+                if 2 <= sx <= 5 and 2 <= sy <= 5:
+                    nc += 1
+    return n, nc, mask
 
 
 class Baker:
@@ -156,6 +182,26 @@ class Baker:
         # Cells whose Godot physics polygon covers at least one SUB-CELL —
         # trunk/L-shaped footprints of big props ("vật to box nhỏ" fix).
         self._poly_cells: set[tuple[int, int]] = set()
+        # Poly cells that only graze the tile EDGE (<=2 solid sub-cells in
+        # the center 4x4): trimmed from collision at write time — the "cây
+        # hơi thừa viền / đá box quá to" fix. Godot's sub-tile physics
+        # blocks the polygon itself, never the whole tile square.
+        self._poly_edge_cells: set[tuple[int, int]] = set()
+        # Exact per-cell 8x8 sub-cell masks from the Godot polygon — the
+        # AUTHORED collision shape ("cho chắc" beats any alpha guesswork):
+        # the loader feeds these to tile_masks so the player box HUGS the
+        # polygon (rock edges, L-trunks) instead of the tile square.
+        self._poly_masks: dict[tuple[int, int], int] = {}
+        self._poly_core_cells: set[tuple[int, int]] = set()
+        # Per-cell composited alpha of POLY-BEARING sprites only (no ground
+        # beneath): the visible silhouette of the trunk/rock at each cell —
+        # ground-free, so a real alpha threshold works (the baked sheet
+        # cannot: ground tiles are opaque under everything).
+        self.poly_albedo: dict[tuple[int, int], Image.Image] = {}
+        # Exact per-cell 8x8 sub-cell masks from the Godot polygon — the
+        # AUTHORED collision shape ("cho chắc" beats any alpha guesswork):
+        # the loader feeds these to tile_masks so the player box HUGS the
+        # polygon (rock edges, L-trunks) instead of the tile square.
         # Cells on y-sorted layers (Godot y_sort_enabled, z>=0): they join the
         # global Y-sort tree and draw OVER the player from behind — canopy set
         # for the client's above-player canvas.
@@ -432,6 +478,18 @@ def tres_for(path: str) -> list[dict]:
 
 
 def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
+    # Per-map cell sets must RESET here: BAKER is a module-global shared by
+    # all maps (baked-sheet pieces accumulate by design — gids stay stable
+    # across maps), but _solid_cells/_poly_*/_ysort_cells are per-map and
+    # were leaking across maps: every solids.json received the UNION of all
+    # previously converted maps (overworld got forest's trees, etc.).
+    BAKER._solid_cells.clear()
+    BAKER._poly_cells.clear()
+    BAKER._poly_core_cells.clear()
+    BAKER._poly_edge_cells.clear()
+    BAKER._poly_masks.clear()
+    BAKER.poly_albedo.clear()
+    BAKER._ysort_cells.clear()
     path = os.path.join(ROOT, tscn_rel)
     txt = open(path, encoding="utf-8", errors="ignore").read()
 
@@ -523,10 +581,31 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
                      y + math.floor(lpy / TS) + gy)
                     for gx in range(-2, 3) for gy in range(-2, 3)
                 ]
+                if poly:
+                    for (gx, gy), piece in grid.items():
+                        key = (x + math.floor(lpx / TS) + gx,
+                               y + math.floor(lpy / TS) + gy)
+                        prev = BAKER.poly_albedo.get(key)
+                        if prev is None:
+                            BAKER.poly_albedo[key] = piece.copy()
+                        else:
+                            prev.alpha_composite(piece)
                 for c in cells_list:
-                    if _poly_solid_cells(poly, c):
-                        BAKER._poly_cells.add(c)
-                        BAKER._ysort_cells.add(c)  # Godot: solids y-sort
+                    total, center, submask = _poly_solid_cells(poly, c)
+                    if total == 0:
+                        continue
+                    # Edge-graze trim: a cell whose poly NEVER enters the
+                    # center 4x4 (where the player's 0.6-tile box lives)
+                    # is "hơi thừa" — trimming it keeps full collision for
+                    # the sprite body while dropping the unreachable rim.
+                    if center == 0:
+                        BAKER._poly_edge_cells.add(c)
+                    else:
+                        BAKER._poly_core_cells.add(c)
+                        if submask:
+                            BAKER._poly_masks[c] = submask
+                    BAKER._poly_cells.add(c)
+                    BAKER._ysort_cells.add(c)  # Godot: solids y-sort
         if cells:
             xs = [c[0] for c in cells]
             ys = [c[1] for c in cells]
@@ -610,9 +689,38 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
         ],
     }
     # tilesets injected after finalize(); store for main()
+    # Snapshot THIS map's cell sets NOW (shifted like the layers): main()
+    # writes files after the whole loop, and BAKER's cell sets are per-map
+    # state that the next convert_map() call clears — writing from BAKER at
+    # the end gave every solids.json the LAST map's cells (or a union of
+    # everything, depending on run shape).
+    snap = {
+        "solid_cells": sorted(
+            (x - minx, y - miny) for (x, y) in BAKER._solid_cells
+        ),
+        "poly_cells": sorted(
+            (x - minx, y - miny) for (x, y) in BAKER._poly_core_cells
+        ),
+        "above_cells": sorted(
+            (x - minx, y - miny) for (x, y) in BAKER._ysort_cells
+        ),
+        # [x, y, mask] triples — the authored 8x8 sub-cell collision shape.
+        "poly_masks": sorted(
+            [x - minx, y - miny, m]
+            for (x, y), m in BAKER._poly_masks.items()
+        ),
+        # [x, y, mask] triples — the SPRITE silhouette (composited alpha of
+        # poly-bearing sprites, ground-free) at >=128 alpha, 8x8 per cell.
+        # Web refinement source: the box hugs what the player SEES.
+        "poly_albedo": sorted(
+            [x - minx, y - miny, _albedo_mask(img)]
+            for (x, y), img in BAKER.poly_albedo.items()
+            if (x, y) in BAKER._poly_core_cells
+        ),
+    }
     # Return the normalization shift too: solids share the RAW coord system
     # and must be shifted by the SAME (minx, miny) when written out.
-    return fname, tjson, (minx, miny)
+    return fname, tjson, (minx, miny), snap
 
 
 def main() -> int:
@@ -642,32 +750,34 @@ def main() -> int:
     print(f"baked tiles: {len(BAKER.piece_imgs)} "
           f"(solid: {len(BAKER.solid_gids)})")
     os.makedirs(OUT, exist_ok=True)
-    for fname, tjson, (minx, miny) in results:
+    for fname, tjson, (minx, miny), snap in results:
         tjson["tilesets"] = tilesets
         with open(os.path.join(OUT, f"{fname}.json"), "w",
                   encoding="utf-8") as f:
             json.dump(tjson, f, separators=(",", ":"))
         solid_json = {
             "map": fname, "tilewidth": TS, "tileheight": TS,
-            # Shift by the SAME (minx, miny) as the Tiled layers: _solid_cells
-            # stores RAW absolute coords while the JSON grid is normalized to
-            # (0,0). Unshifted solids landed (34,54) tiles off on forest —
-            # blocking empty ground while trees/núi stayed walkable.
-            "solid_cells": sorted(
-                (x - minx, y - miny) for (x, y) in BAKER._solid_cells
-            ),
+            # Per-map snapshot (see convert_map): cells were shifted by the
+            # SAME (minx, miny) as the Tiled layers at convert time.
+            "solid_cells": snap["solid_cells"],
             # Physics-polygon cells (Godot TileSet sub-tile shapes): the real
-            # trunk/L-shaped footprint of big props — full BLOCK of every
-            # covered tile, no alpha refinement. Emitted already bbox-shifted.
-            "poly_cells": sorted(
-                (x - minx, y - miny) for (x, y) in BAKER._poly_cells
-            ),
+            # trunk/L-shaped footprint of big props. Cells whose poly only
+            # GRAZES the tile rim (never the center 4x4) are trimmed at the
+            # source — blocking them full-square reads as "cây thừa viền /
+            # đá box quá to".
+            "poly_cells": snap["poly_cells"],
+            # Exact 8x8 sub-cell collision masks from the Godot physics
+            # polygon: [x, y, mask]. The loader feeds them to tile_masks so
+            # the player box HUGS the authored shape (rock edge, L-trunk)
+            # instead of the tile square.
+            "poly_masks": snap["poly_masks"],
+            # SPRITE silhouette masks (8x8, ground-free alpha >=128): web
+            # refinement so the player box hugs the visible shape.
+            "poly_albedo": snap["poly_albedo"],
             # Y-sorted cells (Godot y_sort_enabled layers): the client bakes
             # these into the OVER-player canvas so canopies cover the player
             # walking behind them — Ekonia's "layer lá đè lên player".
-            "above_cells": sorted(
-                (x - minx, y - miny) for (x, y) in BAKER._ysort_cells
-            ),
+            "above_cells": snap["above_cells"],
         }
         with open(os.path.join(OUT, f"{fname}.solids.json"), "w") as f:
             json.dump(solid_json, f)
