@@ -1495,12 +1495,27 @@ export class WorldScene extends Phaser.Scene {
     // Re-upload JUST the dirty window (~200-400 KB) — cheap per frame.
     const tex = this.textures.get(this.occluderTexKey);
     const src = tex ? tex.getSourceImage() : null;
-    const glt = (tex as unknown as { glTexture?: { glTexture: WebGLTexture } })?.glTexture;
-    const gl = (this.game.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
-    if (src === ctx.canvas && gl && glt) {
+    // glTexture lives on the TextureSource (tex.source[0]); it is a
+    // WebGLTextureWrapper whose .glTexture is the raw WebGLTexture.
+    const tsrc = (
+      tex as unknown as { source?: { glTexture?: { glTexture?: WebGLTexture } }[] }
+    )?.source?.[0];
+    const wrapper = tsrc?.glTexture;
+    const raw = wrapper?.glTexture;
+    const renderer = this.game.renderer as unknown as {
+      gl?: WebGL2RenderingContext;
+      updateCanvasTexture?: (
+        c: HTMLCanvasElement,
+        t: unknown,
+        flipY?: boolean,
+        noRepeat?: boolean
+      ) => unknown;
+    };
+    const gl = renderer.gl;
+    if (src === ctx.canvas && gl && raw) {
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.bindTexture(gl.TEXTURE_2D, glt.glTexture);
+      gl.bindTexture(gl.TEXTURE_2D, raw);
       const rowH = 256; // chunk rows to bound the scratch buffer
       for (let yy = 0; yy < bh; yy += rowH) {
         const rows = Math.min(rowH, bh - yy);
@@ -1513,6 +1528,9 @@ export class WorldScene extends Phaser.Scene {
           gl.RGBA, gl.UNSIGNED_BYTE, tmp.data as unknown as ArrayBufferView
         );
       }
+    } else if (src === ctx.canvas && renderer.updateCanvasTexture && wrapper) {
+      // Fallback (heavier, whole-canvas): still guarantees the fade shows.
+      renderer.updateCanvasTexture(ctx.canvas, wrapper, false, true);
     }
   }
 
