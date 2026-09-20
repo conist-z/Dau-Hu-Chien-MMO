@@ -3379,6 +3379,16 @@ export class WorldScene extends Phaser.Scene {
     return out;
   }
 
+  /** Mask-aware tile passability (server parity: Collision._mask_passable).
+   *  A statically-blocked tile refined by an alpha mask lets the swept tile
+   *  step ENTER — correctMaskOverlap() then pushes the box out of the real
+   *  opaque shape. Without this the sweep stopped the box at the tile edge
+   *  and the mask never applied ("box chặn tường hang dày quá mức" — the
+   *  server walked closer to the rock than the client could). */
+  private maskPassable(tx: number, ty: number): boolean {
+    return this.tileMasks.has(`${tx},${ty}`);
+  }
+
   /** Movement allowed along x, clamped EXACTLY to the blocking wall so the
    * player SLIDES along it — a direct port of game/collision._free_x (the
    * old client collision STOPPED at the wall while the server slid, so the
@@ -3399,14 +3409,18 @@ export class WorldScene extends Phaser.Scene {
       const start = Math.floor(x + r);
       const end = Math.floor(x + dx + r);
       for (let c = start; c <= end; c++) {
-        if (rows.some((t) => this.solidAt(c, t))) return Math.min(dx, c - r - x);
+        if (rows.some((t) => this.solidAt(c, t) && !this.maskPassable(c, t))) {
+          return Math.min(dx, c - r - x);
+        }
       }
       return dx;
     }
     const start = Math.floor(x - r);
     const end = Math.floor(x + dx - r);
     for (let c = start; c >= end; c--) {
-      if (rows.some((t) => this.solidAt(c, t))) return Math.max(dx, c + 1 + r - x);
+      if (rows.some((t) => this.solidAt(c, t) && !this.maskPassable(c, t))) {
+        return Math.max(dx, c + 1 + r - x);
+      }
     }
     return dx;
   }
@@ -3420,14 +3434,18 @@ export class WorldScene extends Phaser.Scene {
       const start = Math.floor(y + r);
       const end = Math.floor(y + dy + r);
       for (let t = start; t <= end; t++) {
-        if (cols.some((c) => this.solidAt(c, t))) return Math.min(dy, t - r - y);
+        if (cols.some((c) => this.solidAt(c, t) && !this.maskPassable(c, t))) {
+          return Math.min(dy, t - r - y);
+        }
       }
       return dy;
     }
     const start = Math.floor(y - r);
     const end = Math.floor(y + dy - r);
     for (let t = start; t >= end; t--) {
-      if (cols.some((c) => this.solidAt(c, t))) return Math.max(dy, t + 1 + r - y);
+      if (cols.some((c) => this.solidAt(c, t) && !this.maskPassable(c, t))) {
+        return Math.max(dy, t + 1 + r - y);
+      }
     }
     return dy;
   }
