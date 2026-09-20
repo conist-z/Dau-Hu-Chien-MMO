@@ -269,6 +269,10 @@ export class WorldScene extends Phaser.Scene {
   getDebugInfo(): string {
     const d = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
     const idle = this.inputLog.length === 0;
+    // PERF telemetry: EMA frame time + fps (12s half-life) — distinguishes
+    // "network desync" stutter (d jumps, fps steady) from "render stall"
+    // stutter (fps craters while d stays tiny).
+    const fps = this.avgFrameMs > 0 ? 1000 / this.avgFrameMs : 0;
     return [
       `pred (${this.selfX.toFixed(2)}, ${this.selfY.toFixed(2)})`,
       `srv (${this.selfServerPos.x.toFixed(2)}, ${this.selfServerPos.y.toFixed(2)})`,
@@ -277,8 +281,12 @@ export class WorldScene extends Phaser.Scene {
       idle ? "idle" : "moving",
       `snap=${this.snapRate.toFixed(0)}/s`,
       `cvg=${this.convergeEvents}`,
+      `fps=${fps.toFixed(0)} (${this.avgFrameMs.toFixed(1)}ms)`,
     ].join("  ");
   }
+
+  /** Perf telemetry (update()): EMA of real frame ms, 12s half-life. */
+  private avgFrameMs = 16.7;
   /** Set by main.ts: opens the profile popup for the clicked player. */
   onPlayerClick: ((p: PlayerPayload) => void) | null = null;
 
@@ -1664,6 +1672,9 @@ export class WorldScene extends Phaser.Scene {
     // Clamp to 0.2s like the server's dt clamp so a stalled tab can never
     // teleport the player through walls on resume.
     this.frameDtSec = Math.min(0.2, Math.max(0.001, (delta ?? 16.7) / 1000));
+    // Perf EMA (half-life ~12 s at 60fps: k = 1 - 2^(-dt/12)).
+    const kFrame = 1 - Math.pow(2, -(this.frameDtSec / 12));
+    this.avgFrameMs += ((delta ?? 16.7) - this.avgFrameMs) * kFrame;
     // Accumulate real frame time against the current input vector — when the
     // next seq'd input is flushed it carries this dt so the replay buffer can
     // re-integrate the EXACT same wall-clock slices the server will.
