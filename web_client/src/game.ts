@@ -382,6 +382,11 @@ export class WorldScene extends Phaser.Scene {
   private occluderCtx: CanvasRenderingContext2D | null = null;
   private occluderPix: Uint8ClampedArray | null = null; // opaque alpha snapshot
   private occluderTexKey = ""; // texture key of the OVER canvas (for GL re-upload)
+  // Fade hot-path state: last composed position + reusable pixel buffer (no
+  // per-frame ImageData allocation; stationary player = zero fade work).
+  private lastFadeX = NaN;
+  private lastFadeY = NaN;
+  private fadeBuf: ImageData | null = null;
   private static readonly FADE_RADIUS_CELLS = 2; // Ekonia fade_radius_cells
   private static readonly FADE_MIN_ALPHA = 0.35; // Ekonia min_alpha
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
@@ -622,6 +627,9 @@ export class WorldScene extends Phaser.Scene {
     }
     this.buildBlocks(welcome.blocks);
     this.bakeMapIfReady();
+    // Cave ambience (darkness + glowing mushrooms) — independent canvases,
+    // safe to (re)build right after the map bake.
+    this.setupCaveAmbience(welcome);
 
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
@@ -729,7 +737,9 @@ export class WorldScene extends Phaser.Scene {
       sx * this.cameras.main.width,
       sy * this.cameras.main.height,
     );
-    return { x: Math.floor(p.x / 32), y: Math.floor(p.y / 32) };
+    // Divide by THIS map's tile size: the old hard-coded /32 clicked one
+    // tile off on 16px maps (every ekonia map).
+    return { x: Math.floor(p.x / this.tilePx), y: Math.floor(p.y / this.tilePx) };
   }
 
   /** Offset of a clicked tile relative to the player (for place). */
@@ -782,6 +792,92 @@ export class WorldScene extends Phaser.Scene {
       if (best === null || t.firstgid > best.firstgid) best = t;
     }
     return rangeHit ?? best;
+  }
+
+  // ---- cave ambience (darkness + glowing mushrooms) ----
+  /** Full-map black sheet at the cave's ambient darkness; punch soft light
+   *  wells through destination-out (radial gradients). depth 25 = above the
+   *  map (−10) and actors (20), below the OVER canopy (30). */
+  private caveDark: Phaser.GameObjects.Image | null = null;
+  /** Static warm glow halos behind the mushrooms (depth 18, additive). */
+  private caveGlows: Phaser.GameObjects.Image[] = [];
+
+  /** Build (or rebuild) the cave lighting layers from welcome.map.cave_ambience.
+   *  No-op on non-cave maps (destroys any leftovers from a previous map). */
+  private setupCaveAmbience(welcome: WelcomePayload): void {
+    const amb = welcome.map.cave_ambience;
+    if (!amb) {
+      if (this.caveDark) {
+        this.caveDark.destroy();
+        this.caveDark = null;
+      }
+      for (const g of this.caveGlows) g.destroy();
+      this.caveGlows = [];
+      return;
+    }
+    const tw = welcome.map.tile_width || BASE_TILE;
+    const W = welcome.map.width * tw;
+    const H = welcome.map.height * tw;
+    // --- darkness sheet: opaque black, light wells punched through ---
+    const dark = document.createElement("canvas");
+    dark.width = W;
+    dark.height = H;
+    const dctx = dark.getContext("2d");
+    if (!dctx) return;
+    dctx.fillStyle = `rgba(2,2,8,${Math.max(0, Math.min(0.97, amb.darkness))})`;
+    dctx.fillRect(0, 0, W, H);
+    dctx.globalCompositeOperation = "destination-out";
+    for (const [lx, ly, lr] of amb.lights) {
+      const r = lr * tw;
+      const cx = lx * tw;
+      const cy = ly * tw;
+      const grad = dctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      // Fully clear at the source, easing to zero clear at the rim.
+      grad.addColorStop(0, "rgba(0,0,0,0.95)");
+      grad.addColorStop(0.55, "rgba(0,0,0,0.45)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      dctx.fillStyle = grad;
+      dctx.beginPath();
+      dctx.arc(cx, cy, r, 0, Math.PI * 2);
+      dctx.fill();
+    }
+    dctx.globalCompositeOperation = "source-over";
+    const dkey = "cave-dark";
+    if (this.textures.exists(dkey)) this.textures.remove(dkey);
+    this.textures.addCanvas(dkey, dark);
+    if (this.caveDark) {
+      this.caveDark.setTexture(dkey);
+      this.caveDark.setVisible(true);
+    } else {
+      this.caveDark = this.add.image(0, 0, dkey).setOrigin(0, 0).setDepth(25);
+    }
+    // --- warm glow halos (additive, behind actors for a soft bloom) ---
+    for (const g of this.caveGlows) g.destroy();
+    this.caveGlows = [];
+    const glow = document.createElement("canvas");
+    const GR = 64;
+    glow.width = GR * 2;
+    glow.height = GR * 2;
+    const gctx = glow.getContext("2d");
+    if (!gctx) return;
+    const gg = gctx.createRadialGradient(GR, GR, 0, GR, GR, GR);
+    gg.addColorStop(0, "rgba(255,190,120,0.34)");
+    gg.addColorStop(0.5, "rgba(255,150,80,0.16)");
+    gg.addColorStop(1, "rgba(255,120,60,0)");
+    gctx.fillStyle = gg;
+    gctx.fillRect(0, 0, GR * 2, GR * 2);
+    const gkey = "cave-glow";
+    if (this.textures.exists(gkey)) this.textures.remove(gkey);
+    this.textures.addCanvas(gkey, glow);
+    for (const [lx, ly, lr] of amb.lights) {
+      const img = this.add.image(
+        lx * tw, ly * tw, gkey,
+      ).setOrigin(0.5, 0.5).setDepth(18).setBlendMode(Phaser.BlendModes.ADD);
+      img.setScale((lr * tw * 2.1) / (GR * 2));
+      this.caveGlows.push(img);
+    }
+    // Camera background must read as cave dark OUTSIDE the art, not sea-blue.
+    this.cameras.main.setBackgroundColor("#07070c");
   }
 
   private bakeMapIfReady(): void {
@@ -947,6 +1043,9 @@ export class WorldScene extends Phaser.Scene {
       // when the player walks away (no bake-redraw, no sticky dimming).
       this.occluderCtx = aboveCtx;
       this.occluderTexKey = akey;
+      this.lastFadeX = NaN; // force a fresh fade composition on the new map
+      this.lastFadeY = NaN;
+      this.fadeBuf = null;
       try {
         this.occluderPix = aboveCtx.getImageData(0, 0, aboveCanvas.width, aboveCanvas.height).data;
       } catch {
@@ -1461,7 +1560,22 @@ export class WorldScene extends Phaser.Scene {
     const bw = x1 - x0;
     const bh = y1 - y0;
     if (bw <= 0 || bh <= 0) return;
-    const img = ctx.createImageData(bw, bh);
+    // STATIONARY FAST PATH: when neither the player nor the fade window
+    // changed since the last composition, the canvas AND its GL texture
+    // already hold the exact right pixels — skip everything (this beat ran
+    // per frame and its allocations/readbacks were the movement stutter on
+    // big Ekonia maps). Reuse one preallocated buffer otherwise.
+    if (this.selfX === this.lastFadeX && this.selfY === this.lastFadeY
+        && this.fadeBuf && this.fadeBuf.width === bw && this.fadeBuf.height === bh) {
+      return;
+    }
+    this.lastFadeX = this.selfX;
+    this.lastFadeY = this.selfY;
+    const prevBuf = this.fadeBuf;
+    const reuse = !!prevBuf
+      && prevBuf.width === bw && prevBuf.height === bh;
+    const img = reuse ? prevBuf! : ctx.createImageData(bw, bh);
+    this.fadeBuf = img;
     const dst = img.data;
     const falloff = 1 - MIN; // lerp(1, MIN, c) == 1 - falloff * c
     for (let py = 0; py < bh; py++) {
@@ -1470,7 +1584,13 @@ export class WorldScene extends Phaser.Scene {
       let di = py * bw * 4;
       for (let px = 0; px < bw; px++, si += 4, di += 4) {
         const a0 = pix[si + 3];
-        if (a0 === 0) continue; // transparent bake pixel — nothing to fade
+        // Transparent bake pixel: explicitly zero it (the buffer is reused
+        // across frames — stale pixels would otherwise leak into
+        // transparent areas when the window moves).
+        if (a0 === 0) {
+          dst[di] = 0; dst[di + 1] = 0; dst[di + 2] = 0; dst[di + 3] = 0;
+          continue;
+        }
         const dx = (x0 + px + 0.5 - pcx) / tile;
         const d = Math.sqrt(dx * dx + dy * dy);
         let c = 1 - d / reach;
@@ -1492,7 +1612,10 @@ export class WorldScene extends Phaser.Scene {
     // CRITICAL: putImageData only edits the 2D backing store — the WebGL
     // texture Phaser sampled at bake time never updates, so without this
     // the fade is computed but never rendered ("no visible change").
-    // Re-upload JUST the dirty window (~200-400 KB) — cheap per frame.
+    // Upload the SAME RAM buffer straight to the GPU (texSubImage2D) — the
+    // previous version round-tripped through ctx.getImageData (GPU->CPU
+    // readback) TWICE per frame; each readback stalls the render pipeline
+    // and on big Ekonia maps that stall was the "lúc nhanh lúc chậm" lag.
     const tex = this.textures.get(this.occluderTexKey);
     const src = tex ? tex.getSourceImage() : null;
     // glTexture lives on the TextureSource (tex.source[0]); it is a
@@ -1516,18 +1639,10 @@ export class WorldScene extends Phaser.Scene {
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.bindTexture(gl.TEXTURE_2D, raw);
-      const rowH = 256; // chunk rows to bound the scratch buffer
-      for (let yy = 0; yy < bh; yy += rowH) {
-        const rows = Math.min(rowH, bh - yy);
-        const tmp = ctx.createImageData(bw, rows);
-        new Uint8Array(tmp.data.buffer).set(
-          new Uint8Array(ctx.getImageData(x0, y0 + yy, bw, rows).data.buffer)
-        );
-        gl.texSubImage2D(
-          gl.TEXTURE_2D, 0, x0, y0 + yy, bw, rows,
-          gl.RGBA, gl.UNSIGNED_BYTE, tmp.data as unknown as ArrayBufferView
-        );
-      }
+      gl.texSubImage2D(
+        gl.TEXTURE_2D, 0, x0, y0, bw, bh,
+        gl.RGBA, gl.UNSIGNED_BYTE, dst as unknown as ArrayBufferView
+      );
     } else if (src === ctx.canvas && renderer.updateCanvasTexture && wrapper) {
       // Fallback (heavier, whole-canvas): still guarantees the fade shows.
       renderer.updateCanvasTexture(ctx.canvas, wrapper, false, true);

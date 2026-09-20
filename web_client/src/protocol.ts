@@ -51,6 +51,12 @@ export interface WelcomePayload {
       res: number;
       tiles: Record<string, Record<string, number>>;
     } | null;
+    /** Cave lighting (web): ambient darkness 0..1 + glowing-mushroom light
+     *  wells [x, y, radius_tiles]. null/absent on non-cave maps. */
+    cave_ambience?: {
+      darkness: number;
+      lights: [number, number, number][];
+    } | null;
   };
   self: {
     id: number;
