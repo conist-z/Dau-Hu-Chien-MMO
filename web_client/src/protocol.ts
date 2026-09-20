@@ -71,6 +71,9 @@ export interface WelcomePayload {
     crystals?: number;
     walk_speed: number;
     run_speed: number;
+    /** Sprint stamina drain per second (server config.STAMINA_RUN_DRAIN).
+     *  The prediction mirrors the server's sprint drain tick-for-tick. */
+    stamina_run_drain?: number;
     dir: string;
     color?: string;
   };

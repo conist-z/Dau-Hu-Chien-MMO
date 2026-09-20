@@ -368,6 +368,59 @@ def test_input_seq_ack_is_monotonic():
     assert sess.input_seq == 5
 
 
+def test_web_tick_sprint_drains_stamina():
+    """SPRINT on the client-authoritative path drains STAMINA_RUN_DRAIN per
+    second; walking drains NOTHING; the regen beat refills after the grace.
+    (The drain used to live only in the legacy fallback — dead code for
+    modern clients, so the bar never moved.)"""
+    from game.manager import GameManager
+    from config import STAMINA_RUN_DRAIN, STAMINA_MAX
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(91, "test-map")
+    assert gm.register_web_session(91, 50, "runner")
+    p = rt.state.get_player(50)
+    assert p.stamina == STAMINA_MAX == 120.0
+    # Sprinting WITH a position report (the modern path).
+    assert gm.web_input(91, 50, 1.0, 0.0, running=True, report_x=3.0, report_y=0.5)
+    before = p.stamina
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        for i in range(1, 11):  # 10 ticks = 0.5 s
+            loop.run_until_complete(
+                gm._web_tick_runtime(rt, rt.web_sessions, i * 0.05)
+            )
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+    drained = before - p.stamina
+    assert drained > 0.0
+    assert abs(drained - STAMINA_RUN_DRAIN * 0.5) < 0.2  # ~0.5s worth
+
+
+def test_web_tick_walking_never_drains_stamina():
+    from game.manager import GameManager
+
+    gm = GameManager(ASSETS)
+    rt = gm.create_runtime(92, "test-map")
+    assert gm.register_web_session(92, 51, "walker")
+    p = rt.state.get_player(51)
+    assert gm.web_input(92, 51, 1.0, 0.0, running=False, report_x=3.0, report_y=0.5)
+    before = p.stamina
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        for i in range(1, 11):
+            loop.run_until_complete(
+                gm._web_tick_runtime(rt, rt.web_sessions, i * 0.05)
+            )
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+    assert p.stamina == before  # walking is free
+
+
 def test_snapshot_echoes_last_seq():
     """build_snapshot includes self.last_seq = the session's acked seq."""
     from game.manager import GameManager

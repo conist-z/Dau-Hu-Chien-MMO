@@ -1980,12 +1980,22 @@ export class WorldScene extends Phaser.Scene {
       const s = this.welcome.self;
       // Stamina gate: once stamina hits 0 the server caps us at WALK speed —
       // mirror that locally so the prediction never diverges while tired.
+      // SERVER PARITY (game/manager._web_tick_runtime): a sprint tick DRAINS
+      // STAMINA_RUN_DRAIN per second — the prediction mirrors it with the
+      // same frame dt, so the local bar empties at the same rate the server
+      // authority does (the drain used to be server-only dead code for
+      // modern clients AND absent here: the bar never moved).
       const tired = this.selfStamina <= 0;
       // Eating: half speed while chewing (server EAT_SPEED_MULT).
       const eatMul = this.selfEating ? 0.5 : 1.0;
       const speed = (v.running && !tired
         ? (s?.run_speed ?? 6.0)
         : (s?.walk_speed ?? 4.0)) * eatMul;
+      if (v.running && !tired) {
+        this.selfStamina = Math.max(
+          0, this.selfStamina - (s?.stamina_run_drain ?? 4) * dt,
+        );
+      }
       const stepX = v.dx * speed * dt;
       const stepY = v.dy * speed * dt;
       this.selfX += this.freeX(this.selfX, this.selfY, stepX);

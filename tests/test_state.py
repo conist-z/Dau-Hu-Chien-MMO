@@ -52,12 +52,14 @@ def test_player_default_stats():
 def test_stamina_drain_and_floor():
     """Stamina drains smoothly, floors at 0 (never negative), and the
     manager's drain stamps the exertion time (regen grace)."""
+    from config import STAMINA_MAX
+
     p = Player(10, "A")
-    assert p.stamina == 200.0 and p.max_stamina == 200.0
+    assert p.stamina == STAMINA_MAX and p.max_stamina == STAMINA_MAX
     from game.manager import GameManager
     mgr = GameManager.__new__(GameManager)  # no map load — pure helper test
     mgr._drain_stamina(p, 30)
-    assert p.stamina == 170.0 and p.last_exert_at is not None
+    assert p.stamina == STAMINA_MAX - 30 and p.last_exert_at is not None
     mgr._drain_stamina(p, 10 ** 9)  # massive drain floors at zero
     assert p.stamina == 0.0
 

@@ -318,6 +318,105 @@ def _item_emojis_payload() -> Dict[str, str]:
     return out
 
 
+def _cave_ambience_payload(rt) -> dict:
+    """Cave lighting data for the web client: glowing-mushroom light sources
+    + the ambient darkness level.
+
+    Sources are detected DATA-DRIVEN from art: Props-layer tiles whose baked
+    sprite is "mushroom red/orange glowing" (r >= 150, r-b >= 50, r-g >= 30,
+    high saturation, on the dark cave ground) — the three glowing-mushroom
+    clusters in cave_area1 and any future cave painted with the same pack.
+    Each contiguous cluster (8-neighborhood, same-layer) collapses to one
+    light at its pixel centroid; radius from cluster size (2.5-4.5 tiles).
+    """
+    from config import ASSETS_DIR
+
+    md = rt.map_data
+    sources = []
+    glowing: set = set()
+    for name, grid in md.tile_layers:
+        nl = (name or "").strip().lower()
+        if nl not in ("props", "props2"):
+            continue
+        for gy, row in enumerate(grid):
+            if gy >= md.height:
+                break
+            for gx, gid in enumerate(row):
+                if not gid or gx >= md.width:
+                    continue
+                rgb = _baked_tile_rgb(md, gid)
+                if rgb is None:
+                    continue
+                r, g, b = rgb
+                # Glowing-mushroom red/orange (measured on the baked pack:
+                # cap gids ~ (105,42,21)..(105,50,26) — warm, saturated,
+                # far redder than the brown rocks (70,54,33) or wood).
+                if r >= 90 and r - g >= 40 and r - b >= 55:
+                    glowing.add((gx, gy))
+    # Collapse to clusters (8-neighborhood flood).
+    seen: set = set()
+    for start in glowing:
+        if start in seen:
+            continue
+        stack = [start]
+        cluster = []
+        seen.add(start)
+        while stack:
+            cx, cy = stack.pop()
+            cluster.append((cx, cy))
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    nb = (cx + dx, cy + dy)
+                    if nb in glowing and nb not in seen:
+                        seen.add(nb)
+                        stack.append(nb)
+        if len(cluster) < 2:
+            continue
+        fx = sum(c[0] for c in cluster) / len(cluster) + 0.5
+        fy = sum(c[1] for c in cluster) / len(cluster) + 0.5
+        radius = min(4.5, 2.2 + len(cluster) ** 0.5 * 0.45)
+        sources.append([round(fx, 2), round(fy, 2), round(radius, 2)])
+    return {
+        "darkness": 0.62,
+        "lights": sources,
+    }
+
+
+def _baked_tile_rgb(md, gid: int):
+    """Mean RGB of one baked-sheet tile (None for other sheets / empty)."""
+    ts = (md.tilesets or [])[0] if md.tilesets else None
+    if ts is None or ts.get("image_path") is None:
+        return None
+    from PIL import Image
+
+    try:
+        img = _baked_tile_rgb._img  # type: ignore[attr-defined]
+    except AttributeError:
+        try:
+            img = Image.open(ts["image_path"]).convert("RGBA")
+        except Exception:
+            return None
+        _baked_tile_rgb._img = img  # type: ignore[attr-defined]
+    cols = ts.get("columns", 1) or 1
+    local = gid - ts.get("firstgid", 1)
+    x0 = (local % cols) * 16
+    y0 = (local // cols) * 16
+    try:
+        patch = img.crop((x0, y0, x0 + 16, y0 + 16))
+    except Exception:
+        return None
+    px = list(patch.getdata())
+    opaque = [p for p in px if p[3] >= 128]
+    if len(opaque) < 32:
+        return None
+    n = len(opaque)
+    return (
+        sum(p[0] for p in opaque) // n,
+        sum(p[1] for p in opaque) // n,
+        sum(p[2] for p in opaque) // n,
+    )
+
+
 def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
     """The full initial payload after join: map + self + economy + recipes."""
     md = rt.map_data
@@ -373,6 +472,11 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
                 [c for xy in getattr(md, "ysort_cells", ()) for c in xy]
             ),
             "tilesets": _tilesets_payload(rt),
+            # Cave ambience (web client lighting): None on non-cave maps —
+            # the client renders its normal day/night when absent.
+            "cave_ambience": (
+                _cave_ambience_payload(rt) if _is_cave_map(rt) else None
+            ),
             "spawn": list(md.spawn),
             # Sub-tile alpha masks (rendering/tile_masks.py): per-tile opaque
             # shapes for partially-blocking sprites. Client mirrors the
@@ -407,6 +511,10 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             "crystals": getattr(player, "crystals", 0) if player else 0,
             "walk_speed": _walk_speed(),
             "run_speed": _run_speed(),
+            # Sprint drain rate (config.STAMINA_RUN_DRAIN): the client's
+            # prediction mirrors the server's sprint drain tick-for-tick so
+            # the local bar and the authority empty at the same pace.
+            "stamina_run_drain": _run_drain(),
             "dir": player.direction if player else "SOUTH",
         },
         "inventory": _inventory_payload(rt, user_id),
@@ -499,6 +607,32 @@ def _web_session_of(rt: ScenarioRuntime, user_id: int):
 _DAY_ONLY_WEATHER = ("sunny", "sun_clouds")
 
 
+def _is_cave_map(rt) -> bool:
+    """Cave biome detection — DATA-DRIVEN (no map-id hard-coding): a map is a
+    cave when its art carries the Ekonia cliff-face layer ("Walls" whose
+    alpha coverage vs the drawn ground is cave-like) OR an explicit cave
+    marker layer ("miệng hang"/"cave"). Cheap heuristic on the loaded
+    MapData: the Walls layer's painted-cell count relative to the art area —
+    cave maps are enclosed (walls ring the whole walkable area, ~>=15% of
+    ground cells) while overworld Walls layers are sparse (<4%). Verified
+    on the shipped maps: cave_area1 1000/2925 (34%), forest 0.2%,
+    overworld 3.5%. NOTE: the forest's portal layer "miệng hang(cổng dịch
+    chuyển)" is a NAME marker for a door tile, NOT a biome flag — do not
+    key on layer names here, only on the wall/ground ratio."""
+    md = rt.map_data
+    wall_cells = 0
+    ground_cells = 0
+    for name, grid in md.tile_layers:
+        nl = (name or "").strip().lower()
+        if nl == "walls":
+            wall_cells = sum(1 for row in grid for g in row if g)
+        elif nl == "ground":
+            ground_cells = sum(1 for row in grid for g in row if g)
+    if wall_cells and ground_cells and wall_cells / max(1, ground_cells) >= 0.15:
+        return True
+    return False
+
+
 def _web_weather_key(rt) -> str:
     """The weather key the WEB client should render — with the night guard:
     a day-only key (sunny/sun_clouds) observed during in-game night is
@@ -518,6 +652,12 @@ def _web_weather_key(rt) -> str:
 
 def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
     """One 20 Hz world snapshot (per connected client, self-view included)."""
+    # Cave maps are WEATHER-IMMUNE: no rain/snow/storm indoors (the cave
+    # biome pin mirrors what the Discord-side weather gate does for maps
+    # that opt out — the client also renders its cave ambience instead).
+    weather = (
+        "cave" if _is_cave_map(rt) else _web_weather_key(rt)
+    )
     player = rt.state.get_player(user_id)
     # Station proximity for the web craft UI's button gating (client-side
     # preview only — can_craft re-checks server-side at craft time).
@@ -531,7 +671,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         "seq": seq,
         "map_id": rt.map_data.map_id,
         "clock": ingame_seconds() % 86400,
-        "weather": _web_weather_key(rt),
+        "weather": weather,
         "clouds_override": getattr(rt, "clouds_override", 0),
         "players": _players_payload(rt, user_id),
         **_heavy_payloads(rt),
@@ -557,7 +697,7 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "mana": player.mana if player else 0,
             "max_mana": player.max_mana if player else 50,
             "stamina": int(player.stamina) if player else 0,
-            "max_stamina": int(player.max_stamina) if player else 200,
+            "max_stamina": int(player.max_stamina) if player else _stamina_max(),
             "coins": player.coins if player else 0,
             "crystals": getattr(player, "crystals", 0) if player else 0,
             "x": round(player.x_f, 3) if player else 0.5,
@@ -709,3 +849,18 @@ def _run_speed() -> float:
     from config import WEB_RUN_SPEED
 
     return WEB_RUN_SPEED
+
+
+def _run_drain() -> float:
+    """Sprint stamina drain per second (config.STAMINA_RUN_DRAIN): the
+    client prediction mirrors the server's sprint drain."""
+    from config import STAMINA_RUN_DRAIN
+
+    return STAMINA_RUN_DRAIN
+
+
+def _stamina_max() -> int:
+    """Max stamina (config.STAMINA_MAX) — the fallback when no player."""
+    from config import STAMINA_MAX
+
+    return int(STAMINA_MAX)

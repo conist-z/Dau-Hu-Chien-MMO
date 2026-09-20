@@ -91,7 +91,7 @@ WEB_WALK_SPEED = float(os.getenv("WEB_WALK_SPEED", "2.5"))   # tiles/sec
 WEB_RUN_SPEED = float(os.getenv("WEB_RUN_SPEED", "4.15"))    # tiles/sec (Shift)
 # ---- Stamina (generous by design: a long sprint before it runs out, and
 # running out only SOFTENS actions — never a hard gate) ----
-STAMINA_MAX = float(os.getenv("STAMINA_MAX", "200"))
+STAMINA_MAX = float(os.getenv("STAMINA_MAX", "120"))
 STAMINA_RUN_DRAIN = float(os.getenv("STAMINA_RUN_DRAIN", "4"))     # /s while sprinting (50 s of running)
 STAMINA_CHOP_DRAIN = float(os.getenv("STAMINA_CHOP_DRAIN", "2"))  # /s while hitting nodes/blocks
 STAMINA_REGEN = float(os.getenv("STAMINA_REGEN", "10"))           # /s refills in ~20 s

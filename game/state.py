@@ -10,6 +10,14 @@ from game.blocks import BlockGrid
 from game.inventory import Inventory
 
 
+def _stamina_max() -> float:
+    """Config-driven max stamina (panel env STAMINA_MAX; default 120).
+    Function (not a module constant) so env changes apply per Player
+    creation without import-order surprises."""
+    from config import STAMINA_MAX
+    return float(STAMINA_MAX)
+
+
 class Direction(Enum):
     NORTH = (0, -1)
     SOUTH = (0, 1)
@@ -113,8 +121,8 @@ class Player:
     # design (user rule): enough for a long run, never blocks walking, and
     # only SOFTENS harvesting (half speed) when empty — never a hard gate.
     # Runtime-only: refills fast, not persisted.
-    stamina: float = 200.0
-    max_stamina: float = 200.0
+    stamina: float = field(default_factory=lambda: _stamina_max())
+    max_stamina: float = field(default_factory=lambda: _stamina_max())
     # Fractional stamina bank for smooth 20 Hz drain/regen (same pattern as
     # the HP regen bank).
     stamina_bank: float = 0.0

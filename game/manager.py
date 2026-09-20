@@ -861,13 +861,27 @@ class GameManager:
                 # hacked client teleports at most 2x too fast, never skips
                 # walls (swept collision), and a silent socket's stale report
                 # expires (see below) — no rubber-banding of honest players.
-                # SPRINT stamina gate still applies in the legacy fallback
-                # below (clients that never report a position).
+                # SPRINT stamina drain applies on the client-authoritative
+                # path too (it used to live ONLY in the legacy fallback: the
+                # drain was dead code for every modern client and the bar
+                # never moved). Same rule as the fallback: sprint drains,
+                # walking NEVER costs stamina, tired = capped at walk speed.
+                # Mirrored on the client (stepSelf + replay) so the prediction
+                # never diverges while the bar empties.
                 have_report = (
                     sess.report_at > 0.0
                     and 0.0 < (now - sess.report_at) < 1.0  # fresh report
                 )
                 if have_report:
+                    if sess.running and (sess.dx or sess.dy):
+                        if player.stamina <= 0.0:
+                            # Tired sprint: the client already self-caps at
+                            # walk speed (mirrors this gate); drain nothing.
+                            sess.running = False
+                        else:
+                            self._drain_stamina(
+                                player, STAMINA_RUN_DRAIN * raw_dt
+                            )
                     if self._converge_to_report(rt, player, sess, now):
                         moved_any = True
                 else:
