@@ -287,6 +287,12 @@ export class WorldScene extends Phaser.Scene {
 
   /** Perf telemetry (update()): EMA of real frame ms, 12s half-life. */
   private avgFrameMs = 16.7;
+  /** Server-body liveness: last authority pos + when it last CHANGED. A
+   *  frozen body (>1.5 s) with residual drift = broken report channel; a
+   *  moving body = healthy idle converge (echo lag, never snap). */
+  private lastSrvX = 0;
+  private lastSrvY = 0;
+  private lastSrvMoveAt = 0;
   /** Set by main.ts: opens the profile popup for the clicked player. */
   onPlayerClick: ((p: PlayerPayload) => void) | null = null;
 
@@ -3518,6 +3524,15 @@ export class WorldScene extends Phaser.Scene {
     // Authoritative self position for reconciliation. Self is NOT in the
     // players payload anymore (the clone fix), so take it from snap.self.
     this.selfServerPos = { x: snap.self.x, y: snap.self.y };
+    // SERVER BODY LIVENESS: the idle converge moves the body toward our
+    // report every tick — a MOVING body proves the report channel works and
+    // any residual divergence is transient echo that the server is actively
+    // erasing (never snap the prediction back for it).
+    if (this.selfServerPos.x !== this.lastSrvX || this.selfServerPos.y !== this.lastSrvY) {
+      this.lastSrvX = this.selfServerPos.x;
+      this.lastSrvY = this.selfServerPos.y;
+      this.lastSrvMoveAt = performance.now();
+    }
     // Debug telemetry: snapshot cadence + a console tracer that fires ONLY on
     // divergence > 1.5 tiles (no spam — the event itself is the signal).
     this.snapCount++;
@@ -3608,8 +3623,16 @@ export class WorldScene extends Phaser.Scene {
             ? ((this.selfServerPos.x - this.selfX) * v.dx +
                (this.selfServerPos.y - this.selfY) * v.dy) /
               (Math.hypot(v.dx, v.dy) || 1)
-            : Infinity;
-          if (!moving || srvAhead >= 0.5 || jump > 4) {
+            : 0; // idle: axis test meaningless — liveness branch below decides
+          // IDLE: the axis test can't distinguish echo from error, so use
+          // body liveness — a CONVERGING body (server pulling toward our
+          // report) means the residual is pure echo: leave pred alone. The
+          // old unconditional idle snap rubber-banded every key release
+          // (d~1.6 tiles at run speed: snap-back on release, drift-forward
+          // as the server caught up = the "lag y cũ" double jerk).
+          const idleRescue = !moving
+            && performance.now() - this.lastSrvMoveAt > 1500;
+          if ((moving && (srvAhead >= 0.5 || jump > 4)) || jump > 4 || idleRescue) {
           if (this.inputLog.length > 0) {
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
@@ -3637,9 +3660,10 @@ export class WorldScene extends Phaser.Scene {
               this.correctMaskOverlap();
             }
           } else {
-            // No pending inputs but still far: the report channel lost
-            // frames — take the server truth directly (bounded: the
-            // dead-channel snap below covers the persistent case).
+            // No pending inputs, idle: snap ONLY when the server body is
+            // frozen (report channel dead — liveness gate above) or the
+            // residual is absurd (jump > 4). Otherwise pred stays put and
+            // the server's idle converge closes the gap in ~2 ticks.
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
           }
