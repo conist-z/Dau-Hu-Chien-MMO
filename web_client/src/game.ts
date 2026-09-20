@@ -280,6 +280,7 @@ export class WorldScene extends Phaser.Scene {
       `ack=${this.lastAckedSeq}`, `log=${this.inputLog.length}`,
       idle ? "idle" : "moving",
       `snap=${this.snapRate.toFixed(0)}/s`,
+      `in=${this.sentRate.toFixed(0)}/s ack=${this.ackedRate.toFixed(0)}/s rtt=${this.netRttMs.toFixed(0)}ms`,
       `cvg=${this.convergeEvents}`,
       `fps=${fps.toFixed(0)} (${this.avgFrameMs.toFixed(1)}ms)`,
     ].join("  ");
@@ -287,6 +288,15 @@ export class WorldScene extends Phaser.Scene {
 
   /** Perf telemetry (update()): EMA of real frame ms, 12s half-life. */
   private avgFrameMs = 16.7;
+  /** INPUT CHANNEL throughputs (F3): sent/s vs acked/s. On a healthy 20 Hz
+   *  link both read ~20; ack far below sent = input frames lost between the
+   *  browser and the bot (relay/bot lag) — the true "lag y cũ" source. */
+  inputsSent = 0;
+  inputsAcked = 0;
+  private sentRateT0 = 0;
+  private sentRate = 0;
+  private ackedRateT0 = 0;
+  private ackedRate = 0;
   /** Server-body liveness: last authority pos + when it last CHANGED. A
    *  frozen body (>1.5 s) with residual drift = broken report channel; a
    *  moving body = healthy idle converge (echo lag, never snap). */
@@ -3544,6 +3554,20 @@ export class WorldScene extends Phaser.Scene {
       this.snapRateT0 = nowT0;
       this.snapRateCount = 0;
     }
+    // Rate trackers for the F3 throughput line (1s windows).
+    const nowIn = performance.now();
+    if (this.sentRateT0 === 0) this.sentRateT0 = nowIn;
+    if (nowIn - this.sentRateT0 >= 1000) {
+      this.sentRate = this.inputsSent * 1000 / (nowIn - this.sentRateT0);
+      this.inputsSent = 0;
+      this.sentRateT0 = nowIn;
+    }
+    if (this.ackedRateT0 === 0) this.ackedRateT0 = nowIn;
+    if (nowIn - this.ackedRateT0 >= 1000) {
+      this.ackedRate = this.inputsAcked * 1000 / (nowIn - this.ackedRateT0);
+      this.inputsAcked = 0;
+      this.ackedRateT0 = nowIn;
+    }
     const dbgD = Math.hypot(this.selfX - this.selfServerPos.x, this.selfY - this.selfServerPos.y);
     if (dbgD > 1.5 && nowT0 - this.lastConvergeMoveAt > 2000) {
       this.lastConvergeMoveAt = nowT0;
@@ -3590,6 +3614,7 @@ export class WorldScene extends Phaser.Scene {
       if (acked > this.lastAckedSeq) {
         this.lastAckedSeq = acked;
         this.lastAckProgressAt = performance.now();
+        this.inputsAcked++;
         // Drop everything the server already integrated.
         while (this.inputLog.length > 0 && this.inputLog[0].seq <= acked) {
           this.inputLog.shift();

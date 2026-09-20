@@ -264,6 +264,7 @@ const net = new Net({
   // on this same thread, so the buffer can never miss an acked input).
   onSeqInput: (seq, dx, dy, running) => {
     scene.noteSeqInput(seq, dx, dy, running);
+    scene.inputsSent++;
   },
   onWelcome: (frame) => {
     welcome = frame;
