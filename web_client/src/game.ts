@@ -3579,20 +3579,26 @@ export class WorldScene extends Phaser.Scene {
           this.selfY = this.selfServerPos.y;
           this.inputLog = [];
         } else if (jump > WorldScene.RECONCILE_DRIFT) {
-          // RECONCILE ONLY ON REAL DESYNC. In the client-authoritative model
-          // the server body converges TOWARD our report — it is structurally
-          // BEHIND prediction by the convergence lag (~0.2-0.4 tile at run
-          // speed). Rewinding to that lagging body and replaying pending
-          // inputs on EVERY snapshot (20x/s) re-created the stutter the
-          // architecture was meant to remove: the replay integrates 50 ms
-          // slices while the prediction integrates 16 ms frames, so the
-          // mask-correct + wall-clamp results never match bit-exact and each
-          // snapshot popped the avatar a few px — "giật còn hơn nãy" once the
-          // flush fix filled the replay log at 20 entries/s.
-          // Echo lag (srv behind pred, the normal case) = leave pred alone;
-          // the server catches up on its own. Only a GENUINE divergence
-          // (portal residue, block appeared under us, lost input frames)
-          // crosses the threshold and triggers the rewind+replay rebuild.
+          // ASYMMETRIC RECONCILE (client-authoritative latency parity):
+          // the server body structurally TRAILS the prediction by
+          // latency × speed (0.6-1.5 tiles at run speed on a 100-250 ms
+          // relay link) — srv BEHIND pred along the held input axis is the
+          // EXPECTED converge echo, not an error. Rewinding for it (the old
+          // unconditional threshold) re-created the stutter several times a
+          // second while running: cross the threshold, hard rewind to the
+          // lagging body, replay, pop, repeat. Only correct when the server
+          // is materially AHEAD of the prediction along the movement axis
+          // (a block/teleport/converge overshoot reached us that the
+          // prediction doesn't know) or the residual is absurd (>4 tiles =
+          // the report channel genuinely broke).
+          const v = this.inputVec;
+          const moving = v.dx !== 0 || v.dy !== 0;
+          const srvAhead = moving
+            ? ((this.selfServerPos.x - this.selfX) * v.dx +
+               (this.selfServerPos.y - this.selfY) * v.dy) /
+              (Math.hypot(v.dx, v.dy) || 1)
+            : Infinity;
+          if (!moving || srvAhead >= 0.5 || jump > 4) {
           if (this.inputLog.length > 0) {
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
@@ -3626,8 +3632,10 @@ export class WorldScene extends Phaser.Scene {
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
           }
+          }
+          // else: expected echo lag while moving — pred stays put; the
+          // server converges forward on its own (see _converge_to_report).
         }
-        // else: small echo lag — pred stays put (see comment above).
       }
     }
     // DRIFT RECOVERY — client-authoritative edition. The old 30%/snapshot
