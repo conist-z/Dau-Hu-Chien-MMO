@@ -135,6 +135,8 @@ class WebSession:
     # BLOCKED (straight-line converge can't go around corners) — the
     # stuck-rescue in _converge_to_report keys off this liveness stamp.
     last_converge_move: float = 0.0
+    # Throttle stamp for the [WEB-MOVE] diagnostic line (loop time).
+    last_diag: float = 0.0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -915,6 +917,21 @@ class GameManager:
                     sess.report_at > 0.0
                     and 0.0 < (now - sess.report_at) < 1.0  # fresh report
                 )
+                # [WEB-MOVE] diagnostic (5s per session): proves whether the
+                # client's position reports are arriving FRESH. rpt_age >= 1
+                # at this line = the report pipeline (browser -> relay ->
+                # bot -> manager) is dropping/staling frames — that is the
+                # lag, independent of any collision/reconcile logic.
+                if now - sess.last_diag > 5.0:
+                    sess.last_diag = now
+                    log.info(
+                        "[WEB-MOVE] u=%s fresh=%s rpt_age=%.2f body=(%.2f,%.2f) rep=(%.2f,%.2f) lcm=%.2f",
+                        user_id, have_report,
+                        (now - sess.report_at) if sess.report_at else -1.0,
+                        player.x_f, player.y_f,
+                        sess.report_x, sess.report_y,
+                        (now - sess.last_converge_move) if sess.last_converge_move else -1.0,
+                    )
                 if have_report:
                     if sess.running and (sess.dx or sess.dy):
                         if player.stamina <= 0.0:
