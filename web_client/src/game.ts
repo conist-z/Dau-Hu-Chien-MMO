@@ -2140,6 +2140,12 @@ export class WorldScene extends Phaser.Scene {
       for (let ty = Math.floor(this.selfY - r); ty <= Math.floor(this.selfY + r); ty++) {
         for (let tx = Math.floor(this.selfX - r); tx <= Math.floor(this.selfX + r); tx++) {
           if (!this.solidAt(tx, ty)) continue;
+          // Mask-refined tiles are ENTERABLE (freeX/freeY let the box step
+          // in so correctMaskOverlap can hug the opaque shape) — pushing the
+          // box out of them here fought the mask correction EVERY frame
+          // (enter -> yanked out -> re-enter): the bigmap movement stutter.
+          // The server has no equivalent push-out either — parity = skip.
+          if (this.maskPassable(tx, ty)) continue;
           const left = this.selfX - r;
           const right = this.selfX + r;
           const top = this.selfY - r;
