@@ -260,14 +260,23 @@ export class Net {
   private flushInput(): void {
     const p = this.pendingInput;
     if (!this.joined) return;
-    if (!p.dirty) {
-      // IDLE HEARTBEAT (the "hitbox bên kia" bug): when the player stops,
-      // the movement timer self-stops after one zero vector — the predicted
-      // position is then NEVER reported again, so the server body can drift
-      // from what's on screen (mobs bite the ghost). While idle, keep
-      // reporting the CURRENT predicted position on the same 20 Hz cadence:
-      // same seq stream, zero-vector movement, authoritative position. The
-      // server's expiry logic treats each report as fresh (see manager).
+    // HELD-VECTOR RESEND: a key held down fires onVector exactly ONCE
+    // (keydown; OS auto-repeat is filtered), so p.dirty was true for only
+    // ONE flush per keypress and every following flush degraded to the
+    // zero-vector heartbeat below. The server then saw dx=0 for 19 of 20
+    // ticks (no integration, no sprint-stamina drain) AND the replay log
+    // flooded with zero entries — each snapshot rewound the avatar to the
+    // lagging server position and replayed NOTHING (the replay skips zero
+    // vectors), losing the frames since the last flush: the bigmap
+    // "lag lag, không mượt" stutter at up to 20 Hz.
+    const heldMoving = p.dx !== 0 || p.dy !== 0;
+    if (!p.dirty && !heldMoving) {
+      // IDLE HEARTBEAT (the "hitbox bên kia" bug): only when the held
+      // vector is genuinely ZERO (player stopped), keep reporting the
+      // CURRENT predicted position on the same 20 Hz cadence so the server
+      // body never drifts from the screen. Still fed to the scene's seq
+      // mirror so its dt accounting stays exact (the scene chooses what to
+      // log — zero entries carry no movement).
       const pos = this.idlePosHook?.();
       if (pos) {
         const seq = ++this.inputSeq;
@@ -281,23 +290,26 @@ export class Net {
     }
     p.dirty = false;
     const seq = ++this.inputSeq;
+    // Fresh position EVERY flush (not the one sampled at keydown): the
+    // server converges to this report, and a stale one would drag the body
+    // backward between onVector events.
+    const pos = this.idlePosHook?.();
+    const px = pos ? pos.x : p.px;
+    const py = pos ? pos.y : p.py;
     this.send({
       type: MSG_INPUT, seq, dx: p.dx, dy: p.dy, running: p.running,
       // Client-authoritative position piggybacks on every flushed input:
       // the server converges its body to this (speed-capped + collision-
       // checked), so a server time-integration desync can never diverge
       // from what the player sees on screen.
-      ...(p.hasPos ? { x: Math.round(p.px * 1000) / 1000, y: Math.round(p.py * 1000) / 1000 } : {}),
+      ...(p.hasPos || pos
+        ? { x: Math.round(px * 1000) / 1000, y: Math.round(py * 1000) / 1000 }
+        : {}),
     });
-    // Hand the exact input to the scene's replay buffer (same seq the server
-    // will ack). Buffered even for the idle zero vector — replay needs it to
-    // stop moving at the right instant.
+    // Hand the exact input to the scene's replay buffer (same seq the
+    // server will ack) — every moving slice is now logged, so the
+    // snapshot rewind+replay reconstructs the prediction exactly.
     if (this.onSeqInput) this.onSeqInput(seq, p.dx, p.dy, p.running);
-    if (p.dx === 0 && p.dy === 0 && this.inputTimer !== null) {
-      // Idle: the movement vector is zero — the timer KEEPS RUNNING as the
-      // idle heartbeat (see the !p.dirty branch above). It is only stopped
-      // on disconnect/leave.
-    }
   }
 
   /** Actions target an ABSOLUTE tile (tx,ty) — no client position math. */
