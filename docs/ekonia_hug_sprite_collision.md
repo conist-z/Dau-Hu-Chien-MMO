@@ -248,7 +248,20 @@ crop quanh spawn, resize NEAREST ×4.)
   fade gradient per-pixel `updateOccluderFade()` + re-upload GL `texSubImage2D`
   (handle đúng nằm ở `tex.source[0].glTexture.glTexture`; fallback
   `renderer.updateCanvasTexture`). Xem `web_client/src/game.ts`.
+  **Hiệu năng (session 21/09):** hàm này TỪNG chạy 2 lần `getImageData`
+  (GPU→CPU readback) mỗi frame → stutter movement trên map lớn. Bản hiện tại:
+  compose cửa sổ fade trong RAM từ snapshot + upload THẲNG buffer bằng
+  `texSubImage2D` (0 readback); player đứng yên = skip cả beat; buffer
+  `fadeBuf` được reuse (không cấp phát `ImageData` mỗi frame). Giữ nguyên
+  các ràng buộc này khi sửa.
 - **Y-sort**: `above_cells` đã trừ hàng thân cây (poly row) — player đứng TRƯỚC
   cây vẽ đè thân; tán phía trên đè player.
+- **Bộ lọc chiều cao y-sort (session 21/09, "cỏ/đá cuội đè player")**: converter
+  chỉ đưa sprite vào `_ysort_cells` khi art có hàng ô TRÊN hàng gốc
+  (`bh > 2 or bw > 2` — cây/tường/vách); decor thấp (cỏ, đá cuội, hoa ≤2×2 ô)
+  KHÔNG còn vào canopy → player luôn vẽ đè lên và đi xuyên chúng. Poly cells
+  của sprite thấp vẫn giữ collision; `ysort_poly_cells` trong solids.json cho
+  loader biết poly nào cũng y-sort (thân cây sprite nhỏ không có tán) để
+  re-union vào canopy sau khi tách (tránh sprite nhỏ bị ép xuống dưới player).
 - Cơ chế collision ở đây KHÔNG đụng `game/resources.py` (node khai thác) và
   KHÔNG đụng Discord renderer — chỉ web.
