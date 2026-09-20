@@ -496,6 +496,9 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
     extid2tres = {eid: p for p, eid in re.findall(
         r'\[ext_resource type="TileSet"[^\]]*path="res://([^"]+)"'
         r'[^\]]*id="([^"]+)"\]', txt)}
+    # Per-layer paint metadata: layer name -> {dest cell: (atlas_idx, ax, ay)}
+    # — feeds the y-sort height filter (low decor never joins the canopy).
+    _layer_paint: dict = {}
     layers = []
     # parent positions: TileMapLayers nested under Area2D/Node2D nodes
     # (e.g. Questboard under QuestBoard Area2D) inherit the parent's offset.
@@ -522,6 +525,10 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
         if not datam:
             continue
         atlases = tres_for(tres)
+        # Per-layer paint metadata for the y-sort height filter below:
+        # every destination cell this layer painted + which atlas tile it
+        # came from (so low decor can be excluded from the canopy set).
+        _lp = _layer_paint.setdefault(m.group(1), {})
         # layer-local pixel offset (forest Ground pos 1,0 etc.); also accept
         # a transform/origin form some scenes use instead of `position`
         posm = re.search(r'position = Vector2\((-?[\d.]+), (-?[\d.]+)\)', part)
@@ -567,6 +574,7 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
                 key = (x + math.floor(lpx / TS) + gx,
                        y + math.floor(lpy / TS) + gy)
                 cells[key] = _blend(cells.get(key), piece)
+                _lp[key] = (sid, ax, ay)
             if (ax, ay) in at["solids"]:
                 BAKER._solid_cells.add(
                     (x + math.floor(lpx / TS), y + math.floor(lpy / TS)))
@@ -605,7 +613,22 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
                         if submask:
                             BAKER._poly_masks[c] = submask
                     BAKER._poly_cells.add(c)
-                    BAKER._ysort_cells.add(c)  # Godot: solids y-sort
+                    # Godot: solids join the y-sort tree — BUT a sprite only
+                    # ever covers the player when its art RISES ABOVE its
+                    # base row (canopy of a tree, top of a wall). Low decor
+                    # sharing the same y-sorted Layers (grass tufts, pebbles,
+                    # flowers — small <=2x2-cell tiles) sit entirely inside
+                    # their base rows: putting their cells in the OVER canvas
+                    # drew a hard sprite square OVER the player standing on
+                    # them ("cỏ/đá cuội đè lên player"). Player is always the
+                    # top layer over them (walk-through decor). Height rule:
+                    # the anchor block is bw x bh cells CENTERED on the anchor
+                    # column (see bake()'s dx = TS/2 - bw*TS/2 - ox), and the
+                    # art above the anchor row occupies bh - 1 rows -> bh <= 2
+                    # (with bw <= 2) means "nothing above the base row".
+                    _bw, _bh = at.get("sizes", {}).get((ax, ay), (1, 1))
+                    if _bh > 2 or _bw > 2:
+                        BAKER._ysort_cells.add(c)
         if cells:
             xs = [c[0] for c in cells]
             ys = [c[1] for c in cells]
@@ -649,7 +672,21 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
             continue
         lay = next((l for l in layers if l["name"] == m.group(1)), None)
         if lay is not None:
-            BAKER._ysort_cells.update(lay["cells"].keys())
+            # Same height rule as the poly pass above: on a y-sorted layer,
+            # only sprites TALL enough to ever cover the player join the
+            # canopy set (grass/pebble decor stays walk-through, under the
+            # player). The main pass stamps "this layer painted here" into
+            # _layer_paint[{cell: (sid, ax, ay)}] per layer name; use it to
+            # re-check each painted cell's sprite size (single-cell decor
+            # sprites are dropped; taller sprites keep their whole footprint).
+            paint_meta = _layer_paint.get(m.group(1), {})
+            for (cx, cy), (sid_c, axc, ayc) in paint_meta.items():
+                at_c = atlases[sid_c] if sid_c < len(atlases) else None
+                if at_c is None:
+                    continue
+                _bw, _bh = at_c.get("sizes", {}).get((axc, ayc), (1, 1))
+                if _bh > 2 or _bw > 2:
+                    BAKER._ysort_cells.add((cx, cy))
     for l in layers:
         l["gids"] = {k: BAKER.gid_of(v) for k, v in l["cells"].items()}
         xs = [c[0] for c in l["gids"]]
@@ -703,6 +740,14 @@ def convert_map(tscn_rel: str, name: str) -> tuple[str, dict] | None:
         ),
         "above_cells": sorted(
             (x - minx, y - miny) for (x, y) in BAKER._ysort_cells
+        ),
+        # Poly (trunk/rock) cells that ALSO y-sort: the loader re-unions
+        # these into the canopy set after dropping them from above_cells
+        # (small trunk sprites have no crown rows — without this marker they
+        # would flatten UNDER the player entirely).
+        "ysort_poly_cells": sorted(
+            (x - minx, y - miny) for (x, y) in
+            (BAKER._ysort_cells & BAKER._poly_core_cells)
         ),
         # [x, y, mask] triples — the authored 8x8 sub-cell collision shape.
         "poly_masks": sorted(

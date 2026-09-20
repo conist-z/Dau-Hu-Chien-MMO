@@ -674,6 +674,15 @@ class GameManager:
         One report = one application: report_at is consumed here. The time
         budget is the gap since the report stamp (capped at 0.5 s, floored at
         one tick) so per-report movement can never exceed the legal rate.
+
+        BACKWARD-PULL GUARD (the "lúc nhanh lúc chậm" stutter): the client
+        flushes on a change-free 20 Hz cadence — idle BETWEEN keystrokes —
+        while the prediction integrates EVERY frame. A flush can therefore
+        carry a position OLDER than the current authoritative body. Pulling
+        toward it dragged the server body BACKWARD ~half a tile several
+        times a second, the next fresh report dragged it forward again →
+        visible speed oscillation. A stale report can only LAG, never lead:
+        never step toward a position behind the current body.
         """
         step_budget = min(
             0.5, max(0.0, now - max(sess.report_at, sess.last_converge))
@@ -696,6 +705,24 @@ class GameManager:
             moved = min(step_total, max_step)
             ux = (tgt_x - player.x_f) / step_total
             uy = (tgt_y - player.y_f) / step_total
+            inx, iny = float(sess.dx), float(sess.dy)
+            ilen = math.hypot(inx, iny)
+            if ilen > 1e-6:
+                inx, iny = inx / ilen, iny / ilen
+                dot = inx * ux + iny * uy
+                if dot < -1e-6:
+                    # Report sits BEHIND the body along the movement axis:
+                    # stale echo of an earlier flush. Only converge up to the
+                    # projection of the body's own position onto the axis
+                    # (i.e. do not move backward); moving forward toward the
+                    # report is fine when it is genuinely ahead.
+                    proj = inx * (tgt_x - player.x_f) + iny * (tgt_y - player.y_f)
+                    if proj < -1e-6:
+                        return False  # fully behind: nothing legal to apply
+                    cap = proj  # pull forward at most to the body's own axis position
+                    moved = min(moved, max(0.0, cap))
+                    if moved <= 1e-9:
+                        return False
             nx_f, ny_f = rt.collision.can_move_float(
                 player.x_f, player.y_f, ux * moved, uy * moved,
             )

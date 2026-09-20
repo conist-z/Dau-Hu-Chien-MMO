@@ -466,9 +466,9 @@ def _load_solids_cells(assets_dir: Path, map_id: str) -> List[Tuple[int, int]]:
 
 def _load_ekonia_cells(
         assets_dir: Path, map_id: str,
-) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]], list, list]:
-    """``(solid_cells, poly_cells, above_cells, poly_masks, poly_albedo)``
-    from ``<map>.solids.json``.
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]], list, list, List[Tuple[int, int]]]:
+    """``(solid_cells, poly_cells, above_cells, poly_masks, poly_albedo,
+    ysort_poly_cells)`` from ``<map>.solids.json``.
 
     - solid_cells: Godot-authoritative per-tile blocking (OR into collision).
     - poly_cells: cells covered by a tile's physics POLYGON (trunk/L-shape of
@@ -485,7 +485,7 @@ def _load_ekonia_cells(
     """
     p = assets_dir / f"{map_id}.solids.json"
     if not p.exists():
-        return [], [], [], [], []
+        return [], [], [], [], [], []
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
 
@@ -500,10 +500,10 @@ def _load_ekonia_cells(
         return (
             _cells("solid_cells"), _cells("poly_cells"),
             _cells("above_cells"), _masks("poly_masks"),
-            _masks("poly_albedo"),
+            _masks("poly_albedo"), _cells("ysort_poly_cells"),
         )
     except Exception:
-        return [], [], [], [], []  # malformed solids: never block map load
+        return [], [], [], [], [], []  # malformed solids: never block map load
 
 
 def load_map(map_id: str, assets_dir: Path) -> MapData:
@@ -514,9 +514,8 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # authoritative per-tile blocking ("các vật thể sẽ có box chạm") — pixel
     # rects converted to tile coords, INCLUDING negative cells outside the
     # drawn art. OR it into the derived collision so author intent wins.
-    solids_cells, poly_cells, above_cells, poly_masks, poly_albedo = (
-        _load_ekonia_cells(assets_dir, map_id)
-    )
+    (solids_cells, poly_cells, above_cells, poly_masks, poly_albedo,
+     ysort_poly_cells) = _load_ekonia_cells(assets_dir, map_id)
 
     if not is_tiled:
         # Simple format (legacy test-map.json): width/height/collision/spawn.
@@ -638,6 +637,100 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
             for gx, gid in enumerate(row):
                 if gx < width and gid:
                     blocking_gids[(gx, gy)] = gid
+    # Physics-polygon cells are FULL SQUARE regardless of alpha: a tree
+    # trunk's canopy is transparent at the top of its anchor cell, but the
+    # trunk footprint must never gain a walkable hole (Godot polygon parity).
+    # EXCEPTION ("box chặn tường dày quá mức"): on Ekonia maps the Godot
+    # polys of CAVE CLIFF tiles are authored as FULL-TILE RECTS — square
+    # collision there leaves the box poking out of every round corner of
+    # the rock blob. Those cells get the same alpha-refinement as the Walls
+    # layer below (their baked piece is ground-free, so the alpha silhouette
+    # IS the visible shape). Tree/prop polys on other layers keep full
+    # square — a trunk must never gain a walkable hole.
+    wall_owned.update(poly_set)
+    # EKONIA CAVE-WALL REFINEMENT: the converted Ekonia "Walls" layer (cave
+    # cliffs) is a rounded rock BLOB — blocking it full-square leaves the
+    # box poking out of every round corner ("box chặn tường hơi dày quá
+    # mức"). Its baked pieces are ground-free (alpha preserved, ~2000/2.3M
+    # partial pixels), so the alpha silhouette of the WALL PIECE ITSELF is a
+    # valid refinement source for EVERY wall-owned cell (Walls layer AND
+    # cave-cliff poly cells). Hand-drawn collision still wins: those cells
+    # are re-added to blocking_gids below and build_map_masks checks the
+    # manual shape FIRST (manual > alpha, "cho chắc").
+    ekonia_wall_masks: dict = {}
+    if Path(map_id).parent.as_posix() == "ekonia":
+        _sheet_path = None
+        for _ts in (data.get("tilesets") or []):
+            _img = _ts.get("image") or ""
+            if _img and "ekonia_baked" in Path(_img).name:
+                _cand = assets_dir / "ekonia" / _img
+                if _cand.exists():
+                    _sheet_path = _cand
+                    break
+        if _sheet_path is not None:
+            try:
+                from PIL import Image as _PILImage
+                from rendering.tile_masks import _mask_from_patch as _mfp
+
+                _sheet = _PILImage.open(_sheet_path).convert("RGBA")
+                _sheet_cache: dict[int, object] = {}
+                _cols = 64  # BAKED_COLS in scripts/convert_ekonia_maps.py
+                _tw = int(tile_width or 16)
+
+                def _piece_mask(_gid: int):
+                    _local = _gid - 1  # firstgid 1
+                    _m = _sheet_cache.get(_local)
+                    if _m is None:
+                        _sx = (_local % _cols) * _tw
+                        _sy = (_local // _cols) * _tw
+                        try:
+                            _patch = _sheet.crop(
+                                (_sx, _sy, _sx + _tw, _sy + _tw)
+                            )
+                        except Exception:
+                            return None
+                        _m = _mfp(_patch)
+                        _sheet_cache[_local] = _m or 1  # cache empties too
+                    return None if _m == 1 else _m
+
+                # Source gids for EVERY owned cell: the Walls layer's own
+                # tile, else the poly-bearing sprite composited at that cell
+                # (poly_albedo stores the same cells with their pieces).
+                for _key in sorted(wall_owned):
+                    _gid = None
+                    for _name, _grid in tile_layers:
+                        if _normalize_layer_name(_name) != "walls":
+                            continue
+                        _gx, _gy = _key
+                        if (
+                            0 <= _gy < len(_grid)
+                            and 0 <= _gx < width
+                            and _grid[_gy][_gx]
+                        ):
+                            _gid = _grid[_gy][_gx]
+                            break
+                    if _gid is None and _key in poly_set:
+                        # Poly cell without a Walls tile: find the prop
+                        # sprite on ANY blocking (non-wall-like) layer here.
+                        for _name, _grid in tile_layers:
+                            _nl = _normalize_layer_name(_name)
+                            if not _is_blocking_layer(_nl) or _is_wall_like_layer(_nl):
+                                continue
+                            _gx, _gy = _key
+                            if (
+                                0 <= _gy < len(_grid)
+                                and 0 <= _gx < width
+                                and _grid[_gy][_gx]
+                            ):
+                                _gid = _grid[_gy][_gx]
+                                break
+                    if _gid is None:
+                        continue
+                    _m = _piece_mask(_gid)
+                    if _m is not None:
+                        ekonia_wall_masks[_key] = _m
+            except Exception:
+                ekonia_wall_masks = {}  # square fallback, never block load
     for tile in wall_owned:
         blocking_gids.pop(tile, None)
     # Physics-polygon cells are FULL SQUARE regardless of alpha: a tree
@@ -649,7 +742,13 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # standing IN FRONT (south) must draw OVER it (Godot Y-sort: bigger y
     # wins), so it stays in the base bake. Only the art rows ABOVE the base
     # (crown) cover the player walking behind the tree.
+    # Poly cells that the converter ALSO y-sorted (tall-sprite trunks) must
+    # keep their canopy membership in a walk-through-decor world: a small
+    # (<=2x2-cell) trunk sprite has no crown rows, so if we simply dropped
+    # it here the sprite would flatten UNDER the player entirely. Re-union
+    # them into the canopy set (the web client renders them OVER actors).
     above_cells = [c for c in above_cells if tuple(c) not in poly_set]
+    above_cells.extend(ysort_poly_cells)
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
@@ -692,8 +791,10 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
 
         full = (1 << (MASK_RES * MASK_RES)) - 1
         md_stub = type("_MD", (), {"width": width, "height": height, "tilesets": tilesets})()
+        _extras = dict(poly_exact_masks)
+        _extras.update(ekonia_wall_masks)  # wall alpha refine (poly wins)
         tile_masks = build_map_masks(
-            md_stub, blocking_gids, extra_masks=poly_exact_masks or None
+            md_stub, blocking_gids, extra_masks=_extras or None
         )
         # Tiles whose sprite is (near-)opaque AND covers the whole cell keep
         # square collision (None) — refining them changes nothing visually

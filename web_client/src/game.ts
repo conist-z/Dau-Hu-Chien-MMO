@@ -796,8 +796,12 @@ export class WorldScene extends Phaser.Scene {
 
   // ---- cave ambience (darkness + glowing mushrooms) ----
   /** Full-map black sheet at the cave's ambient darkness; punch soft light
-   *  wells through destination-out (radial gradients). depth 25 = above the
-   *  map (−10) and actors (20), below the OVER canopy (30). */
+   *  wells through destination-out (radial gradients). depth 40 = ABOVE the
+   *  map bake (−10), actors (20) AND the OVER canvas (30): the cave's
+   *  y-sorted props/pebbles/walls live in the OVER canvas — a darkness
+   *  sheet below 30 left them at full brightness while the ground dimmed
+   *  ("đá cuội lệch màu so với đất"). Everything darkens together; the
+   *  light wells reveal the scene around the mushrooms. */
   private caveDark: Phaser.GameObjects.Image | null = null;
   /** Static warm glow halos behind the mushrooms (depth 18, additive). */
   private caveGlows: Phaser.GameObjects.Image[] = [];
@@ -849,7 +853,7 @@ export class WorldScene extends Phaser.Scene {
       this.caveDark.setTexture(dkey);
       this.caveDark.setVisible(true);
     } else {
-      this.caveDark = this.add.image(0, 0, dkey).setOrigin(0, 0).setDepth(25);
+      this.caveDark = this.add.image(0, 0, dkey).setOrigin(0, 0).setDepth(40);
     }
     // --- warm glow halos (additive, behind actors for a soft bloom) ---
     for (const g of this.caveGlows) g.destroy();
