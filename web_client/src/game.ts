@@ -389,6 +389,9 @@ export class WorldScene extends Phaser.Scene {
   private fadeBuf: ImageData | null = null;
   private static readonly FADE_RADIUS_CELLS = 2; // Ekonia fade_radius_cells
   private static readonly FADE_MIN_ALPHA = 0.35; // Ekonia min_alpha
+  /** Snapshot reconciliation only rewrites the prediction when the drift
+   *  EXCEEDS this many tiles (echo lag converges to well under half of it). */
+  private static readonly RECONCILE_DRIFT = 0.75;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
   // Tile count at the last base-map bake: the rebake trigger (chop/regrow
@@ -3575,9 +3578,21 @@ export class WorldScene extends Phaser.Scene {
           this.selfX = this.selfServerPos.x;
           this.selfY = this.selfServerPos.y;
           this.inputLog = [];
-        } else {
-          // Rewind + replay: only when inputs are pending (otherwise the
-          // server pos IS our pos up to the usual echo lag — leave it).
+        } else if (jump > WorldScene.RECONCILE_DRIFT) {
+          // RECONCILE ONLY ON REAL DESYNC. In the client-authoritative model
+          // the server body converges TOWARD our report — it is structurally
+          // BEHIND prediction by the convergence lag (~0.2-0.4 tile at run
+          // speed). Rewinding to that lagging body and replaying pending
+          // inputs on EVERY snapshot (20x/s) re-created the stutter the
+          // architecture was meant to remove: the replay integrates 50 ms
+          // slices while the prediction integrates 16 ms frames, so the
+          // mask-correct + wall-clamp results never match bit-exact and each
+          // snapshot popped the avatar a few px — "giật còn hơn nãy" once the
+          // flush fix filled the replay log at 20 entries/s.
+          // Echo lag (srv behind pred, the normal case) = leave pred alone;
+          // the server catches up on its own. Only a GENUINE divergence
+          // (portal residue, block appeared under us, lost input frames)
+          // crosses the threshold and triggers the rewind+replay rebuild.
           if (this.inputLog.length > 0) {
             this.selfX = this.selfServerPos.x;
             this.selfY = this.selfServerPos.y;
@@ -3604,8 +3619,15 @@ export class WorldScene extends Phaser.Scene {
               // sprite.
               this.correctMaskOverlap();
             }
+          } else {
+            // No pending inputs but still far: the report channel lost
+            // frames — take the server truth directly (bounded: the
+            // dead-channel snap below covers the persistent case).
+            this.selfX = this.selfServerPos.x;
+            this.selfY = this.selfServerPos.y;
           }
         }
+        // else: small echo lag — pred stays put (see comment above).
       }
     }
     // DRIFT RECOVERY — client-authoritative edition. The old 30%/snapshot
