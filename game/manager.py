@@ -130,6 +130,11 @@ class WebSession:
     # read THIS object for last_seq; the two classes were disconnected so the
     # ack was permanently -1 and the client's seq-replay never armed).
     input_seq: int = -1
+    # Last time the converge actually MOVED the body (loop time). A body that
+    # stays put across converge ticks while fresh reports keep arriving is
+    # BLOCKED (straight-line converge can't go around corners) — the
+    # stuck-rescue in _converge_to_report keys off this liveness stamp.
+    last_converge_move: float = 0.0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -692,6 +697,36 @@ class GameManager:
         tgt_x = max(0.0, float(sess.report_x))
         tgt_y = max(0.0, float(sess.report_y))
         step_total = math.hypot(tgt_x - player.x_f, tgt_y - player.y_f)
+        # STUCK-BODY RESCUE (the "lag y cũ" d~1.6-2.8 IDLE signature): the
+        # straight-line converge CANNOT go around corners — a body whose
+        # path to the report is blocked by a wall/mask tile (client slid
+        # AROUND it, the server body kept pushing into it) burns every
+        # report against the obstacle: d balloons, snapshots look insane
+        # (pred far from srv while IDLE) and every reconcile rubber-bands.
+        # Legality check first (rate + swept collision + mask-correct): the
+        # same journey the client already made. If the body is STILL far
+        # after 0.75 s of converging, the straight path is provably blocked
+        # — teleport onto the report and let the next sweeps verify.
+        stuck = (
+            step_total > 0.6
+            and getattr(sess, "last_converge_move", 0.0) > 0.0
+            and now - sess.last_converge_move > 0.75
+        )
+        if stuck:
+            from game.collision import FLOAT_BOX_HALF
+
+            sess.last_converge_move = now
+            player.x_f, player.y_f = tgt_x, tgt_y
+            # The report itself may be illegal (inside a wall): the swept
+            # sub-step move with zero delta still runs the mask-correct pass
+            # (the same refinement the client's journey applied), pushing
+            # the box to the nearest legal spot.
+            player.x_f, player.y_f = rt.collision.can_move_float(
+                player.x_f, player.y_f, 0.0, 0.0,
+            )
+            player.sync_int_from_float()
+            player.float_moved = True
+            return True
         # CONVERGE faster than run speed (1.6x, user 15/09 "siết chặt, update
         # nhanh hơn"): residual desync decays in ~1-2 ticks instead of
         # trailing behind at walk pace. A hacked client still can't teleport
@@ -729,6 +764,13 @@ class GameManager:
             if (nx_f, ny_f) != (player.x_f, player.y_f):
                 player.x_f, player.y_f = nx_f, ny_f
                 moved_any = True
+        # LIVENESS: remember when the body last actually moved — a body
+        # that stays put across many converge ticks while reports keep
+        # arriving is BLOCKED (the stuck-rescue precondition above).
+        if moved_any:
+            sess.last_converge_move = now
+        elif not hasattr(sess, "last_converge_move"):
+            sess.last_converge_move = 0.0
         if (sess.dx or sess.dy):
             player.direction = _web_direction(sess.dx, sess.dy)
         return moved_any
@@ -826,11 +868,12 @@ class GameManager:
                     # against a door = zero input vector + position reports;
                     # without this the gate only fired while dx/dy != 0 and
                     # the player could stand pressed against the door forever
-                    # without teleporting). Same side-world gate as below.
-                    if self.side_runtimes.get(
-                        (rt.channel_id, rt.map_data.map_id)
-                    ) is rt:
-                        from game.travel import check_portal_after_move
+                    # without teleporting). Gate = "this map has portal
+                    # wiring" (the Ekonia cave net teleports across MAIN
+                    # worlds and solo previews too — not just side worlds).
+                    from game.travel import check_portal_after_move, has_portal_config
+
+                    if has_portal_config(rt, self.portals):
 
                         prev_off = (
                             getattr(rt, "on_portal_tile", None) is None
@@ -919,31 +962,33 @@ class GameManager:
                 # PORTAL CHECK for WEB movement (user 15/09: web clients could
                 # never teleport through the lobby doors — the old check ran
                 # only in the Discord dispatch path). The web tick moves the
-                # body via converge/integration, so this is the correct hook:
-                # side worlds only. moved_off_portal lets a player STANDING on
-                # the door tile get the teleport (they may have walked on
-                # between two flushes); the latch still prevents bounce-back
-                # within one continuous portal contact.
-                if moved_any and self.side_runtimes.get(
-                    (rt.channel_id, rt.map_data.map_id)
-                ) is rt:
-                    from game.travel import check_portal_after_move
+                # body via converge/integration, so this is the correct hook.
+                # Gate = "this map has portal wiring" (Ekonia cave net:
+                # main-world teleports + solo previews). moved_off_portal lets
+                # a player STANDING on the door tile get the teleport (they
+                # may have walked on between two flushes); the latch still
+                # prevents bounce-back within one continuous portal contact.
+                if moved_any:
+                    from game.travel import check_portal_after_move, has_portal_config
 
-                    prev_off = (
-                        getattr(rt, "on_portal_tile", None) is None
-                        or user_id not in rt.on_portal_tile
-                    )
-                    fired = check_portal_after_move(
-                        rt, self.portals, user_id, moved_off_portal=prev_off
-                    )
-                    if fired is not None:
-                        link, portal_player = fired
-                        await self._teleport_through_link(
-                            rt.channel_id, rt, user_id, link
+                    gate = has_portal_config(rt, self.portals)
+
+                    if gate:
+                        prev_off = (
+                            getattr(rt, "on_portal_tile", None) is None
+                            or user_id not in rt.on_portal_tile
                         )
-                        # The player object moved runtime — skip further
-                        # per-tick work against the old rt this iteration.
-                        continue
+                        fired = check_portal_after_move(
+                            rt, self.portals, user_id, moved_off_portal=prev_off
+                        )
+                        if fired is not None:
+                            link, portal_player = fired
+                            await self._teleport_through_link(
+                                rt.channel_id, rt, user_id, link
+                            )
+                            # The player object moved runtime — skip further
+                            # per-tick work against the old rt this iteration.
+                            continue
             # SEPARATE realtime web pack (state.web_zombies, float positions):
             # driven by this same 20 Hz tick with the tick dt — movement
             # integrates smoothly every frame like a player, bites are gated
@@ -2408,9 +2453,16 @@ class GameManager:
             resolve_link_target,
         )
 
-        dst_rt = self.get_or_create_side_runtime(
-            self.runtimes.get(channel_id, src_rt), link.map_id
-        )
+        # Destination is the channel's MAIN world? Use the main runtime
+        # (Ekonia cave net: cave -> bigmap must land back in the main world,
+        # not clone a second bigmap side runtime).
+        main_rt = self.runtimes.get(channel_id)
+        if main_rt is not None and link.map_id == main_rt.map_data.map_id:
+            dst_rt = main_rt
+        else:
+            dst_rt = self.get_or_create_side_runtime(
+                main_rt or src_rt, link.map_id
+            )
         # Choose the arrival tile now that the destination map is loaded.
         candidates = resolve_link_target(dst_rt, link, self.portals)
         occupied = {
