@@ -2395,6 +2395,13 @@ export class WorldScene extends Phaser.Scene {
     const tile = this.screenToTile(sx, sy);
     if (!tile) { this.mobileAimTile = null; return false; }
     const target = this.clampClickTile(tile) ?? tile;
+    // OUT-OF-REACH GUARD: when the tap is genuinely beyond the server's
+    // reach (clampClickTile null, > AIM_RANGE + tolerance), do NOT arm the
+    // square at the raw tile — the server would refuse the action while
+    // the box sat there inviting a second tap ("box lệch" #2: aim box at
+    // tap tile, effect either clamped away or refused). Show NOTHING and
+    // leave aim idle so the player walks closer and taps a REACHABLE tile.
+    if (this.clampClickTile(tile) === null) return false;
     if (
       this.mobileAimTile &&
       this.mobileAimTile.x === target.x &&

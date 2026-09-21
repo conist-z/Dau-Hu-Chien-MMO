@@ -108,14 +108,17 @@ if (isTouchDevice) {
 // every tap/long-press/pinch in mobile_controls.ts gets fixed coordinates
 // without touching its logic. Desktop/landscape phones are untouched.
 if (isTouchDevice) {
-  // PHYSICAL dims from documentElement — NOT window.innerWidth/Height.
-  // The first draft read window.* inside its own getter = infinite
-  // recursion = the frozen login screen. documentElement.clientWidth/
-  // clientHeight are untouched by the overrides below and always reflect
-  // the PHYSICAL viewport (CSS pixels, scrollbar excluded).
+  // PHYSICAL SHORT-SIDE length from documentElement — NOT window.* and NOT
+  // max(): the rotated landscape frame (styles.css FORCE LANDSCAPE) is
+  // built as left:100vw · width:100vh · rotate(90deg), so its on-screen
+  // width is 100vw = the viewport's SHORT side in portrait. The mapping
+  // "logicalY = physicalWidth − physicalX" needs exactly that side; the
+  // earlier Math.max(clientWidth, clientHeight) fed the LONG side into the
+  // formula and shifted every remapped point down by (long − short) — the
+  // "box xanh + block đặt bị lệch" bug on held-upright phones.
   const physicalW = (): number => {
     const d = document.documentElement;
-    return Math.max(d.clientWidth, d.clientHeight);
+    return Math.min(d.clientWidth, d.clientHeight);
   };
   const isPortraitPhysical = (): boolean =>
     window.matchMedia("(orientation: portrait)").matches;
