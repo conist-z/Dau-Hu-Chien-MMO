@@ -244,13 +244,24 @@ html, body {
 }
 /* The bar as a VERTICAL column (user spec), dropped to the BOTTOM-RIGHT
    corner, standing alone (Kaetram parity: bottom:0 right:0 of the screen).
-   2-id prefix wins the cascade over the compiled sheet. */
+   2-id prefix wins the cascade over the compiled sheet. pointer-events
+   here must NOT be auto unconditionally — the mobile roll-up hub rests
+   hidden below the screen edge (transform+opacity) and the closed strip
+   would still eat taps in its resting rect while the transition runs;
+   the mobile roll-up block re-enables it via .hub-open. */
 #hud-hub #hud-hub #buttons,
 #hud-chat #hud-hub #buttons {
   flex-direction: column;
   bottom: 0;
   right: 0;
   padding-right: 4px;
+  pointer-events: auto;
+}
+/* (mobile-ui closed-state override lives in the roll-up block below) */
+body.mobile-ui #hud-hub #buttons.shown:not(.hub-forced) {
+  pointer-events: none; /* rolled away until body.hub-open re-enables */
+}
+body.mobile-ui.hub-open #hud-hub #buttons.shown {
   pointer-events: auto;
 }
 /* Page containers (slice-container/slice-page/map-frame) center on the
@@ -281,22 +292,53 @@ html, body {
 #hud-hub #hud-hub label {
   pointer-events: auto;
 }
-/* ---- MOBILE SCROLLABLE HUB BAR (user correction: SAME buttons, ONE
-   bar — just rolled into a compact scrollable column for phones) ----
-   The ORIGINAL Kaetram #buttons bar keeps every function (menus bind to
-   these very elements); on mobile it becomes a slim vertical strip with
-   internal scrolling: ~3 buttons peek, the rest scroll underneath. No
-   duplicates, no dead buttons. The tray/anchor experiment is gone. */
+/* ---- MOBILE ROLL-UP HUB (user spec: a ROLL BUTTON, not a visible strip)
+ * The ORIGINAL Kaetram #buttons bar keeps every function; on mobile it
+ * rests HIDDEN below the screen edge and ROLLS UP when the settings GEAR
+ * (#hub-roll-btn) is tapped. Tap outside / pick a button → rolls back in.
+ * The gear carries the settings sprite cell; the real #settings-button
+ * inside the bar still opens the settings menu when tapped there. */
 #buttons-tray,
 #settings-anchor { display: none; }
+#hub-roll-btn { display: none; }
+body.mobile-ui #hub-roll-btn {
+  display: block;
+  position: absolute;
+  right: calc(8px + env(safe-area-inset-right, 0px));
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  width: 52px;
+  height: 56px;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 2;
+  border: none;
+  background: rgba(10, 12, 18, 0.55);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+}
+/* Gear sprite: ONE cell (44×50) of the Kaetram hud_buttons sheet on an
+ * ::after — never paint the whole sheet in the box ("dính vệt nút khác").
+ * Row Y = settings (-12.5em at 16px = -200px); .open = pressed column. */
+body.mobile-ui #hub-roll-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 44px;
+  height: 50px;
+  background-image: url("/ui/kaetram/interface/hud_buttons.png");
+  background-repeat: no-repeat;
+  background-size: 132px 700px;
+  background-position: 0 -200px;
+  image-rendering: pixelated;
+}
+body.mobile-ui #hub-roll-btn.open::after { background-position: -44px -200px; }
 body.mobile-ui #hud-hub #buttons.shown {
   display: flex !important;
-  /* Slim scroll strip: ~3 buttons peek (50+50+4px), the rest scroll. */
   max-height: 166px;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;   /* scrolling it never pans the camera */
-  /* (touch-action on this strip is set in the block below: none — JS scroll) */
   flex-direction: column;
   bottom: 0;
   right: 0;
@@ -310,11 +352,19 @@ body.mobile-ui #hud-hub #buttons.shown {
   /* Slim scrollbar (WebKit) + Firefox thin. */
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
-  /* JS-OWNED SCROLL: native touch scroll is unreliable inside the 90°-
-   * rotated frame (browser gesture classification vs CSS transforms),
-   * so ui.ts scrolls the strip manually from pointer deltas. none keeps
-   * the browser out of the gesture entirely — taps still click. */
-  touch-action: none;}
+  touch-action: none;
+  /* ROLL-UP: resting = slid fully below the screen edge, faded, and
+   * untouchable. body.hub-open rolls it up. transform/opacity only. */
+  transform: translateY(calc(100% + 64px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.28s cubic-bezier(0.22, 0.9, 0.36, 1), opacity 0.2s ease;
+}
+body.mobile-ui.hub-open #hud-hub #buttons.shown {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
 body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar {
   width: 4px;
 }
@@ -1298,16 +1348,15 @@ body.mobile-ui {
   }
   #mc-knob:not(.mc-idle) { opacity: 1; }
 
-  /* ---- Action buttons (right edge, ABOVE the hub strip) ----
-   * The mobile hub is a 166px-tall SCROLL strip (never the old 9-button
-   * 450px stack), so the ⚔️/🎒 pair only needs to clear 166px + margin.
-   * The stale bottom:470px sat ABOVE the logical landscape viewport
-   * (~390px tall on phones) — the buttons rendered off-screen entirely
-   * ("mất tiêu cái atk với mở inv"). */
+  /* ---- Action buttons (right edge, LEFT of the roll gear) ----
+   * The hub rests as a single gear button in the bottom-right corner; the
+   * ⚔️/🎒 pair sits just left of it, low enough to thumb-reach. When the
+   * strip rolls up it occupies the right EDGE above the gear — the pair
+   * at right:96px never collides with it. */
   #mc-actions {
     position: absolute;
-    right: calc(14px + env(safe-area-inset-right, 0px));
-    bottom: calc(190px + env(safe-area-inset-bottom, 0px));
+    right: calc(96px + env(safe-area-inset-right, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
     gap: 12px;

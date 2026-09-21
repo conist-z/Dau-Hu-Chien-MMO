@@ -10,8 +10,8 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-BqTFf5Yj.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CzNAFajm.css">
+    <script type="module" crossorigin src="./assets/index-BnI7PQzJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cj2-DerD.css">
   </head>
   <body>
     <!-- Landscape lock (mobile): covers the screen when a touch device is
@@ -58,6 +58,10 @@
                whatever height the log grows to (user spec: sát mép trên
                khung chat, lề phải màn hình). -->
           <div id="hud-hub">
+          <!-- MOBILE ROLL BUTTON: the settings GEAR that the strip rolls
+               out of (mobile only; wired in main.ts outside-tap handler).
+               Sprites are the Kaetram hud_buttons settings row. -->
+          <button id="hub-roll-btn" type="button" aria-label="Menu"></button>
           <!-- Kaetram ORIGINAL UI (ported verbatim from game.astro): the
                button bar + every page container, exact ids/classes so the
                compiled kaetram_ui.css (their own scss) styles it 1:1.

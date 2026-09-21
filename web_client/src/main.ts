@@ -1078,6 +1078,40 @@ if (MOBILE_UI) {
   }).observe(log, { childList: true });
   renderBadge();
 }
+
+// MOBILE ROLL-UP HUB: the gear (#hub-roll-btn) toggles body.hub-open,
+// which rolls the real #buttons strip up out of the screen edge (CSS).
+// A tap anywhere outside the strip/gear rolls it back in; picking a
+// button closes it too (one interaction, one hub, no dead duplicates).
+if (MOBILE_UI) {
+  const gear = document.getElementById("hub-roll-btn");
+  const bar = document.getElementById("buttons");
+  if (gear && bar) {
+    const setHubOpen = (open: boolean): void => {
+      document.body.classList.toggle("hub-open", open);
+      gear.classList.toggle("open", open);
+    };
+    gear.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // not an outside tap
+      setHubOpen(!document.body.classList.contains("hub-open"));
+    });
+    // Taps inside the open strip are hub business, not outside taps.
+    bar.addEventListener("pointerdown", (e) => e.stopPropagation());
+    window.addEventListener("pointerdown", (e) => {
+      if (!document.body.classList.contains("hub-open")) return;
+      const t = e.target as Node;
+      if (gear.contains(t) || bar.contains(t)) return;
+      setHubOpen(false);
+    });
+    // Picking any hub button rolls the strip back in (after the click —
+    // pointerdown stopPropagation above means the click still fires here).
+    bar.addEventListener("click", (e) => {
+      if (!(e.target as HTMLElement).closest("div[id$=-button]")) return;
+      setHubOpen(false);
+    });
+  }
+}
 // Reveal the touch layer ONLY once a real game session starts (welcome):
 // the login gate + lobby sit in #overlay BELOW this layer, and an always-on
 // look surface swallowed every tap on the login button (mobile login bug).
