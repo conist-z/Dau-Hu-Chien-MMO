@@ -1142,8 +1142,13 @@ html, body {
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 3; /* between weather/daynight (1) and the HUD pieces (4..6) —
-                     the HUD hotbar/bars/chat stay ON TOP and clickable; */
+    /* BELOW #overlay (2): the whole HUD (hotbar, hub bar, chat, panels)
+     * lives inside #overlay, so its interactive children must stay ABOVE
+     * the full-screen #mc-look look surface — otherwise every tap on the
+     * hub/hotbar/chat is swallowed (the "tương tác với hub kiểu gì" bug).
+     * Non-interactive parts of #overlay are pointer-events:none, so taps on
+     * empty screen areas still fall through to the look surface. */
+    z-index: 1;
     pointer-events: none; /* children re-enable */
     font-family: "Segoe UI", system-ui, sans-serif;
     touch-action: none; /* all gestures handled in JS (no browser scroll/zoom) */
@@ -1161,11 +1166,14 @@ html, body {
    * slides via transform (GPU-composited). */
   #mc-stick-zone {
     position: absolute;
+    /* Anchored around the knob's HOME so touching near the resting knob
+     * grabs it (the knob itself is pointer-events:none — the zone owns the
+     * pointer). Avoids overlapping the hotbar/chat HUD on the left. */
     left: 0;
     bottom: 0;
-    width: 45%;
-    max-width: 340px;
-    height: 46%;
+    width: 40%;
+    max-width: 320px;
+    height: 42%;
     touch-action: none;
   }
   #mc-knob {
@@ -1181,10 +1189,10 @@ html, body {
     z-index: 1;
   }
   #mc-knob.hidden { display: none; }
-  /* Released/idle knob: NOT hidden — fades to a translucent ghost at its
-   * last position (user spec: mờ + trong suốt, không biến mất). It never
-   * eats touches (pointer-events:none from the base rule) and slides back
-   * to full opacity the moment the next drag starts. */
+  /* Released/idle knob: NOT hidden — springs back to its HOME spot and
+   * idles as a translucent ghost (parkKnob() sets left/top). It never eats
+   * touches (pointer-events:none from the base rule) and snaps to full
+   * opacity the moment the next drag starts. */
   #mc-knob.mc-idle {
     opacity: 0.35;
     transition: opacity 0.25s ease-out;
@@ -1234,5 +1242,16 @@ html, body {
     #mc-actions { bottom: 84px; }
     #mc-inv .mc-act-bg { width: 54px; height: 59px; }
     #mc-atk .mc-act-bg { width: 64px; height: 64px; }
+  }
+  /* Phones portrait: the 52px/slot hotbar would be buried under the knob
+   * home + look surface. Lift it above the joystick area (the zone tops out
+   * at 42% height, the knob sits ~90px up — hotbar at 170px clears both). */
+  @media (pointer: coarse) and (max-width: 560px), (max-width: 480px) {
+    #hud-hotbar {
+      bottom: 170px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 96vw;
+    }
   }
 }

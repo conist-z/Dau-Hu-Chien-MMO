@@ -1,15 +1,17 @@
-// Mobile controls: MINIMAL FLOATING KNOB joystick (Kenney CC0 art) + action
-// buttons + a full-screen LOOK surface for the camera:
-//   • touch the bottom-left zone → a SINGLE round knob appears under the
-//     finger — no ring, no base — drag it any direction for analog movement;
-//     it rubber-bands back to the touch origin and lights purple at full
-//     push (= run). Release → it vanishes.
+// Mobile controls: HOME-ANCHORED FLOATING KNOB joystick (Kenney CC0 art)
+// + action buttons + a full-screen LOOK surface for the camera:
+//   • the knob rests at a FIXED home spot bottom-left from the start (always
+//     visible, slightly translucent); touch it (or the zone around it) and
+//     drag any direction — the knob follows the finger analog-style; release
+//     → it springs BACK TO ITS HOME (not wherever the finger was) and idles
+//     as a translucent ghost. Push past 2× range = run (nub lights purple).
 //   • one finger drag (elsewhere) → pan the camera (re-centers while walking)
 //   • two finger pinch → zoom (drives the Phaser camera zoom directly)
 //   • quick tap        → the SAME "primary" action as a desktop left click
-//                        (chop / break / attack at that tile)
+//                        (chop / break / attack / MINE at that tile)
 //   • long press       → the SAME "secondary" action as a right click
-//                        (place block / eat / station interact)
+//                        (PLACE the held block / eat / station interact)
+//   • 🎒 button        → inventory panel (drag items there like on desktop)
 // The knob feeds the exact same input-vector hook as the keyboard
 // (onMove → setLocalInput + net.setInput), so prediction/seq'd inputs/server
 // path are IDENTICAL to desktop. Everything lives in a DOM overlay
@@ -53,6 +55,9 @@ export class MobileControls {
   private stickEl: HTMLElement | null = null;
   private knobEl: HTMLImageElement | null = null;
   private stickRunning = false;
+  /** Resting spot (viewport px, set on mount). Release → spring back here. */
+  private homeX = 90;
+  private homeY = 0; // set in mount() from window size
 
   // look-area state (multi-touch: tracked per pointer id)
   private lookTouches = new Map<number, { x: number; y: number; startX: number; startY: number }>();
@@ -72,12 +77,12 @@ export class MobileControls {
     // Built entirely from JS so index.html stays untouched. Art: Kenney
     // Mobile Controls (CC0) — ONE floating round knob (base + purple
     // highlight), circle/hexagon buttons with pressed states, sword/menu
-    // icons. NO ring/base around the knob (user spec). The knob is hidden
-    // until a touch lands in the bottom-left zone, then follows the finger.
+    // icons. NO ring/base around the knob (user spec). The knob RESTS at a
+    // fixed home spot from mount (never display:none — it idles translucent).
     root.innerHTML = `
       <div id="mc-look" aria-hidden="true"></div>
       <div id="mc-stick-zone" aria-hidden="true"></div>
-      <img id="mc-knob" class="hidden" src="/ui/mobile/stick_nub.png" alt="" draggable="false" />
+      <img id="mc-knob" src="/ui/mobile/stick_nub.png" alt="" draggable="false" />
       <div id="mc-actions">
         <button class="mc-btn mc-act" id="mc-inv" type="button" aria-label="Túi đồ">
           <img class="mc-act-bg" src="/ui/mobile/btn_hexagon.png" alt="" draggable="false" />
@@ -92,6 +97,12 @@ export class MobileControls {
     document.body.appendChild(root);
     this.stickEl = document.getElementById("mc-knob");
     this.knobEl = this.stickEl as HTMLImageElement | null;
+    // Home spot: bottom-left, above the chat frame (mirrors the CSS zone).
+    this.homeX = 90;
+    this.homeY = Math.max(90, Math.round(window.innerHeight * 0.22));
+    // Park the knob at its home spot immediately (visible + idle ghost) so
+    // players SEE the joystick from the first frame in-game.
+    this.parkKnob();
 
     // --- dynamic D-pad: pointerdown in the zone spawns the pad under the
     // finger; move = analog vector + arm lighting; up/cancel releases. ---
@@ -110,10 +121,7 @@ export class MobileControls {
       }
       this.stickOrigin = { x: e.clientX, y: e.clientY };
       if (this.stickEl) {
-        // The knob is NEVER display:none after the first use: it lingers as a
-        // translucent ghost where released, then snaps to full opacity and
-        // teleports under the new finger on the next touch.
-        this.stickEl.classList.remove("hidden", "mc-idle");
+        this.stickEl.classList.remove("mc-idle");
         this.stickEl.style.left = `${e.clientX - KNOB_SIZE / 2}px`;
         this.stickEl.style.top = `${e.clientY - KNOB_SIZE / 2}px`;
         if (this.knobEl) this.knobEl.style.transform = "translate(0px, 0px)";
@@ -128,10 +136,8 @@ export class MobileControls {
       if (e.pointerId !== this.stickPointer) return;
       this.stickPointer = null;
       this.stickRunning = false;
-      // NOT display:none — the knob fades to translucent ghost at its last
-      // position (user spec: mờ + trong suốt, không biến mất). pointer-events
-      // stay off so it never blocks the look/canvas interactions.
-      this.stickEl?.classList.add("mc-idle");
+      // Spring back HOME (not wherever the finger was) + idle ghost opacity.
+      this.parkKnob();
       if (this.knobEl) this.knobEl.src = "/ui/mobile/stick_nub.png";
       this.hooks.onMove(0, 0, false);
     };
@@ -234,6 +240,15 @@ export class MobileControls {
     };
     look.addEventListener("pointerup", lookLift);
     look.addEventListener("pointercancel", lookLift);
+  }
+
+  /** Return the knob to its home spot (bottom-left) as an idle ghost. */
+  private parkKnob(): void {
+    if (!this.stickEl) return;
+    this.stickEl.classList.add("mc-idle");
+    this.stickEl.style.left = `${this.homeX - KNOB_SIZE / 2}px`;
+    this.stickEl.style.top = `${this.homeY - KNOB_SIZE / 2}px`;
+    if (this.knobEl) this.knobEl.style.transform = "translate(0px, 0px)";
   }
 
   /** Recompute the knob offset + emit the analog move vector. Drag model:
