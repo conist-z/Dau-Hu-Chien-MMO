@@ -2395,7 +2395,7 @@ export class WorldScene extends Phaser.Scene {
     // square (locked green = "tap again to act"). Otherwise the cursor
     // follows the live mouse tile as before (desktop unchanged).
     if (this.mobileAimTile) {
-      this.hoverSquare
+      sq
         .setPosition(this.mobileAimTile.x * this.tilePx + this.tilePx / 2, this.mobileAimTile.y * this.tilePx + this.tilePx / 2)
         .setVisible(true)
         .setDepth(100)
@@ -2406,10 +2406,10 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     if (!this.mouseTile) {
-      this.hoverSquare.setVisible(false);
+      sq.setVisible(false);
       return;
     }
-    this.hoverSquare
+    sq
       .setPosition(this.mouseTile.x * this.tilePx + this.tilePx / 2, this.mouseTile.y * this.tilePx + this.tilePx / 2)
       .setVisible(true)
       .setDepth(100)

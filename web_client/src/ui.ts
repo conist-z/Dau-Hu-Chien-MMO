@@ -144,6 +144,11 @@ export class Hud {
   private staminaLabel = document.getElementById("bar-stamina-label")!;
   private hotbarEl = document.getElementById("hud-hotbar")!;
   private chatLog = document.getElementById("chat-log")!;
+  /** MOBILE roll-up hub: the tray + gear anchor declared in index.html
+   *  (mobile-only via CSS). Null on desktop code paths — every touchpoint
+   *  guards, so desktop behaviour is byte-identical to before. */
+  private hubTray = document.getElementById("buttons-tray");
+  private hubAnchor = document.getElementById("settings-anchor");
   private chatForm = document.getElementById("chat-form") as HTMLFormElement;
   private chatInput = document.getElementById("chat-input") as HTMLInputElement;
   private toastEl = document.getElementById("hud-toast")!;
@@ -419,10 +424,37 @@ export class Hud {
       if (this.purseDrag) {
         const t = this.nearestDropTarget(e.clientX, e.clientY);
         if (t && t.from === "bag") { this.endPurseDrag(true, t.index); return; }
+        // TOUCH parity with the mouseup branch: releasing a coin/crystal
+        // drag ON the matching purse icon = DEPOSIT the whole stack into
+        // the purse. Without this the finger path only ever withdrew —
+        // dragging xu/ngọc VÀO ví was desktop-only ("kéo vàng không đúng").
+        const pid = this.purseTargetAt(e.clientX, e.clientY);
+        if (pid && pid === this.purseDrag) {
+          // Only commit when the source stack still exists (a withdraw
+          // ghost whose source was consumed mid-drag must not fabricate
+          // a deposit from nothing).
+          const src = this.inventory.bag.find((b) => b?.id === this.purseDrag);
+          if (src && this.onPurseDeposit) {
+            const idx = this.inventory.bag.indexOf(src);
+            this.onPurseDeposit(src.id, src.qty, idx);
+          }
+          this.endPurseDrag(false);
+          return;
+        }
         this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
         return;
       }
       if (!this.drag) return;
+      // Currency stacks dragged over the matching purse icon = deposit
+      // (same semantics as the mouse branch below, PC ↔ mobile parity).
+      if (this.drag.from === "bag" && isCurrency(this.drag.stack.id)) {
+        const pid = this.purseTargetAt(e.clientX, e.clientY);
+        if (pid) {
+          if (pid === this.drag.stack.id) this.depositDraggedCurrency();
+          else this.cancelDrag(); // wrong icon (coin onto crystal): spring back
+          return;
+        }
+      }
       const t = this.nearestDropTarget(e.clientX, e.clientY);
       if (t) {
         if (t.from === "result") { this.cancelDrag(); return; }
@@ -439,7 +471,12 @@ export class Hud {
     });
   }
 
-  /** The nearest droppable slot (same-panel partner grids) within radius. */
+  /** The nearest droppable slot (same-panel partner grids) within radius.
+   *  HOTBAR parity: hotbar slot N mirrors bag slot N, so a drag released
+   *  over a hotbar cell drops into the BAG at that index (the drag already
+   *  started from a hotbar div needs this to move BETWEEN hotbar slots —
+   *  previously only the exact-cell mouseup path accepted a hotbar drop,
+   *  near-misses sprang back and the drag felt broken on touch). */
   private nearestDropTarget(x: number, y: number): { from: "bag" | "mat" | "result"; index: number } | null {
     const RADIUS = 26; // px — generous snap (slot is 42px at scale 3)
     const hits: { from: "bag" | "mat" | "result"; index: number; d: number }[] = [];
@@ -455,6 +492,15 @@ export class Hud {
         }
       });
     };
+    // Hotbar cells are bag-slot drops (positional mirror, see above).
+    this.hotbarEl.querySelectorAll<HTMLElement>(":scope > .slot").forEach((el, idx) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) return;
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      const d = Math.hypot(dx, dy);
+      if (d <= RADIUS + 8) hits.push({ from: "bag", index: idx, d });
+    });
     // Result slot has no data-slot; find it by its .result class.
     const out = this.invCraftWrap.querySelector<HTMLElement>(".slot-pix.result");
     if (out) {
@@ -2607,10 +2653,8 @@ export class Hud {
     // without a menu (inventory → bag panel, chat → focus input, guilds/
     // friends → not built server-side yet) get the original toggle feel.
     const bar = document.getElementById("buttons")!;
-    bar.addEventListener("click", (e) => {
-      const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
-      if (!btn) return;
-      switch (btn.id) {
+    const routeHubButton = (btnId: string): void => {
+      switch (btnId) {
         case "inventory-button":
           if (this.invPanel.classList.contains("hidden")) {
             this.kaetramHideAll();
@@ -2634,7 +2678,43 @@ export class Hud {
         // toggle here too or every click fires twice and the page closes
         // itself instantly (the auto-close bug).
       }
+    };
+    bar.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
+      if (!btn) return;
+      routeHubButton(btn.id);
     });
+    // MOBILE TRAY: same router over the tray's buttons — one code path for
+    // both bars (PC ↔ mobile parity rule). Tray taps ALSO roll the tray
+    // back in after the action (the tray is a launcher, not a dock).
+    this.hubTray?.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
+      if (!btn) return;
+      routeHubButton(btn.id);
+      this.closeHubTray();
+    });
+    // Gear anchor: rolls the tray out/in. Outside-tap-to-close lives in
+    // main.ts (window-level pointerdown, touch devices only).
+    this.hubAnchor?.addEventListener("click", (e) => {
+      e.stopPropagation(); // not an outside tap
+      this.toggleHubTray();
+    });
+  }
+
+  /** Roll the mobile hub tray out/in (gear anchor state stays in sync). */
+  toggleHubTray(): void {
+    if (!this.hubTray) return;
+    const open = !this.hubTray.classList.contains("open");
+    this.setHubTray(open);
+  }
+
+  setHubTray(open: boolean): void {
+    this.hubTray?.classList.toggle("open", open);
+    this.hubAnchor?.classList.toggle("open", open);
+  }
+
+  closeHubTray(): void {
+    this.setHubTray(false);
   }
 
   private kaetramHideAll(): void {

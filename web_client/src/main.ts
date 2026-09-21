@@ -857,6 +857,13 @@ const mobile = new MobileControls({
   onToggleInventory: () => hud.toggleInventory(),
   onTapWorld: (sx, sy) => {
     // Same pipeline as a desktop primary click (onCanvasAction "primary").
+    // MOBILE AIM MODE: touch has no cursor — the finger is imprecise, and
+    // the old tap-to-act fired on whatever tile happened to sit under it
+    // ("đập phá cứ lệch lệch"). Two-tap flow instead: FIRST tap arms the
+    // green target square on the tile; SECOND tap on the SAME tile
+    // executes chop/break/attack. (onTapWorld only ever fires from
+    // MobileControls, so every call here is a touch call.)
+    if (!scene.mobileTapAim(sx, sy)) return; // first tap: aim armed, no action
     scene.setMouseTile({ x: sx, y: sy });
     const tile = scene.screenToTile(sx, sy);
     if (!tile) {
@@ -881,6 +888,10 @@ const mobile = new MobileControls({
   },
   onLongPressWorld: (sx, sy) => {
     // Same pipeline as a desktop secondary click (place / eat / station).
+    // MOBILE AIM: a long press ALWAYS acts at the held finger's tile (no
+    // confirmation gate — placing is already a deliberate hold) and clears
+    // any armed target so the stale green square never lingers.
+    scene.consumeAimTarget();
     const tile = scene.screenToTile(sx, sy);
     if (tile && scene.hoveringStation()) {
       scene.stationInteract();
