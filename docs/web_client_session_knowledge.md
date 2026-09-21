@@ -206,8 +206,19 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 
 ## 1c. 🖥️ LAG WEB PC (21–22/09): BÀI HỌC DEBUG + CÁC CẦM FIX ĐÃ LẮP
 
-> Đợt này tiêu ~6 lượt fix mới dìm được lag PC. Ghi lại để **lần sau đỡ đi
-> vòng** — thứ tự kiểm tra dưới đây là thứ tự đúng, đừng nhảy cóc.
+> ⚠️ **ĐÍNH CHÍNH (22/09, sau khi soi lại 2 session):** lag PC đã được session
+> `eabba1f1` fix CHÍNH XÁC trước đó bằng đo đạc thật: update loop chỉ
+> ~0.01ms/frame → thủ phạm là **3 canvas full-window chồng nhau** (Phaser
+> WebGL + weather 2D + daynight 2D phải blend mỗi frame, PC màn to/dpr cao
+> tốn gấp nhiều lần mobile) + Phaser 3.90 tự rớt pipeline trên GPU yếu.
+> Fix: `powerPreference: "high-performance"` (commit `c9ee9fa`) + weather
+> ngừng rAF khi trời quang. **Con số loading `x/0` (PC thấy 3/0, mobile
+> 1/0) KHÔNG PHẢI LỖI** — đó là counter số blocking asset (tileset/block
+> faces) chưa có trong cache texture của browser đó; PC và mobile có cache
+> khác nhau nên số khác nhau. Session sau (bản này) đã đuổi con ma "triple
+> map-load" suốt 3 đợt fix watchdog/dedupe — những fix đó vô hại nhưng vô
+> dụng; đừng lặp lại. Bài học: **hỏi chủ nghĩa của counter trước khi coi nó
+> là lỗi** (x/0 = x asset / tổng 0 chưa set — đọc `beginLoadTracking`).
 
 ### Triệu chứng & hint quyết định
 - **PC lag, mobile mượt** (cùng map, cùng server) → loại trừ server/mạng/netcode
@@ -216,6 +227,17 @@ git add … ; git commit; git push github-dauhu main; git push origin main
   PC đang load map **nhiều lần** (mỗi welcome lặp = 1 lần re-bake full map).
 - **F3 console `bakeMapIfReady` + warning `getImageData/willReadFrequently`** →
   bake full-map (bigmap = canvas ~5760×3840 + readback ~88 MB) đang chạy lại.
+
+### Các mục KHÔNG phải thủ phạm (đã kiểm, đừng đi lại)
+- Watchdog alt-tab / reconnect lúc load: đã gate `everWelcomed` + defer khi
+  `hud.isLoading` + chống race CONNECTING — fix phòng ngừa hợp lệ nhưng KHÔNG
+  phải nguồn của report lag.
+- Held-key input 1 lần / replay-rewind mỗi snapshot / converge kẹt tường:
+  đã sửa và có thật, nhưng là netcode polish — không giải thích "PC lag,
+  mobile mượt".
+- Lỗi thật duy nhất lẫn trong đợt đó: bug `?fx=` trong perf.ts tắt oan mọi
+  overlay khi URL không có tham số (đã sửa `3434a4d`) — gây MẤT weather,
+  không gây lag.
 
 ### Các thủ phạm thật (theo thứ tự phát hiện)
 1. **Watchdog alt-tab giết join đang load**: age-check đọc `lastSnapshotAt=0`
