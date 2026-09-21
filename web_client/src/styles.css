@@ -1131,9 +1131,14 @@ html, body {
   display: none;
 }
 /* Coarse pointers (real touch devices) OR a narrow viewport always get
-   the overlay — testing on desktop devtools phone emulation hits both. */
+   the overlay — testing on desktop devtools phone emulation hits both.
+   BUT the layer only turns ON in-game (.mc-on added by main.ts on
+   welcome): the login gate + lobby live INSIDE #overlay (z-index 2),
+   below this layer — an always-on look surface swallowed every tap on
+   the "Đăng nhập Discord" button (the reported mobile login bug). */
 @media (pointer: coarse), (max-width: 820px) {
-  #mobile-controls {
+  #mobile-controls { display: none; }
+  #mobile-controls.mc-on {
     display: block;
     position: fixed;
     inset: 0;

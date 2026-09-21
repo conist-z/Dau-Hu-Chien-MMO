@@ -269,6 +269,9 @@ const net = new Net({
   },
   onWelcome: (frame) => {
     welcome = frame;
+    // In-game now: reveal the touch controls (hidden during gate/lobby).
+    (window as unknown as { __setMobileControls?: (on: boolean) => void })
+      .__setMobileControls?.(true);
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
     beginLoadTracking(frame);
     hud.hideGate();
@@ -546,6 +549,9 @@ const net = new Net({
   onConnectionChange: (connected) => {
     if (!connected) {
       hud.showGate("Mất kết nối — thử lại…");
+      // Back at the gate: the touch layer must yield to it again.
+      (window as unknown as { __setMobileControls?: (on: boolean) => void })
+        .__setMobileControls?.(false);
     }
   },
 });
@@ -880,6 +886,15 @@ const mobile = new MobileControls({
   },
 });
 mobile.mount();
+// Reveal the touch layer ONLY once a real game session starts (welcome):
+// the login gate + lobby sit in #overlay BELOW this layer, and an always-on
+// look surface swallowed every tap on the login button (mobile login bug).
+// onWelcome/onConnectionChange below toggle the .mc-on class via this fn.
+function setMobileControls(on: boolean): void {
+  document.getElementById("mobile-controls")?.classList.toggle("mc-on", on);
+}
+(window as unknown as { __setMobileControls?: (on: boolean) => void }).__setMobileControls =
+  setMobileControls;
 // Death / tab-return parity: the pad releases its held directions exactly
 // like the keyboard's clearKeys (onSnapshot already calls input.clearKeys();
 // hook the same conditions here).
