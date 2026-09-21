@@ -8,6 +8,7 @@ import { PaperdollBody, b64ToBytes, registerPaperdollTextures, registerWeaponShe
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 import { ICON_ITEM_IDS } from "./pixel_ui";
 import { perf } from "./perf";
+import { dayNightPhaser } from "./daynight_phaser";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 
@@ -669,6 +670,9 @@ export class WorldScene extends Phaser.Scene {
     }
     this.assetFetch = fetchAsset;
     this.welcome = welcome;
+    // GPU day/night tint (daynight_phaser.ts): attach once per scene, before
+    // any snapshot can try to update it. Idempotent on re-welcome.
+    if (perf.daynight) dayNightPhaser.attach(this);
     // Paperdoll: stash manifest, fetch base + every mapped weapon sheet
     // once through the same relay pipe as blocks/mobs (license-safe).
     if (welcome.players_manifest && !this.paperdollAsked) {
@@ -1840,6 +1844,11 @@ export class WorldScene extends Phaser.Scene {
     // Ekonia FadeOccluderLayer parity: smooth per-pixel canopy fade that
     // follows the player every frame (cheap — small window, typed loop).
     this.updateOccluderFade();
+    // Day/night tint as GPU rects INSIDE this canvas (daynight_phaser.ts):
+    // replaces the separate DOM 2D canvas whose full-window compositor blend
+    // during movement was the PC-only stutter (idle = static screen = browser
+    // skips recomposite; movement = every pixel changes = blend every frame).
+    if (perf.daynight) dayNightPhaser.update();
     // Facing vector still feeds the hover square + swing geometry (the hand
     // dot itself is hidden once the paperdoll body renders).
     this.updateFacing();

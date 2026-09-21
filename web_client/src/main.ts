@@ -12,7 +12,7 @@ import { weatherFx } from "./weather";
 // Day/night tint: kept as its own DOM canvas BUT throttled to 8 Hz + dpr 1 +
 // duplicate-frame skip (daynight.ts) — the per-rAF full-window repaint was
 // the PC-only lag. Same visual as before.
-import { dayNightFx } from "./daynight";
+import { dayNightPhaser } from "./daynight_phaser";
 import { perf } from "./perf";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
@@ -92,12 +92,11 @@ scene.onPlayerClick = (p) => showProfilePopup(p);
 if (perf.weather) {
   weatherFx.mount(document.getElementById("game-root")!);
 }
-// Day/night tint overlay: kept as its own DOM canvas BUT throttled to 8 Hz
-// + dpr 1 + duplicate-frame skip (daynight.ts) — the per-rAF full-window
-// repaint was the PC-only lag. Same visual as before.
-if (perf.daynight) {
-  dayNightFx.mount(document.getElementById("game-root")!);
-}
+// Day/night tint now renders INSIDE the Phaser canvas as GPU rectangles
+// (daynight_phaser.ts, driven from WorldScene.update) — the standalone DOM
+// canvas was the PC movement stutter: blending a full-window 2D canvas over
+// the WebGL canvas every frame (idle screens skip recomposite, movement
+// does not). No DOM element is mounted anymore.
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -322,7 +321,7 @@ const net = new Net({
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
     weatherFx.setWeather(null);
-    if (perf.daynight) dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
+    if (perf.daynight) dayNightPhaser.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -351,7 +350,7 @@ const net = new Net({
     const cloudsOverride = (frame as { clouds_override?: number }).clouds_override ?? 0;
     const weatherKey = cloudsOverride > 0 ? "cloud_shadow" : frame.weather;
     weatherFx.setWeather(weatherKey, cloudsOverride);
-    if (perf.daynight) dayNightFx.setClock(frame.clock);
+    if (perf.daynight) dayNightPhaser.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);

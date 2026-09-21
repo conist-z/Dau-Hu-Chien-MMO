@@ -106,8 +106,10 @@ const CAST_GRADIENT: [number, [number, number, number]][] = GRADIENT.map(
   ([f, c]) => [f, saturateStop(c[0], c[1], c[2], SATURATE)],
 );
 
-/** Saturated cast colour for the given second-of-day (interpolated). */
-function castColor(sec: number): [number, number, number] {
+/** Saturated cast colour for the given second-of-day (interpolated).
+ *  Exported for the GPU-side twin (daynight_phaser.ts) — same math, no
+ *  duplicated gradient tables. */
+export function castColor(sec: number): [number, number, number] {
   const frac = (((sec % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY) / SECONDS_PER_DAY;
   for (let i = 0; i < CAST_GRADIENT.length - 1; i++) {
     const [f0, c0] = CAST_GRADIENT[i];
