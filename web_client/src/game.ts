@@ -7,6 +7,7 @@ import type { DropPayload, PlayerPayload, PlayersManifest, SnapshotPayload, WebZ
 import { PaperdollBody, b64ToBytes, registerPaperdollTextures, registerWeaponSheet } from "./paperdoll";
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 import { ICON_ITEM_IDS } from "./pixel_ui";
+import { perf } from "./perf";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 
@@ -127,6 +128,13 @@ export class WorldScene extends Phaser.Scene {
   private welcome: WelcomePayload | null = null;
   private tileTextures = new Map<string, string>(); // image name -> texture key
   private loadedTilesets = new Set<string>(); // tileset images that arrived
+  // DEDUPE GUARD: signature of the last bake (map id + tileset sheet set).
+  // A repeated welcome (reconnect, alt-tab rejoin, portal bounce-back) used
+  // to re-run the FULL bake every time — on the big classic maps that is a
+  // 5760x3840 canvas repaint + an 88 MB getImageData readback per pass
+  // (phone 1 load, PC 3 loads = the PC-only stutter). Same map + same sheets
+  // = nothing to repaint, so skip everything.
+  private bakeSig = "";
   private players = new Map<number, RemotePlayer>();
   private selfMarker: Phaser.GameObjects.Rectangle | null = null;
   private selfLabel: Phaser.GameObjects.Text | null = null;
@@ -705,7 +713,7 @@ export class WorldScene extends Phaser.Scene {
     this.bakeMapIfReady();
     // Cave ambience (darkness + glowing mushrooms) — independent canvases,
     // safe to (re)build right after the map bake.
-    this.setupCaveAmbience(welcome);
+    if (perf.cave) this.setupCaveAmbience(welcome);
 
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
@@ -966,6 +974,14 @@ export class WorldScene extends Phaser.Scene {
     const map = welcome.map;
     const tw = map.tile_width;
     const th = map.tile_height;
+    // DEDUPE GUARD (PC triple-load stutter): a repeated welcome for the SAME
+    // map with the SAME sheet set is a no-op — skip the whole bake (a
+    // full-map canvas repaint + the 88 MB occluder getImageData). Portal
+    // switches / genuine sheet changes still bake because the sig changes.
+    const sig = `${map.id}|${map.tilesets.filter((t) => t.image).map((t) => t.image).join(",")}`;
+    const alreadyUsable = this.mapBake !== null && this.bakeSig === sig;
+    if (alreadyUsable) return;
+    this.bakeSig = sig;
     // Require at least one tileset texture; bake with what we have.
     const usable = map.tilesets.filter(
       (t) => t.image && this.textures.exists(this.tileTextures.get(t.image) ?? ""),
@@ -1620,6 +1636,9 @@ export class WorldScene extends Phaser.Scene {
    * restores the canopy exactly, with zero bake redraws.
    */
   private updateOccluderFade(): void {
+    // ?fx gate (perf.ts): the fade compositing uploads a sub-rect to the
+    // canopy texture every step — skippable via ?fx=0 for perf isolation.
+    if (!perf.cave) return;
     const ctx = this.occluderCtx;
     const pix = this.occluderPix;
     if (!ctx || !pix || !this.mapAbove || !this.mapAbove.visible) return;

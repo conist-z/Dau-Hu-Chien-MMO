@@ -10,6 +10,7 @@ import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
 import { dayNightFx } from "./daynight";
+import { perf } from "./perf";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
@@ -82,19 +83,15 @@ document.getElementById("pp-msg")!.addEventListener("click", () => {
 // Scene -> popup wiring: click a remote body opens their card.
 scene.onPlayerClick = (p) => showProfilePopup(p);
 // every snapshot (and the welcome default below).
-weatherFx.mount(document.getElementById("game-root")!);
-// WORLD-SPACE weather: feed the overlay the LIVE Phaser camera scroll each
-// frame so rain/snow/wind particles stay anchored to the MAP (they slide
-// across the viewport as the player walks) instead of being glued to the
-// screen. The hard-coded /2 matches the game's camera zoom (2.0) — the
-// canvas is in screen px while the camera scroll is world px.
-weatherFx.setCameraHook(() => {
-  const cam = scene.cameras.main;
-  return { x: cam.scrollX, y: cam.scrollY, zoom: cam.zoom };
-});
-// Day/night lighting overlay — full-screen multiply tint sampled from the
-// same 24h gradient as the Discord client; the clock arrives per snapshot.
-dayNightFx.mount(document.getElementById("game-root")!);
+// ?fx=0 / ?fx=weather,daynight,cave gates (perf.ts): the PC-vs-mobile lag
+// bisector — mobile smooth + PC lag fingered per-frame client render cost,
+// so every optional overlay can be toggled off from the URL.
+if (perf.weather) {
+  weatherFx.mount(document.getElementById("game-root")!);
+}
+if (perf.daynight) {
+  dayNightFx.mount(document.getElementById("game-root")!);
+}
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -268,6 +265,7 @@ const net = new Net({
     scene.inputsSent++;
   },
   onWelcome: (frame) => {
+    everWelcomed = true;
     welcome = frame;
     // In-game now: reveal the touch controls (hidden during gate/lobby).
     (window as unknown as { __setMobileControls?: (on: boolean) => void })
@@ -293,7 +291,7 @@ const net = new Net({
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
     weatherFx.setWeather(null);
-    dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
+    if (perf.daynight) dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -322,7 +320,7 @@ const net = new Net({
     const cloudsOverride = (frame as { clouds_override?: number }).clouds_override ?? 0;
     const weatherKey = cloudsOverride > 0 ? "cloud_shadow" : frame.weather;
     weatherFx.setWeather(weatherKey, cloudsOverride);
-    dayNightFx.setClock(frame.clock);
+    if (perf.daynight) dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
@@ -942,7 +940,7 @@ document.addEventListener("visibilitychange", () => {
     // idle socket (no onclose fired). If the last snapshot is stale (>4s —
     // normal cadence is 50ms), force a reconnect immediately instead of
     // waiting for the backoff to discover it.
-    if (net.isJoined && lastSnapshotAgeMs() > 4000) {
+    if (net.isJoined && everWelcomed && lastSnapshotAgeMs() > 4000) {
       net.forceReconnect();
     }
   }
@@ -955,6 +953,13 @@ const seenDamageKeys = new Set<string>();
 function lastSnapshotAgeMs(): number {
   return lastSnapshotAt === 0 ? Infinity : performance.now() - lastSnapshotAt;
 }
+/** True once a welcome landed this page-load (i.e. the client IS loading or
+ *  already in a world). Guards the alt-tab reconnect: lastSnapshotAgeMs()
+ *  reads Infinity before the FIRST snapshot, so alt-tabbing during a long
+ *  load (big maps on PC take several seconds) fired forceReconnect -> a
+ *  second join -> a second full welcome -> the triple map-load the PC saw
+ *  (phones load fast and never hit the window). */
+let everWelcomed = false;
 
 // Snapshot freshness watchdog (2s cadence): if we are joined but snapshots
 // stopped (hidden-tab socket drop, relay hiccup), show a stale ping and
@@ -964,6 +969,12 @@ window.setInterval(() => {
   if (!net.isJoined) return;
   const age = lastSnapshotAgeMs();
   if (age > 4000) {
+    // Before the first EVER snapshot this page-load the "age" is Infinity
+    // but the join may still be mid-handshake (loading overlay counting
+    // up) — force-reconnecting there killed the in-flight join and
+    // re-sent welcome (the PC triple-load). Only arm once a world has
+    // actually streamed snapshots.
+    if (!everWelcomed) return;
     hud.setPing(-1); // "⚠ mất" in the HUD
     net.forceReconnect();
   }
