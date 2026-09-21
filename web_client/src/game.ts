@@ -357,6 +357,55 @@ export class WorldScene extends Phaser.Scene {
     return this.paperdollReady && this.textures.exists("pd-base");
   }
 
+  // ---- mobile camera (mobile_controls.ts) -------------------------------
+  /** Camera zoom requested from the touch layer (pinch). The camera is
+   *  follow-locked (startFollow), so a drag "pan" is expressed as an OFFSET
+   *  from the followed player instead of touching scroll directly (scroll
+   *  fights the follow every frame). */
+  private mobileZoom = 2.0;
+  private mobilePan = { x: 0, y: 0 };
+  private static readonly MOBILE_ZOOM_MIN = 1.2;
+  private static readonly MOBILE_ZOOM_MAX = 4.0;
+
+  /** Absolute zoom from a pinch gesture (factor 1.0 = unchanged). */
+  applyPinchZoom(factor: number): void {
+    const base = 2.0; // the scene's authored zoom (buildWorld setZoom)
+    this.mobileZoom = Math.min(
+      WorldScene.MOBILE_ZOOM_MAX,
+      Math.max(WorldScene.MOBILE_ZOOM_MIN, base * factor),
+    );
+    this.cameras.main.setZoom(this.mobileZoom);
+  }
+
+  /** Drag-look: pan the view by screen px while still following the player
+   *  (an offset from the follow point, decays back when the player moves). */
+  applyLookPan(dxPx: number, dyPx: number): void {
+    const cam = this.cameras.main;
+    this.mobilePan.x -= dxPx / cam.zoom;
+    this.mobilePan.y -= dyPx / cam.zoom;
+    const MAX = 220; // world px — far enough to peek, close enough to return
+    this.mobilePan.x = Math.max(-MAX, Math.min(MAX, this.mobilePan.x));
+    this.mobilePan.y = Math.max(-MAX, Math.min(MAX, this.mobilePan.y));
+    this.applyMobilePan();
+  }
+
+  /** Push the current pan offset into the camera (called every frame so it
+   *  survives the follow lerp re-centering). */
+  private applyMobilePan(): void {
+    const cam = this.cameras.main;
+    const fx = this.selfMarker?.x ?? cam.midPoint.x;
+    const fy = this.selfMarker?.y ?? cam.midPoint.y;
+    cam.centerOn(fx + this.mobilePan.x, fy + this.mobilePan.y);
+  }
+
+  /** Reset the look pan (e.g. on movement input — the player walking means
+   *  they want the camera back on themselves). */
+  resetLookPan(): void {
+    this.mobilePan.x = 0;
+    this.mobilePan.y = 0;
+  }
+
+
   /** Data-URL portrait of the base paperdoll (idle SOUTH frame) for the
    *  profile popup avatar. Extracts frame 0 onto a tiny offscreen canvas. */
   paperdollPortraitSrc(): string {
@@ -1723,6 +1772,21 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
+    // Mobile look-pan: walking recenters the camera (the offset decays away),
+    // and while an offset is active it must be re-applied EVERY frame — the
+    // follow lerp re-centers on the player and would instantly undo the pan.
+    if (this.mobilePan.x !== 0 || this.mobilePan.y !== 0) {
+      if (this.inputVec.dx !== 0 || this.inputVec.dy !== 0) {
+        const decay = Math.max(0, 1 - this.frameDtSec * 4);
+        this.mobilePan.x *= decay;
+        this.mobilePan.y *= decay;
+        if (Math.abs(this.mobilePan.x) < 1 && Math.abs(this.mobilePan.y) < 1) {
+          this.mobilePan.x = 0;
+          this.mobilePan.y = 0;
+        }
+      }
+      this.applyMobilePan();
+    }
     // Ekonia FadeOccluderLayer parity: smooth per-pixel canopy fade that
     // follows the player every frame (cheap — small window, typed loop).
     this.updateOccluderFade();

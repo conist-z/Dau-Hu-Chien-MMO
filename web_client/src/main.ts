@@ -4,6 +4,7 @@
 import Phaser from "phaser";
 import { WorldScene } from "./game";
 import { KeyboardInput } from "./input";
+import { MobileControls } from "./mobile_controls";
 import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
@@ -799,6 +800,94 @@ const input = new KeyboardInput({
     }
   },
 });
+
+// ---- MOBILE TOUCH CONTROLS (phones/tablets; hidden on desktop via CSS) ----
+// The D-pad reuses KeyboardInput's exact direction-key hook so prediction,
+// seq'd inputs and the server path are IDENTICAL to WASD. Tap = left click
+// (chop/break/attack), long-press = right click (place/eat/station), drag =
+// camera pan, pinch = zoom (see mobile_controls.ts + game.ts camera API).
+const mobile = new MobileControls({
+  setDir: (key, on) => {
+    // Mirror the KeyboardInput handler's key press/release without faking
+    // DOM KeyboardEvents: route straight into the same emit() path by
+    // reusing the input hooks (dx/dy get re-derived on the next flush).
+    const KEY: Record<string, string> = {
+      up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
+    };
+    if (on) (input as unknown as { keys: Set<string> }).keys.add(KEY[key]);
+    else (input as unknown as { keys: Set<string> }).keys.delete(KEY[key]);
+    (input as unknown as { emit: () => void }).emit();
+  },
+  onAttack: () => {
+    net.action("attack");
+    scene.combatSwing();
+  },
+  onToggleInventory: () => hud.toggleInventory(),
+  onTapWorld: (sx, sy) => {
+    // Same pipeline as a desktop primary click (onCanvasAction "primary").
+    scene.setMouseTile({ x: sx, y: sy });
+    const tile = scene.screenToTile(sx, sy);
+    if (!tile) {
+      net.action("chop");
+      scene.swingSelfHand();
+      return;
+    }
+    const target = scene.clampClickTile(tile);
+    if (!target) {
+      net.actionAt("chop", tile.x, tile.y);
+      scene.swingSelfHand();
+      return;
+    }
+    if (scene.zombieNear(target)) {
+      net.action("attack");
+      scene.swingSelfHand();
+      return;
+    }
+    const breaking = scene.isBlockAt(target.x, target.y);
+    net.actionAt(breaking ? "break" : "chop", target.x, target.y);
+    scene.swingSelfHand();
+  },
+  onLongPressWorld: (sx, sy) => {
+    // Same pipeline as a desktop secondary click (place / eat / station).
+    const tile = scene.screenToTile(sx, sy);
+    if (tile && scene.hoveringStation()) {
+      scene.stationInteract();
+      return;
+    }
+    const placeable = new Set((welcome?.blocks_catalog ?? []).map((b) => b.id));
+    const held = hud.heldItem;
+    if (!tile || !held) return;
+    if (EDIBLE_IDS.has(held)) {
+      net.inventoryOp("use", { item_id: held });
+      return;
+    }
+    if (!placeable.has(held)) return;
+    const target = scene.clampClickTile(tile);
+    if (!target) {
+      net.placeAt(tile.x, tile.y, held);
+      return;
+    }
+    net.placeAt(target.x, target.y, held);
+    scene.combatSwing();
+    scene.optimisticPlace(target.x, target.y);
+  },
+  onZoomPinch: (factor) => scene.applyPinchZoom(factor),
+  onDragLook: (dx, dy) => scene.applyLookPan(dx, dy),
+  onRunToggle: (running) => {
+    // Keep the KEYBOARD's Shift flag in sync: the next emit() (any key or
+    // pad change) carries the latched run state from either source.
+    (input as unknown as { running: boolean }).running = running;
+  },
+});
+mobile.mount();
+// Death / tab-return parity: the pad releases its held directions exactly
+// like the keyboard's clearKeys (onSnapshot already calls input.clearKeys();
+// hook the same conditions here).
+const _mobileClearKeys = input.clearKeys.bind(input);
+input.clearKeys = () => {
+  _mobileClearKeys();
+  mobile.clear();
+};
 
 // Bind canvas clicks once Phaser creates it.
 // NOTE: must be Phaser's OWN canvas (game.canvas). The weather-fx canvas is

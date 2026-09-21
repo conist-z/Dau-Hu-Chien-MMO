@@ -1120,3 +1120,87 @@ html, body {
   cursor: default;
   filter: grayscale(0.55) brightness(0.85);
 }
+
+/* ===================== MOBILE TOUCH CONTROLS =====================
+   Injected by mobile_controls.ts (div#mobile-controls). The WHOLE layer is
+   display:none on desktop (fine-pointer / wide screens) — zero impact on
+   the mouse+keyboard flow. On phones/tablets: D-pad bottom-left, action
+   buttons bottom-right, hotbar 1..8 above the pad, and a full-screen LOOK
+   surface under everything for drag-pan + pinch-zoom of the camera. */
+#mobile-controls {
+  display: none;
+}
+/* Coarse pointers (real touch devices) OR a narrow viewport always get
+   the overlay — testing on desktop devtools phone emulation hits both. */
+@media (pointer: coarse), (max-width: 820px) {
+  #mobile-controls {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 3; /* between weather/daynight (1) and the HUD pieces (4..6) —
+                     the HUD hotbar/bars/chat stay ON TOP and clickable; */
+    pointer-events: none; /* children re-enable */
+    font-family: "Segoe UI", system-ui, sans-serif;
+    touch-action: none; /* all gestures handled in JS (no browser scroll/zoom) */
+  }
+  #mobile-controls > * { pointer-events: auto; }
+  .mc-btn {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    background: rgba(10, 12, 18, 0.55);
+    color: #e8eaf0;
+    backdrop-filter: blur(3px);
+    border-radius: 14px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .mc-btn.active {
+    background: rgba(88, 101, 242, 0.45);
+    border-color: #5865f2;
+  }
+
+  /* LOOK surface: covers the whole screen so ANY free spot is draggable; */
+  /* pad + buttons sit above it and capture their own touches first. */
+  #mc-look { position: absolute; inset: 0; touch-action: none; }
+
+  /* D-pad: 3x3 grid, bottom-left. Centre = run toggle. */
+  #mc-pad {
+    position: absolute;
+    left: 10px;
+    bottom: 96px;
+    display: grid;
+    grid-template-columns: repeat(3, 58px);
+    grid-template-rows: repeat(3, 58px);
+    gap: 4px;
+  }
+  #mc-run { border-radius: 50%; font-size: 20px; }
+
+  /* Action buttons: bottom-right column (attack big, inventory small). */
+  #mc-actions {
+    position: absolute;
+    right: 12px;
+    bottom: 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  .mc-act {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    font-size: 26px;
+  }
+  #mc-atk { width: 76px; height: 76px; font-size: 30px; }
+
+  /* Small screens (phones portrait): shrink a notch so the HUD stays visible. */
+  @media (max-width: 480px) {
+    #mc-pad { grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(3, 50px); bottom: 84px; }
+    .mc-act { width: 56px; height: 56px; }
+    #mc-atk { width: 66px; height: 66px; }
+    #mc-actions { bottom: 84px; }
+  }
+}

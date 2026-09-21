@@ -2,7 +2,10 @@
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover + no user scaling: the game fills notched phones,
+         and pinch zoom must drive the CAMERA (mobile_controls.ts), never
+         Safari/Chrome page zoom. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Discord Map — Web Client</title>
     <link rel="stylesheet" href="./src/styles.css" />
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
