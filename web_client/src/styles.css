@@ -281,141 +281,42 @@ html, body {
 #hud-hub #hud-hub label {
   pointer-events: auto;
 }
-/* ---- MOBILE ROLL-UP HUB (#buttons-tray + #settings-anchor) ----
-   A second copy of the Kaetram button bar: 8 service buttons live in a
-   vertical TRAY that slides out of the settings GEAR (#settings-anchor).
-   Tap the gear → tray unrolls upward; tap anywhere outside (or the gear
-   again) → tray rolls back in. Wired in ui.ts (initKaetramMenus) for
-   desktop parity (KaetramMenus open-one-close-others semantics) and in
-   main.ts for the outside-tap-to-close behavior (mobile only).
-   The tray is DISPLAY:NONE everywhere except the touch media query below:
-   the desktop keeps the plain always-visible Kaetram bar. The per-button
-   sprite geometry below mirrors the compiled sheet (2.75em × 3.125em cells
-   of /ui/kaetram/interface/hud_buttons.png, row Y per button id) with the
-   sheet's em relative to our own font-size (16px) — the compiled 1em =
-   Kaetram's page font would render the tray buttons oversized. */
+/* ---- MOBILE SCROLLABLE HUB BAR (user correction: SAME buttons, ONE
+   bar — just rolled into a compact scrollable column for phones) ----
+   The ORIGINAL Kaetram #buttons bar keeps every function (menus bind to
+   these very elements); on mobile it becomes a slim vertical strip with
+   internal scrolling: ~3 buttons peek, the rest scroll underneath. No
+   duplicates, no dead buttons. The tray/anchor experiment is gone. */
 #buttons-tray,
 #settings-anchor { display: none; }
-#hud-hub #buttons-tray {
-  position: absolute;
+body.mobile-ui #hud-hub #buttons.shown {
+  display: flex !important;
+  /* Slim scroll strip: ~3 buttons peek (50+50+4px), the rest scroll. */
+  max-height: 166px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;   /* scrolling it never pans the camera */
+  touch-action: pan-y;            /* vertical scroll only, taps stay taps */
+  flex-direction: column;
   bottom: 0;
   right: 0;
-  display: none; /* restated: the tray has its own display state */
-  flex-direction: column;
-  align-items: center;
-  list-style: none;
-  margin: 0;
-  padding: 6px 4px 6px 6px;
-  gap: 2px;
-  pointer-events: auto;
-  /* Tray styling: dark glass slab so the 8 buttons read as ONE control,
-     not 8 floating ghosts over the world. */
-  background: rgba(10, 12, 18, 0.82);
+  padding: 8px 4px 8px 8px;
+  gap: 4px;
+  /* Readable slab so buttons survive bright terrain. */
+  background: rgba(10, 12, 18, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px 0 0 14px;
   backdrop-filter: blur(6px);
-  /* Roll-up animation: the tray slides DOWN into the anchor (translateY)
-   * and fades; .open flips both. GPU-friendly (transform/opacity only).
-   * The +72px (not +14px!) clears the tray FULLY below the viewport — with
-   * bottom:66px a smaller offset left the tray's top ~52px strip inside
-   * the screen when collapsed ("thu lại mà vẫn dính mấy nút khác"). */
-  transform: translateY(calc(100% + 72px));
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.24s ease,
-    visibility 0s linear 0.28s; /* visibility flips AFTER the slide ends */
+  /* Slim scrollbar (WebKit) + Firefox thin. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
-/* Per-button sprite cells (geometry copied from the compiled sheet). */
-#hud-hub #buttons-tray li > div {
-  width: 44px;             /* 2.75em at our 16px root */
-  height: 50px;            /* 3.125em */
-  background-image: url("/ui/kaetram/interface/hud_buttons.png");
-  background-repeat: no-repeat;
-  background-size: 132px 700px; /* 8.25em × 43.75em at 16px */
+body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar {
+  width: 4px;
 }
-#hud-hub #buttons-tray #inventory-button   { background-position: 0 0; }
-#hud-hub #buttons-tray #chat-button        { background-position: 0 -50px; }
-#hud-hub #buttons-tray #warp-button        { background-position: 0 -150px; }
-#hud-hub #buttons-tray #profile-button     { background-position: 0 -250px; }
-#hud-hub #buttons-tray #quests-button      { background-position: 0 -300px; }
-#hud-hub #buttons-tray #guildss-button     { background-position: 0 -350px; }
-#hud-hub #buttons-tray #friends-button     { background-position: 0 -400px; }
-#hud-hub #buttons-tray #achievements-button{ background-position: 0 -450px; }
-/* Hover + active columns of the sheet (same X offsets as the compiled
-   sheet: resting 0, hover -44px, pressed -88px). */
-#hud-hub #buttons-tray li > div:hover  { background-position-x: -44px; }
-#hud-hub #buttons-tray li > div.active,
-#hud-hub #buttons-tray li > div:active { background-position-x: -88px; }
-
-/* ---- Touch devices: the tray + gear replace the plain bar. ----
- * Mode flag: body.mobile-ui is set by JS (main.ts) — auto from a real
- * touch device, or FORCED from ?mobile=1 / Shift+F9 so a desktop browser
- * can preview the full mobile gameplay. JS sets the flag before the gate
- * becomes interactive, so no bare @media fallback is needed here. */
-body.mobile-ui {
-  #hud-hub #buttons.shown { display: none !important; }
-
-  #hud-hub #settings-anchor {
-    display: block;
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    width: 56px;
-    height: 62px;
-    margin: 0 6px 10px 0;
-    pointer-events: auto;
-    cursor: pointer;
-    /* Soft dark backing so the gear reads over any terrain. */
-    background-color: rgba(10, 12, 18, 0.62);
-    border-radius: 14px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-    transition: transform 0.2s ease;
-  }
-  /* The gear sprite lives on an ::after sized to EXACTLY ONE sprite cell
-   * (44×50 of the 132×700 sheet — 3 cols × 14 rows). The first version
-   * painted the sheet on the 56×56 anchor itself: the cell (44×50) was
-   * smaller than the element, so a sliver of the NEIGHBOUR column/row
-   * buttons stuck out of the gear ("dính thêm mấy cái khác"). ::after with
-   * a tight box shows exactly one cell, rest/hover/pressed via X offsets. */
-  #hud-hub #settings-anchor::after {
-    content: "";
-    position: absolute;
-    left: 6px;
-    top: 6px; /* centers the 44×50 cell in the 56×62 anchor */
-    width: 44px;
-    height: 50px;
-    background-image: url("/ui/kaetram/interface/hud_buttons.png");
-    background-repeat: no-repeat;
-    background-size: 132px 700px;
-    background-position: 0 -200px; /* settings row, rest column */
-  }
-  #hud-hub #settings-anchor:hover::after { background-position: -44px -200px; }
-  #hud-hub #settings-anchor.open::after { background-position: -88px -200px; }
-  #hud-hub #settings-anchor.open { transform: scale(1.06); }
-  /* The tray grows UP out of the anchor: bottom = anchor height + gap so
-     it visually unrolls from the gear; .open slides it in from below. */
-  #hud-hub #buttons-tray {
-    display: flex;
-    bottom: 72px; /* anchor 62px + its 10px bottom margin */
-    right: 6px;
-    border-radius: 14px;
-  }
-  #hud-hub #buttons-tray.open {
-    transform: translateY(0);
-    opacity: 1;
-    visibility: visible;
-    transition:
-      transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 0.18s ease,
-      visibility 0s; /* visible IMMEDIATELY when opening */
-  }
-  /* Gear pressed feedback while the tray is open (sprite swap on ::after
-   * is handled above; this scales the whole anchor). */
-  #hud-hub #settings-anchor.open {
-    transform: scale(1.06);
-  }
+body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 2px;
 }
 
 /* The notification dialog is opacity-animated by the game (always

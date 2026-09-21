@@ -1061,17 +1061,6 @@ if (MOBILE_UI) {
     renderBadge();
   }).observe(log, { childList: true });
   renderBadge();
-
-  // HUB TRAY outside-tap: same rule as the chat chip — a tap anywhere
-  // outside the tray and the gear rolls the tray back in.
-  window.addEventListener("pointerdown", (e) => {
-    const tray = document.getElementById("buttons-tray");
-    if (!tray || !tray.classList.contains("open")) return;
-    const t = e.target as Node;
-    if (tray.contains(t)) return;
-    if (document.getElementById("settings-anchor")?.contains(t)) return;
-    hud.closeHubTray();
-  });
 }
 // Reveal the touch layer ONLY once a real game session starts (welcome):
 // the login gate + lobby sit in #overlay BELOW this layer, and an always-on
