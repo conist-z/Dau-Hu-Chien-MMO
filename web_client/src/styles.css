@@ -296,15 +296,7 @@ body.mobile-ui #hud-hub #buttons.shown {
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;   /* scrolling it never pans the camera */
-  /* BOTH axes: on portrait phones the whole frame is rotated 90° (FORCE
-   * LANDSCAPE), so the bar's visual scroll axis maps to a DIFFERENT
-   * physical axis — pan-y alone (the old value) made the browser classify
-   * every swipe along the bar as a forbidden gesture and the scroll died
-   * ("thanh cuộn ko hoạt động, chỉ còn 3 nút"). pan-x pan-y lets the
-   * browser pick whichever physical axis matches the rotated bar; the
-   * stick zone / look surface keep their own touch-action so camera pan
-   * is unaffected. */
-  touch-action: pan-x pan-y;      /* swipes scroll, taps stay taps */
+  /* (touch-action on this strip is set in the block below: none — JS scroll) */
   flex-direction: column;
   bottom: 0;
   right: 0;
@@ -318,7 +310,11 @@ body.mobile-ui #hud-hub #buttons.shown {
   /* Slim scrollbar (WebKit) + Firefox thin. */
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
-}
+  /* JS-OWNED SCROLL: native touch scroll is unreliable inside the 90°-
+   * rotated frame (browser gesture classification vs CSS transforms),
+   * so ui.ts scrolls the strip manually from pointer deltas. none keeps
+   * the browser out of the gesture entirely — taps still click. */
+  touch-action: none;}
 body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar {
   width: 4px;
 }
@@ -1302,16 +1298,16 @@ body.mobile-ui {
   }
   #mc-knob:not(.mc-idle) { opacity: 1; }
 
-  /* ---- Action buttons (right edge, ABOVE the vertical hub bar): the
-   * hub's 9 Kaetram buttons stack up from the bottom-right corner, so the
-   * ⚔️/🎒 pair must sit above the hub's tallest reach (~9 × 50px = 450px
-   * incl. padding). They still float over the WORLD (not over the hub) —
-   * the previous bottom:96px planted them right ON the hub buttons and
-   * every press hit the hub instead (part of the "lệch tùm lum"). */
+  /* ---- Action buttons (right edge, ABOVE the hub strip) ----
+   * The mobile hub is a 166px-tall SCROLL strip (never the old 9-button
+   * 450px stack), so the ⚔️/🎒 pair only needs to clear 166px + margin.
+   * The stale bottom:470px sat ABOVE the logical landscape viewport
+   * (~390px tall on phones) — the buttons rendered off-screen entirely
+   * ("mất tiêu cái atk với mở inv"). */
   #mc-actions {
     position: absolute;
     right: calc(14px + env(safe-area-inset-right, 0px));
-    bottom: calc(470px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(190px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
     gap: 12px;

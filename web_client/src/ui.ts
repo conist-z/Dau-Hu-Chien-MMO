@@ -2648,6 +2648,37 @@ export class Hud {
     // without a menu (inventory → bag panel, chat → focus input, guilds/
     // friends → not built server-side yet) get the original toggle feel.
     const bar = document.getElementById("buttons")!;
+    // MOBILE JS SCROLL for the hub strip: native touch scroll dies inside
+    // the 90°-rotated landscape frame (browser gesture classification
+    // doesn't follow CSS transforms), so a pointer drag scrolls the strip
+    // MANUALLY. A tap (moved ≤ 8px, ≤ 350ms) is left alone — the browser
+    // still fires the click on the button. Unconditional: harmless on
+    // desktop (drag-to-scroll is even handy there), zero gating.
+    let sId: number | null = null;
+    let sStartY = 0, sLastY = 0, sStartT = 0, sMoved = false;
+    bar.addEventListener("pointerdown", (e) => {
+      if (bar.scrollHeight <= bar.clientHeight + 1) return; // nothing to scroll
+      sId = e.pointerId; sStartY = sLastY = e.clientY;
+      sStartT = performance.now(); sMoved = false;
+    });
+    bar.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== sId) return;
+      const dy = e.clientY - sLastY;
+      if (dy !== 0) bar.scrollTop -= dy; // drag up = scroll down (natural)
+      sLastY = e.clientY;
+      if (Math.abs(e.clientY - sStartY) > 8) sMoved = true;
+    });
+    const endBarDrag = (e: PointerEvent): void => {
+      if (e.pointerId !== sId) return;
+      sId = null;
+      // A real drag right after a scroll: swallow the trailing click so
+      // lifting the finger doesn't ALSO press whatever button it lands on.
+      if (sMoved && performance.now() - sStartT < 600) {
+        bar.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true });
+      }
+    };
+    bar.addEventListener("pointerup", endBarDrag);
+    bar.addEventListener("pointercancel", endBarDrag);
     bar.addEventListener("click", (e) => {
       const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
       if (!btn) return;
