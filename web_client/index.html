@@ -14,6 +14,13 @@
     <link rel="stylesheet" href="./src/kaetram_ui.css" />
   </head>
   <body>
+    <!-- Landscape lock (mobile): covers the screen when a touch device is
+         held in portrait. Pure CSS media query — no JS needed to show/hide. -->
+    <div id="rotate-veil" aria-hidden="true">
+      <div class="rv-icon">📱</div>
+      <h2>Xoay ngang màn hình</h2>
+      <p>Trò chơi được thiết kế cho màn hình ngang. Vui lòng xoay điện thoại của bạn.</p>
+    </div>
     <div id="game-root">
       <div id="overlay">
         <!-- Top-right: clock + weather + ping, same row as the HP bars -->

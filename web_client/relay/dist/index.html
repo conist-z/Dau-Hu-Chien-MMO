@@ -10,10 +10,17 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-B8BXVUAJ.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-kqrSTXmi.css">
+    <script type="module" crossorigin src="./assets/index-ClzoSqJ6.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Dh_T3Hvd.css">
   </head>
   <body>
+    <!-- Landscape lock (mobile): covers the screen when a touch device is
+         held in portrait. Pure CSS media query — no JS needed to show/hide. -->
+    <div id="rotate-veil" aria-hidden="true">
+      <div class="rv-icon">📱</div>
+      <h2>Xoay ngang màn hình</h2>
+      <p>Trò chơi được thiết kế cho màn hình ngang. Vui lòng xoay điện thoại của bạn.</p>
+    </div>
     <div id="game-root">
       <div id="overlay">
         <!-- Top-right: clock + weather + ping, same row as the HP bars -->

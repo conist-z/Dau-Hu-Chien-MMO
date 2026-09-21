@@ -43,8 +43,13 @@ const RUN_RADIUS = WALK_RADIUS * 2; // beyond this = RUN (Shift equivalent)
 
 /** ms a finger must stay (and stay still) to count as a long press. */
 const LONG_PRESS_MS = 450;
-/** px of movement that cancels a pending tap/long-press (it's a drag). */
-const TAP_SLOP_PX = 12;
+/** px of movement that cancels a pending tap/long-press (it's a drag).
+ *  Generous for touch: fingers wobble ±6px on a "still" press, and a slop
+ *  too tight made long-press-place almost impossible on phones (the reported
+ *  "đặt block chưa ổn"). Desktop mouse clicks never drift — the old value. */
+const TAP_SLOP_PX = 14;
+/** px of touch wobble still counted as a stationary long press. */
+const LONG_PRESS_SLOP_PX = 22;
 
 export class MobileControls {
   private hooks: MobileHooks;
@@ -183,7 +188,11 @@ export class MobileControls {
       e.preventDefault();
       this.longPressFired = false;
       this.lookTouches.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
-      look.setPointerCapture(e.pointerId);
+      try {
+        look.setPointerCapture(e.pointerId);
+      } catch {
+        /* synthetic pointer (tests/automation) — moves still flow */
+      }
       if (this.lookTouches.size === 1) {
         // Single finger: arm a long press (secondary action) unless it
         // becomes a drag (moved too far) or a second finger lands.
@@ -192,7 +201,9 @@ export class MobileControls {
           const t = this.lookTouches.get(e.pointerId);
           if (!t || this.lookTouches.size !== 1) return;
           const moved = Math.hypot(t.x - t.startX, t.y - t.startY);
-          if (moved > TAP_SLOP_PX) return;
+          // Separate (wider) slop for the long press: a wobbling finger must
+          // still count as "holding still", only a real drag cancels it.
+          if (moved > LONG_PRESS_SLOP_PX) return;
           this.longPressFired = true;
           this.hooks.onLongPressWorld(t.x / window.innerWidth, t.y / window.innerHeight);
         }, LONG_PRESS_MS);
@@ -240,6 +251,13 @@ export class MobileControls {
     };
     look.addEventListener("pointerup", lookLift);
     look.addEventListener("pointercancel", lookLift);
+    // ANDROID long-press poison: holding on the page fires the browser's
+    // touch text-selection / context menu, which (a) opens the right-click
+    // menu over the game and (b) CANCELS the pointer — the place-block long
+    // press died before its 450ms timer. Kill both: contextmenu on the look
+    // surface + CSS -webkit-touch-callout/selection (in styles.css).
+    look.addEventListener("contextmenu", (e) => e.preventDefault());
+    look.addEventListener("touchstart", () => { /* CSS handles the rest */ }, { passive: true });
   }
 
   /** Return the knob to its home spot (bottom-left) as an idle ghost. */

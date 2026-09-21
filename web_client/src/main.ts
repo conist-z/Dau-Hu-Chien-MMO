@@ -274,6 +274,14 @@ const net = new Net({
     // In-game now: reveal the touch controls (hidden during gate/lobby).
     (window as unknown as { __setMobileControls?: (on: boolean) => void })
       .__setMobileControls?.(true);
+    // Landscape lock: on mobile the game is designed for LANDSCAPE — request
+    // the OS orientation lock (works in most in-app browsers / after a user
+    // gesture; gracefully a no-op where unsupported — the CSS #rotate-veil
+    // still tells the user to rotate when the device stays portrait).
+    const so = screen.orientation as (ScreenOrientation & {
+      lock?: (o: string) => Promise<void>;
+    }) | undefined;
+    so?.lock?.("landscape").catch(() => { /* unsupported — veil handles it */ });
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
     beginLoadTracking(frame);
     hud.hideGate();

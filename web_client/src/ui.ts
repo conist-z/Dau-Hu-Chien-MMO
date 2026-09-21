@@ -349,7 +349,14 @@ export class Hud {
       wrap.appendChild(hit);
     }
     // Global drag ghost tracking (mouse-move + drop outside any slot).
+    // POINTER events (not just mouse): on touch, the finger's pointermove
+    // drives the ghost; pointerup with no drop target = throw (same rule
+    // as a mouse drag released outside every panel).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
+    window.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "mouse") return; // mousemove already covers it
+      this.updateDragGhost(e.clientX, e.clientY);
+    });
     window.addEventListener("mouseup", (e) => {
       // PURSE drag: release on a bag slot = withdraw the unit INTO that
       // slot (same "drop to deposit" as any stack); release outside every
@@ -397,6 +404,32 @@ export class Hud {
         !this.pointInPanels(e.clientX, e.clientY) &&
         this.onThrow
       ) {
+        const stack = this.drag.stack;
+        this.onThrow(stack.id, stack.qty);
+        this.endDrag();
+        return;
+      }
+      this.cancelDrag();
+    });
+    // TOUCH mirror of the mouseup drop handler: identical semantics (drop
+    // on slot / outside = throw / cancel) driven by pointerup so phones can
+    // drag stacks between bag ↔ craft grid and throw items into the world.
+    window.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "mouse") return; // mouseup above covers it
+      if (this.purseDrag) {
+        const t = this.nearestDropTarget(e.clientX, e.clientY);
+        if (t && t.from === "bag") { this.endPurseDrag(true, t.index); return; }
+        this.endPurseDrag(!this.pointInPanels(e.clientX, e.clientY));
+        return;
+      }
+      if (!this.drag) return;
+      const t = this.nearestDropTarget(e.clientX, e.clientY);
+      if (t) {
+        if (t.from === "result") { this.cancelDrag(); return; }
+        this.dropOn(t.from as "bag" | "mat", t.index);
+        return;
+      }
+      if (!this.pointInPanels(e.clientX, e.clientY) && this.onThrow) {
         const stack = this.drag.stack;
         this.onThrow(stack.id, stack.qty);
         this.endDrag();
@@ -736,7 +769,7 @@ export class Hud {
 
   // ===== DRAG & DROP core =====
 
-  private startDrag(src: DragSrc, e: MouseEvent): void {
+  private startDrag(src: DragSrc, e: MouseEvent | { clientX: number; clientY: number }): void {
     if (this.drag) return;
     this.drag = src;
     const ghost = document.createElement("div");
@@ -1117,8 +1150,25 @@ export class Hud {
           if (e.button === 2) { this.splitBag(idx); return; }
           this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
         });
-        slot.addEventListener("mouseup", () =>
-          this.dropOn("bag", Number(slot!.dataset.slot)));
+        // TOUCH parity (PC ↔ mobile rule): touch devices fire no mouse events
+        // for taps on some browsers, and the panel must be fully usable on
+        // phones. pointerdown lifts the stack; pointerup on a slot drops it.
+        // A tiny move-slop keeps a DRAG alive (the ghost follows the finger).
+        slot.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return; // mouse path above
+          const el = e.currentTarget as HTMLElement;
+          const idx = Number(el.dataset.slot);
+          const st = this.inventory.bag[idx];
+          if (!st) return;
+          e.preventDefault();
+          try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+          this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
+        });
+        slot.addEventListener("pointerup", (e) => {
+          if (e.pointerType === "mouse") return;
+          this.dropOn("bag", Number((e.currentTarget as HTMLElement).dataset.slot));
+        });
+        slot.addEventListener("pointercancel", () => this.cancelDrag());
         slot.addEventListener("contextmenu", (e) => e.preventDefault());
         wrap.appendChild(slot);
       }
@@ -1288,6 +1338,17 @@ export class Hud {
           this.renderInventory(); // bag cells that lost stacks repaint now
           this.renderCraftPanel();
         });
+        // TOUCH parity: mousedown never fires for a finger tap — mirror the
+        // quick-craft body on pointerdown (non-mouse pointers only).
+        slot.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return;
+          e.stopPropagation();
+          e.preventDefault();
+          this.selectedQuick = rIdx;
+          this.fillMatGridFromBag(rec);
+          this.renderInventory();
+          this.renderCraftPanel();
+        });
       }
       this.invCraftWrap.appendChild(slot);
     }
@@ -1317,7 +1378,18 @@ export class Hud {
           if (e.button === 2) return;
           this.startDrag({ from: "mat", index: i, stack: { ...st } }, e);
         });
+        // TOUCH parity (same pattern as the bag grid).
+        slot.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return;
+          e.preventDefault();
+          try { slot.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+          this.startDrag({ from: "mat", index: i, stack: { ...st } }, e);
+        });
       }
+      slot.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "mouse") return;
+        this.dropOn("mat", i);
+      });
       slot.addEventListener("mouseup", () => this.dropOn("mat", i));
       slot.addEventListener("contextmenu", (e) => e.preventDefault());
       this.invCraftWrap.appendChild(slot);
@@ -1340,6 +1412,15 @@ export class Hud {
         if (e.button !== 0 || !this.parkedResult) return;
         e.stopPropagation();
         e.preventDefault();
+        this.startDrag(
+          { from: "result", index: 0, stack: { ...this.parkedResult } }, e);
+      });
+      // TOUCH parity: tap collects (click fires); drag lifts the stack.
+      outSlot.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse" || !this.parkedResult) return;
+        e.stopPropagation();
+        e.preventDefault();
+        try { outSlot.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
         this.startDrag(
           { from: "result", index: 0, stack: { ...this.parkedResult } }, e);
       });
@@ -1998,7 +2079,7 @@ export class Hud {
   }
 
   /** Purse drag: ghost icon follows the mouse; release outside = withdraw 1. */
-  private startPurseDrag(itemId: string, e: MouseEvent): void {
+  private startPurseDrag(itemId: string, e: MouseEvent | { clientX: number; clientY: number }): void {
     if (this.purseDrag) return;
     this.purseDrag = itemId;
     const ghost = document.createElement("div");
@@ -2346,6 +2427,9 @@ export class Hud {
   }
 
   private lastHotbarSig = "";
+  /** One-shot flag: a hotbar touch-drag release swallows the synthetic
+   *  click that follows, so the drag doesn't ALSO flip the active slot. */
+  private suppressNextClick = false;
   private renderHotbar(): void {
     // Repaint guard: the hotbar mirrors BAG slots 0..N positionally — rebuild
     // the DOM only when the mirrored stacks / active slot actually changed.
@@ -2372,9 +2456,6 @@ export class Hud {
       div.className = "slot" + (idx === this.activeSlot ? " active" : "");
       div.innerHTML = `<span class="key">${idx + 1}</span><span>${iconHtml(itemId, this.itemEmojis)}</span>` +
         `<span class="qty">${qty > 0 ? qty : ""}</span>`;
-      div.addEventListener("click", () => {
-        this.selectSlot(idx);
-      });
       // Hotbar drag parity with the bag: LEFT-drag lifts the stack (ghost
       // follows the mouse) — releasing over another hotbar slot MOVES it
       // there (hotbar slot N mirrors bag slot N, so this is moveBag),
@@ -2386,6 +2467,45 @@ export class Hud {
         if (!st) return;
         e.preventDefault();
         this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
+      });
+      // TOUCH parity: a plain tap = select (the click above fires for touch
+      // too), but press-and-DRAG must lift the stack like a mouse drag —
+      // without pointer handlers the finger never starts the ghost.
+      div.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;
+        const st = this.inventory.bag[idx];
+        if (!st) return;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let lifted = false;
+        try { div.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+        const onMove = (ev: PointerEvent): void => {
+          if (lifted) { this.updateDragGhost(ev.clientX, ev.clientY); return; }
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
+            lifted = true;
+            this.startDrag({ from: "bag", index: idx, stack: { ...st } }, ev);
+          }
+        };
+        const onUp = (ev: PointerEvent): void => {
+          div.removeEventListener("pointermove", onMove);
+          div.removeEventListener("pointerup", onUp);
+          div.removeEventListener("pointercancel", onUp);
+          if (lifted) {
+            // Swallow the synthetic click so a drag-release doesn't also
+            // flip the active slot; the global pointerup handler already
+            // dropped (or threw) the stack.
+            ev.stopPropagation();
+            this.suppressNextClick = true;
+            window.setTimeout(() => { this.suppressNextClick = false; }, 0);
+          } // else: plain tap — the click listener selects the slot
+        };
+        div.addEventListener("pointermove", onMove);
+        div.addEventListener("pointerup", onUp);
+        div.addEventListener("pointercancel", onUp);
+      });
+      div.addEventListener("click", (e) => {
+        if (this.suppressNextClick) { e.stopPropagation(); return; }
+        this.selectSlot(idx);
       });
       div.addEventListener("mouseup", (e) => {
         if (this.drag) {

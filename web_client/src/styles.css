@@ -384,7 +384,11 @@ html, body {
   position: absolute;
   left: 12px; top: 64px;
   display: flex; flex-direction: column; gap: 6px;
-  max-height: calc(100vh - 140px);
+  /* Landscape phones are SHORT: cap the panel to the real viewport so the
+   * craft grid / bag never runs off the bottom edge (the 140px bottom
+   * reserve assumed a tall desktop window). */
+  max-height: min(calc(100vh - 140px), calc(100dvh - 84px));
+  overflow-y: auto;
   /* Panel show/hide animation (pop-in / shrink-out). The .closing class
      plays the exit keyframes before the JS flips .hidden after 140ms. */
   transform-origin: 12px 8px;
@@ -1157,7 +1161,17 @@ html, body {
 
   /* LOOK surface: covers the whole screen so ANY free spot is draggable; */
   /* stick zone + buttons sit above it and capture their own touches. */
-  #mc-look { position: absolute; inset: 0; touch-action: none; }
+  #mc-look {
+    position: absolute;
+    inset: 0;
+    touch-action: none;
+    /* ANDROID long-press poison (fixed with the JS contextmenu blocker):
+     * without these the browser's text-selection/callout UI fires on a
+     * held finger and CANCELS the pointer — place-block long press died. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 
   /* ---- Floating knob joystick (user spec: NO ring, NO base — just one
    * round knob that appears under the finger and can be dragged) ----
@@ -1253,5 +1267,39 @@ html, body {
       justify-content: center;
       max-width: 96vw;
     }
+  }
+}
+
+/* ---- LANDSCAPE-LOCKED game (user spec: game mặc định màn ngang) ----
+ * A full-screen rotate-device veil shows whenever a TOUCH device holds the
+ * phone in portrait — the map view is designed for landscape aspect.
+ * Desktop / wide screens are never affected; #rotate-veil is display:none
+ * by default and only becomes visible under this media query. */
+#rotate-veil { display: none; }
+@media (pointer: coarse) and (orientation: portrait) {
+  #rotate-veil {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 100; /* above everything, even #mobile-controls */
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: #14181f;
+    color: #e8eaf0;
+    text-align: center;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    padding: 24px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #rotate-veil .rv-icon { font-size: 56px; animation: rv-tilt 1.6s ease-in-out infinite; }
+  #rotate-veil h2 { margin: 0; font-size: 20px; }
+  #rotate-veil p { margin: 0; opacity: 0.7; font-size: 14px; max-width: 300px; }
+  @keyframes rv-tilt {
+    0%, 20% { transform: rotate(0deg); }
+    55%, 80% { transform: rotate(90deg); }
+    100% { transform: rotate(90deg); }
   }
 }
