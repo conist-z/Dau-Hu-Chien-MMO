@@ -117,6 +117,7 @@ export class Net {
     if (!this.everJoined) return;
     const delay = Math.min(8000, 1000 * 2 ** this.reconnectAttempt);
     this.reconnectAttempt = Math.min(4, this.reconnectAttempt + 1);
+    console.warn("[NET] scheduleReconnect in", delay, "ms (attempt", this.reconnectAttempt + ")");
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       void this.reconnect();
@@ -129,6 +130,12 @@ export class Net {
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      // A connect is already in flight (double watchdog tick, alt-tab +
+      // interval racing). Aborting the socket here left joined=false with a
+      // half-open socket and no join replay — the stuck-session bug.
+      return;
     }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // onclose fires synchronously-ish and calls scheduleReconnect —

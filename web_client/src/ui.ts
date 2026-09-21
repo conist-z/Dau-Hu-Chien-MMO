@@ -1741,6 +1741,14 @@ export class Hud {
     this.updateLoadingUI(this.loadingDone + " / " + this.loadingTotal);
   }
 
+  /** True while the blocking-asset overlay is visible. The reconnect
+   *  watchdogs in main.ts defer to this: the heavy FIRST bake on PC blocks
+   *  the main thread for seconds, snapshots stall, and a naive age check
+   *  would kill the in-flight join (the "3/0 triple load" regression). */
+  get isLoading(): boolean {
+    return this.loadingTotal > 0;
+  }
+
   hideLoading(): void {
     this.loadingTotal = 0;
     this.loadingDone = 0;

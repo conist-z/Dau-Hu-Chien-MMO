@@ -958,6 +958,14 @@ document.addEventListener("visibilitychange", () => {
     // normal cadence is 50ms), force a reconnect immediately instead of
     // waiting for the backoff to discover it.
     if (net.isJoined && everWelcomed && lastSnapshotAgeMs() > 4000) {
+      if (hud.isLoading) {
+        // PC regression guard (3/0): the first big-map bake blocks the main
+        // thread for seconds AFTER welcome, so the age can legitimately
+        // exceed 4s while the loading overlay is still up. Reconnecting
+        // there re-fires welcome (and ANOTHER full bake). Defer instead.
+        return;
+      }
+      console.warn("[WATCHDOG] tab-return forceReconnect: age=", lastSnapshotAgeMs().toFixed(0));
       net.forceReconnect();
     }
   }
@@ -992,6 +1000,14 @@ window.setInterval(() => {
     // re-sent welcome (the PC triple-load). Only arm once a world has
     // actually streamed snapshots.
     if (!everWelcomed) return;
+    if (hud.isLoading) {
+      // PC regression guard (3/0): a big-map bake can block the main thread
+      // for seconds right after welcome, so no snapshot lands while the
+      // overlay is still up. That is NOT a dead socket — never reconnect
+      // while the loading overlay counts its blocking assets.
+      return;
+    }
+    console.warn("[WATCHDOG] forceReconnect: age=", age.toFixed(0), "joined=", net.isJoined);
     hud.setPing(-1); // "⚠ mất" in the HUD
     net.forceReconnect();
   }
