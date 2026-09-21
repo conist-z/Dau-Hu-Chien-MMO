@@ -333,6 +333,14 @@ body.mobile-ui #hub-roll-btn::after {
   image-rendering: pixelated;
 }
 body.mobile-ui #hub-roll-btn.open::after { background-position: -44px -200px; }
+/* Reel OPEN → the gear hides (it sits INSIDE the reel's rect and just
+ * overlapped the bottom button — "đè lên thanh cuộn làm cc gì"). Tap
+ * outside / pick a button closes; no separate close control needed. */
+body.mobile-ui.hub-open #hub-roll-btn {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
 body.mobile-ui #hud-hub #buttons.shown {
   display: flex !important;
   /* Taller peek (5 buttons) — the 3-button strip read as a stub ("quá
@@ -509,20 +517,21 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
   position: absolute;
   left: 12px; top: 64px;
   display: flex; flex-direction: column; gap: 6px;
-  /* Landscape phones are SHORT: cap the panel to the real viewport so the
-   * craft grid / bag never runs off the bottom edge (the 140px bottom
-   * reserve assumed a tall desktop window). */
-  max-height: min(calc(100vh - 140px), calc(100dvh - 84px));
-  overflow-y: auto;
-  /* NO coarse browser scrollbar + NO fade: the panel shows its content
-   * in FULL (user rule — no "mờ mờ bên dưới"). Overflow is simply cut
-   * at the frame edge like a real window; touch/drag scrolls natively. */
-  scrollbar-width: none;
-  /* Panel show/hide animation (pop-in / shrink-out). The .closing class
-     plays the exit keyframes before the JS flips .hidden after 140ms. */
+  /* THE "lỗi hiển thị to chà bá" FIX: the panel is a FIXED 294×337px
+   * pixel-art bitmap (98×101 kit px × 3). On short landscape phones
+   * (~360px tall) it overflowed the bottom by ~40px — purse icons cut
+   * off, slots half-hidden, unusable. `scale` (the standalone property,
+   * NOT transform — pop/hide animations keep their transform) shrinks
+   * the WHOLE panel incl. every absolute slot, clicks map 1:1. */
   transform-origin: 12px 8px;
+  scale: var(--panel-scale, 1);
 }
-#inv-panel::-webkit-scrollbar { display: none; }
+@media (max-height: 420px) {
+  #inv-panel { --panel-scale: 0.82; }
+}
+@media (max-height: 340px) {
+  #inv-panel { --panel-scale: 0.72; }
+}
 #inv-panel.anim-show { animation: panel-pop-in 0.16s ease-out; }
 #inv-panel.anim-hide { animation: panel-pop-out 0.14s ease-in forwards; }
 @keyframes panel-pop-in {
@@ -1324,17 +1333,17 @@ body.mobile-ui {
    * slides via transform (GPU-composited). */
   #mc-stick-zone {
     position: absolute;
-    /* Anchored AROUND THE KNOB'S HOME (home = 96px up from the bottom
-     * edge, ~22vh) so touching near the resting knob grabs it (the knob
-     * itself is pointer-events:none — the zone owns the pointer). The
-     * height must cover the home spot plus drag headroom; the old 42%
-     * of a SHORT landscape viewport fell short of the (mis-anchored)
-     * home and grabs missed. */
+    /* AROUND THE KNOB'S HOME, and SMALL: the old 40% × 48% zone swallowed
+     * half the screen — taps on the left-center world (chopping blocks
+     * left of centre) spawned a stick instead of acting ("không thể đập
+     * block gì ở nữa bên phải"). 240×190px around the home spot covers
+     * thumb-reach without eating gameplay taps; everything outside is the
+     * look surface (tap = act / drag = pan). */
     left: 0;
     bottom: 0;
-    width: 40%;
-    max-width: 340px;
-    height: 48%;
+    width: 240px;
+    max-width: 46vw;
+    height: 190px;
     touch-action: none;
   }
   #mc-knob {
