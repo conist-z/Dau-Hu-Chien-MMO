@@ -1149,63 +1149,102 @@ html, body {
     touch-action: none; /* all gestures handled in JS (no browser scroll/zoom) */
   }
   #mobile-controls > * { pointer-events: auto; }
-  .mc-btn {
-    -webkit-tap-highlight-color: transparent;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-    border: 2px solid rgba(255, 255, 255, 0.22);
-    background: rgba(10, 12, 18, 0.55);
-    color: #e8eaf0;
-    backdrop-filter: blur(3px);
-    border-radius: 14px;
-    font-weight: 700;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-  }
-  .mc-btn.active {
-    background: rgba(88, 101, 242, 0.45);
-    border-color: #5865f2;
-  }
 
   /* LOOK surface: covers the whole screen so ANY free spot is draggable; */
-  /* pad + buttons sit above it and capture their own touches first. */
+  /* stick zone + buttons sit above it and capture their own touches. */
   #mc-look { position: absolute; inset: 0; touch-action: none; }
 
-  /* D-pad: 3x3 grid, bottom-left. Centre = run toggle. */
-  #mc-pad {
+  /* ---- Dynamic cross D-pad (Roblox-style follow-finger, Kenney art) ----
+   * #mc-stick-zone = the bottom-left activation area: touching anywhere in
+   * it spawns the pad under the finger. The pad is position:fixed and the
+   * ZONE owns the pointer (setPointerCapture) — the pad is visuals only.
+   * Layers: body image fills the box; 4 arm images are 50%-cells anchored
+   * to their side (the exact layout of the Python composite). */
+  #mc-stick-zone {
     position: absolute;
-    left: 10px;
-    bottom: 96px;
-    display: grid;
-    grid-template-columns: repeat(3, 58px);
-    grid-template-rows: repeat(3, 58px);
-    gap: 4px;
+    left: 0;
+    bottom: 0;
+    width: 45%;
+    max-width: 340px;
+    height: 46%;
+    touch-action: none;
   }
-  #mc-run { border-radius: 50%; font-size: 20px; }
+  #mc-stick {
+    position: fixed;
+    width: 150px;   /* = PAD_SIZE (mobile_controls.ts) */
+    height: 150px;
+    pointer-events: none;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+    z-index: 1;
+  }
+  #mc-stick.hidden { display: none; }
+  /* Class-based shared rule (NOT #mc-stick img — that (1,0,1) specificity
+   * beat the per-arm id rules and pinned every arm to the top-left). */
+  #mc-stick > .mc-pad-base {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    image-rendering: pixelated;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #mc-stick > img.mc-arm {
+    position: absolute;
+    width: 50%; height: 50%;
+    image-rendering: pixelated;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* id+element beats the shared rules above — all four sides explicit. */
+  #mc-stick > img#mc-el-n { top: 0; bottom: auto; left: 25%; right: auto; }
+  #mc-stick > img#mc-el-s { top: auto; bottom: 0; left: 25%; right: auto; }
+  #mc-stick > img#mc-el-w { top: 25%; bottom: auto; left: 0; right: auto; }
+  #mc-stick > img#mc-el-e { top: 25%; bottom: auto; left: auto; right: 0; }
 
-  /* Action buttons: bottom-right column (attack big, inventory small). */
+  /* ---- Action buttons (bottom-right): sprite bg + icon, pressed state */
   #mc-actions {
     position: absolute;
     right: 12px;
     bottom: 96px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     align-items: center;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
   }
   .mc-act {
-    width: 64px; height: 64px;
-    border-radius: 50%;
-    font-size: 26px;
+    position: relative;
+    border: none;
+    background: none;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: pointer;
   }
-  #mc-atk { width: 76px; height: 76px; font-size: 30px; }
+  .mc-act img {
+    image-rendering: pixelated;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #mc-inv .mc-act-bg { width: 64px; height: 70px; }
+  #mc-atk .mc-act-bg { width: 76px; height: 76px; }
+  .mc-act-icon {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    pointer-events: none;
+  }
+  #mc-inv .mc-act-icon { width: 26px; height: 26px; }
+  #mc-atk .mc-act-icon { width: 34px; height: 34px; }
 
   /* Small screens (phones portrait): shrink a notch so the HUD stays visible. */
   @media (max-width: 480px) {
-    #mc-pad { grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(3, 50px); bottom: 84px; }
-    .mc-act { width: 56px; height: 56px; }
-    #mc-atk { width: 66px; height: 66px; }
     #mc-actions { bottom: 84px; }
+    #mc-inv .mc-act-bg { width: 54px; height: 59px; }
+    #mc-atk .mc-act-bg { width: 64px; height: 64px; }
   }
 }

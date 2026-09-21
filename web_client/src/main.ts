@@ -810,21 +810,18 @@ const input = new KeyboardInput({
 });
 
 // ---- MOBILE TOUCH CONTROLS (phones/tablets; hidden on desktop via CSS) ----
-// The D-pad reuses KeyboardInput's exact direction-key hook so prediction,
-// seq'd inputs and the server path are IDENTICAL to WASD. Tap = left click
-// (chop/break/attack), long-press = right click (place/eat/station), drag =
-// camera pan, pinch = zoom (see mobile_controls.ts + game.ts camera API).
+// Roblox-style dynamic joystick: feeds the SAME pipeline as WASD (vector
+// goes through the onVector hook, so prediction/seq'd inputs/server path are
+// identical). Tap = left click (chop/break/attack), long-press = right click
+// (place/eat/station), drag = camera pan, pinch = zoom (mobile_controls.ts).
 const mobile = new MobileControls({
-  setDir: (key, on) => {
-    // Mirror the KeyboardInput handler's key press/release without faking
-    // DOM KeyboardEvents: route straight into the same emit() path by
-    // reusing the input hooks (dx/dy get re-derived on the next flush).
-    const KEY: Record<string, string> = {
-      up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
-    };
-    if (on) (input as unknown as { keys: Set<string> }).keys.add(KEY[key]);
-    else (input as unknown as { keys: Set<string> }).keys.delete(KEY[key]);
-    (input as unknown as { emit: () => void }).emit();
+  onMove: (dx, dy, running) => {
+    // Analog vector (magnitude 0..1, screen-space) — identical contract to
+    // the keyboard's normalized onVector. Reuse the SAME body as the
+    // KeyboardInput onVector hook by routing through setLocalInput + setInput.
+    scene.setLocalInput(dx, dy, running);
+    const sp = scene.getSelfPos();
+    net.setInput(dx, dy, running, sp);
   },
   onAttack: () => {
     net.action("attack");
@@ -881,11 +878,6 @@ const mobile = new MobileControls({
   },
   onZoomPinch: (factor) => scene.applyPinchZoom(factor),
   onDragLook: (dx, dy) => scene.applyLookPan(dx, dy),
-  onRunToggle: (running) => {
-    // Keep the KEYBOARD's Shift flag in sync: the next emit() (any key or
-    // pad change) carries the latched run state from either source.
-    (input as unknown as { running: boolean }).running = running;
-  },
 });
 mobile.mount();
 // Reveal the touch layer ONLY once a real game session starts (welcome):
