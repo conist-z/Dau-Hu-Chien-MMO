@@ -204,83 +204,188 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - `.env` trên panel bot có `RELAY_TOKEN` + `RELAY_URL` (config.py có fallback
   cứng vì panel có lúc không load được .env).
 
-## 1c. 🖥️ LAG WEB PC (21–22/09): BÀI HỌC DEBUG + CÁC CẦM FIX ĐÃ LẮP
+## 1c. 🖥️ LAG WEB PC — HỒ SƠ HOÀN CHỈNH (21–22/09, ĐÃ CHỐT)
 
-> ⚠️ **ĐÍNH CHÍNH (22/09, sau khi soi lại 2 session):** lag PC đã được session
-> `eabba1f1` fix CHÍNH XÁC trước đó bằng đo đạc thật: update loop chỉ
-> ~0.01ms/frame → thủ phạm là **3 canvas full-window chồng nhau** (Phaser
-> WebGL + weather 2D + daynight 2D phải blend mỗi frame, PC màn to/dpr cao
-> tốn gấp nhiều lần mobile) + Phaser 3.90 tự rớt pipeline trên GPU yếu.
-> Fix: `powerPreference: "high-performance"` (commit `c9ee9fa`) + weather
-> ngừng rAF khi trời quang. **Con số loading `x/0` (PC thấy 3/0, mobile
-> 1/0) KHÔNG PHẢI LỖI** — đó là counter số blocking asset (tileset/block
-> faces) chưa có trong cache texture của browser đó; PC và mobile có cache
-> khác nhau nên số khác nhau. Session sau (bản này) đã đuổi con ma "triple
-> map-load" suốt 3 đợt fix watchdog/dedupe — những fix đó vô hại nhưng vô
-> dụng; đừng lặp lại. Bài học: **hỏi chủ nghĩa của counter trước khi coi nó
-> là lỗi** (x/0 = x asset / tổng 0 chưa set — đọc `beginLoadTracking`).
+> **Tình trạng: ĐÃ FIX SẠCH và VERIFY bằng đo đạc trên máy thật** (commit
+> `a49bbba`). Mục này là hồ sơ đầy đủ để session sau: (1) hiểu đúng bài học,
+> (2) không lặp lại các đợt fix đi vòng, (3) biết ngay phải đo gì khi có
+> report lag mới. **Đọc từ đầu đến cuối trước khi đụng vào render/netcode.**
 
-### Triệu chứng & hint quyết định
-- **PC lag, mobile mượt** (cùng map, cùng server) → loại trừ server/mạng/netcode
-  ngay lập tức; bài toán là **chi phí render client trên màn hình lớn/DPR cao**.
-- **Loading counter dạng `x/0`** trên PC nhưng `1/0` bình thường trên mobile →
-  PC đang load map **nhiều lần** (mỗi welcome lặp = 1 lần re-bake full map).
-- **F3 console `bakeMapIfReady` + warning `getImageData/willReadFrequently`** →
-  bake full-map (bigmap = canvas ~5760×3840 + readback ~88 MB) đang chạy lại.
+### Triệu chứng người dùng báo
 
-### Các mục KHÔNG phải thủ phạm (đã kiểm, đừng đi lại)
-- Watchdog alt-tab / reconnect lúc load: đã gate `everWelcomed` + defer khi
-  `hud.isLoading` + chống race CONNECTING — fix phòng ngừa hợp lệ nhưng KHÔNG
-  phải nguồn của report lag.
-- Held-key input 1 lần / replay-rewind mỗi snapshot / converge kẹt tường:
-  đã sửa và có thật, nhưng là netcode polish — không giải thích "PC lag,
-  mobile mượt".
-- Lỗi thật duy nhất lẫn trong đợt đó: bug `?fx=` trong perf.ts tắt oan mọi
-  overlay khi URL không có tham số (đã sửa `3434a4d`) — gây MẤT weather,
-  không gây lag.
+- **Di chuyển trên PC thì giật/gừn ("lúc nhanh lúc chậm"), đứng yên thì mượt.**
+  Đặt/đập block, mở túi, kéo item… đều bình thường — CHỈ movement bị.
+- **Mobile (cùng map, cùng server) mượt** → loại trừ server, mạng, netcode
+  ngay từ đầu. Bài toán nằm 100% ở client PC.
+- **bigmap và ekonia/forest đều bị** (forest nặng nhất vì nhiều tán lá).
+- Con số loading `3/0` trên PC vs `1/0` trên mobile từng bị nghi là lỗi —
+  xem mục "Con số x/0" bên dưới: KHÔNG phải lỗi.
 
-### Các thủ phạm thật (theo thứ tự phát hiện)
-1. **Watchdog alt-tab giết join đang load**: age-check đọc `lastSnapshotAt=0`
-   thành `Infinity` → alt-tab vài giây trước snapshot đầu = reconnect oan →
-   welcome thứ 2 → bake lại full map. Fix: gate `everWelcomed` — không watchdog
-   khi chưa từng nhận snapshot.
-2. **Bake lặp khi welcome lặp**: thêm dedupe theo sig (map + tilesets + số sheet
-   decode được) — welcome lặp với cùng sig thì bỏ qua bake. Sig PHẢI tính cả
-   số sheet decoded, nếu không sẽ bake-sớm-thiếu-sheet → map thủng vĩnh viễn.
-3. **Held-key input chỉ bắn 1 lần** (OS auto-repeat bị lọc) → 19/20 flush là
-   heartbeat `dx=0` → server không tích hợp di chuyển → rubber-band 20 Hz.
-   Fix: mỗi flush 20 Hz luôn mang vector đang giữ + vị trí predicted live.
-4. **Replay/rewind mỗi snapshot** với client-authoritative converge = tua avatar
-   ngược về thân server đang lag rồi chạy lại = giật dây thun. Fix: chỉ rewrite
-   prediction khi drift vượt ngưỡng (hoặc server đứng/kẹt thật).
-5. **Converge server kẹt tường**: converge đường thẳng không vòng vật cản → thân
-   kẹt, `d` phình, snap 2 chiều. Fix: rescue teleport khi thân đứng im quá lâu
-   trong khi còn drift.
+### Vì sao khó tìm: JS logic không hề chậm
 
-### Cầu chì để không lặp lại cảnh này
-- **`web_client/src/perf.ts` — công tắc `?fx=` trên URL**:
-  `?fx=0` tắt hết overlay (weather/daynight/cave) • `?fx=weather` chỉ weather •
-  `?fx=daynight` • `?fx=cave` • không tham số = bật hết. F3 in `fx=...` để xác
-  nhận. Khi có report lag: **bắt đầu bằng bisect qua đây trước khi sửa code**.
-- **F3 có sẵn**: `fps`, `pred/srv/d=`, `in=/ack=/rtt=` — đọc số liệu TRƯỚC, đừng
-  fix theo từng dòng `[DESYNC]` (docs mục 5b đã cảnh báo).
+Đo bằng stack local (`scripts/_local_game_stack.py` + preview thật):
 
-### 🚨 LỖI ĐẮT: bug `?fx=` tắt oan weather (22/09)
-Viết `perf.ts` lúc vội thành `weather: raw === null || raw === "0" ? false :
-...` — nghĩa là **URL không có `?fx=` = TẮT HẾT overlay** thay vì bật hết.
-Kết quả: mất weather/daynight/cave ambience hoàn toàn mà không ai để ý tới
-file bisect vì "nó chỉ là công tắc debug". **Quy tắc: mọi kill-switch debug
-phải default-ON khi param vắng mặt, và test 1 lần ngay sau khi viết.**
-Bundle đã push lúc đó chứa `Lt===null||Lt==="0"?!1:...` — nếu thấy bundle có
-pattern `===null||...==="0"?!1` trong perf gate thì là bản lỗi.
+- `stepSelf` (prediction mỗi frame): **0.056 ms**
+- Toàn bộ `scene.update`: **0.77 ms**
+- Toàn bộ `scene.render`: **0.22 ms**
 
-### Checklist khi có report "lag PC"
-1. Hỏi fps (F3) — dưới 50 = render; 50+ = netcode/server.
-2. Test mobile cùng map — mượt = client PC; lag cả 2 = server/mạng.
-3. Bisect `?fx=0` → `?fx=weather,daynight,cave` từng lớp.
-4. Đọc `in=/ack=` — ack phải ~bằng in (20/s); lệch lớn = frame rơi trên relay.
-5. Kiểm tra loading counter — `x/0` bất thường = re-bake lặp.
-6. **Đọc lại mục 5b** — `d=1.5–3` ở IDLE là ACCEPTED, đừng fix theo nó.
+Mọi thứ trong JS đều rẻ. Nhưng rAF (khung hình trình duyệt) rơi từ 60 → 2–4 fps
+khi đi. Tức là thời gian bị nuốt ở tầng **nằm ngoài JS**: compositor/GPU.
+Đây là lý do mọi đợt "đọc code tìm hàm chậm" đều bế tắc — không có hàm nào
+chậm cả khi code review.
+
+### Bài học số 1 (quan trọng nhất): PHẢI ĐO, đừng đọc-code-suy-diễn
+
+Chuỗi sự kiện thật của 2 session: 6+ lượt fix dựa trên suy đoán (watchdog,
+dedupe bake, held-key input, replay-rewind, converge kẹt tường, powerPreference)
+— mỗi cái đều hợp lý trên giấy và đều KHÔNG phải gốc rễ. Cái chốt bệnh là
+**instrument từng hàm bằng `performance.now()` trong game đang chạy thật**:
+
+```js
+// Đo từng hàm của scene khi đang di chuyển (chạy trong console):
+const proto = Object.getPrototypeOf(scene);
+const targets = ['stepSelf','updateOccluderFade','updateDrops','updateSplats',
+  'syncZombies','updateZombieFrames','updateHoverSquare','findNearestNpc'];
+const stats = {};
+for (const name of targets) {
+  const fn = proto[name];
+  if (typeof fn !== 'function') continue;
+  let total = 0, n = 0, max = 0;
+  proto[name] = function(...a) {
+    const t0 = performance.now();
+    const r = fn.apply(this, a);
+    const dt = performance.now() - t0;
+    total += dt; n++; if (dt > max) max = dt;
+    return r;
+  };
+  stats[name] = { get total() { return total; }, get n() { return n; }, get max() { return max; } };
+}
+// → đi bộ 3 giây, rồi đọc stats: hàm nào totalMs vọt lên chính là thủ phạm
+```
+
+**Quy tắc cứng: report "lag" KHÔNG được fix gì trước khi có số đo chỉ tay
+vào đúng hàm.** Số liệu sau cùng:
+
+| Chỉ số | Trước fix | Sau fix |
+|---|---|---|
+| `updateOccluderFade` (mỗi bước ~0.25 ô) | **59 ms** | **1.1 ms** |
+| Tổng fade trong 5s đi bộ | 163 ms | 10 ms |
+| Frame spike khi đi | ~1000 ms | 66 ms |
+
+### Thủ phạm thật: fast-path upload GPU bị vô hiệu bởi tên field sai
+
+Bối cảnh: map Ekonia có lớp tán lá (`map-above`, canvas 2D **3584×2896** ≈
+41 MB pixel) được bơm lên texture GPU. Mỗi khi player di chuyển ~0.25 ô, hàm
+`updateOccluderFade` (game.ts) tính lại vùng mờ quanh player rồi đưa lên GPU.
+Nó có 2 đường:
+
+1. **Đường nhanh (đúng thiết kế):** chỉ upload vùng 96×96 px quanh player qua
+   `gl.texSubImage2D` — vài trăm micro-giây.
+2. **Đường fallback (thảm họa):** `renderer.updateCanvasTexture` — re-upload
+   **TOÀN BỘ 41 MB** mỗi bước chân.
+
+Code chọn đường bằng cách probe raw WebGLTexture:
+
+```ts
+// TRƯỚC (sai, âm thầm):
+const raw = wrapper?.glTexture;        // → undefined trên Phaser 3.60+
+
+// SAU (đúng, commit a49bbba):
+const raw = wrapper?.webGLTexture ?? wrapper?.glTexture;
+```
+
+**Nguyên nhân gốc: Phaser 3.60 đổi tên field** — `WebGLTextureWrapper` expose
+`.webGLTexture`, không còn `.glTexture`. Từ ngày project nâng Phaser lên 3.90,
+phép probe luôn `undefined` → **luôn** rơi vào đường fallback, re-upload 41 MB
+mỗi 0.25 ô di chuyển. Không crash, không warning, chỉ lag — bug câm điếc điển
+hình của API-drift.
+
+**Vì sao mobile mượt mà PC lag:** chi phí re-upload + compositor scale theo
+kích thước cửa sổ/DPR. Mobile màn nhỏ → mỗi lần upload "chỉ" tốn vài ms, không
+thấy. PC cửa sổ lớn → hàng chục ms mỗi lần = giật thấy rõ. Kèm thêm GC dồn
+đống lên upload lớn tạo spike ~1 giây.
+
+**Bài học:** khi upgrade engine/framework, mọi đoạn code chạm property nội bộ
+của engine phải được verify lại (log 1 lần lúc boot: "fast path ON/OFF"). Một
+câu `console.assert(raw, "occluder fast path dead")` đã chặn được bug này từ
+đầu.
+
+### Các fix đã lắp kèm (đều verify, giữ nguyên)
+
+1. **Day/night tint chuyển vào trong canvas Phaser** (`daynight_phaser.ts`,
+   commit `7b50177`): trước đây tint ngày/đêm là 1 canvas DOM 2D phủ toàn cửa
+   sổ trên canvas WebGL — browser phải blend 2 lớp mỗi frame khi di chuyển
+   (đứng yên màn tĩnh thì bỏ qua recomposite → nên "chỉ giật khi đi"). Giờ là
+   2 `Rectangle` GPU scroll-immune (depth 2000/2001) trong scene, cùng công
+   thức màu (`tintFactor`/`castColor` export từ `daynight.ts`). Canvas DOM bị
+   bỏ hẳn → chỉ còn 1 canvas cho compositor.
+2. **Weather canvas dpr = 1** (commit `a49bbba`): lớp 2D cuối cùng còn lại
+   trên game canvas; hạt mưa/tuyết mềm, không cần device pixel — dpr 2 chỉ
+   nhân 4 chi phí blend.
+3. **Movement throttle cho fade**: recompute mỗi 0.25 ô thay vì mỗi frame
+   (gradient trượt mượt mà mắt không phân biệt, chi phí /6).
+4. **Stationary fast path**: đứng yên thì skip toàn bộ fade work (đã có từ
+   trước, giữ nguyên).
+
+### Con số x/0 khi load map — KHÔNG PHẢI LỖI, đừng fix theo
+
+`beginLoadTracking` đếm số blocking asset (tileset PNG + block faces) chưa có
+trong cache texture của browser. PC cache khác mobile nên số khác nhau: PC
+thấy `3/0`, mobile `1/0` — cả hai đều bình thường, counter tự ẩn khi đủ sheet
+(có safety-timer 12s). **Đã có 1 session đốt 3 lượt fix (watchdog gate
+`everWelcomed`, dedupe bake theo sig, defer-when-loading) đuổi con ma "triple
+map-load" diễn giải từ con số này.** Những fix đó vô hại (phòng ngừa reconnect
+oan thật sự) nhưng KHÔNG phải gốc của bất kỳ report lag nào.
+
+**Bài học: hiểu ý nghĩa của một counter/đồng hồ trước khi coi nó là lỗi.**
+`x/0` = "x asset đã xong / tổng chưa được set" — đọc `beginLoadTracking` +
+`tickLoading` trong ui.ts trước khi kết luận.
+
+### Bug `?fx=` tắt oan weather (đã sửa, đừng lặp)
+
+Khi viết công tắc bisect `perf.ts` (xem mục "Cầu chì"), bản đầu viết:
+`weather: raw === null || raw === "0" ? false : ...` — URL KHÔNG có tham số
+(`raw === null`) rơi vào nhánh **false** → mặc định TẮT SẠCH weather/daynight/
+cave. Người dùng mất hiệu ứng thời tiết mà nguyên nhân nằm ở "file debug vô
+hại". Đã sửa (`3434a4d`): `null` = bật hết; chỉ `?fx=0`/`?fx=off` mới tắt.
+
+**Quy tắc: mọi kill-switch debug phải default-ON khi param vắng mặt, và phải
+test ngay 1 lần sau khi viết (load trang không tham số → kiểm tra FX còn).**
+
+### Cầu chì bisect có sẵn (dùng TRƯỚC khi sửa code)
+
+- **`?fx=` trên URL** (`web_client/src/perf.ts`): `?fx=0` tắt mọi overlay •
+  `?fx=weather` / `?fx=daynight` / `?fx=cave` chỉ bật đúng lớp đó • không
+  tham số = bật hết. F3 in `fx=...` để xác nhận lớp nào đang sống.
+- **F3 debug line**: `fps`, `pred/srv/d=` (drift prediction↔server),
+  `in=/ack=/rtt=` (throughput input), `snap=…/s`.
+- **Stack local có sẵn**: `scripts/_local_game_stack.py` (chỉnh `LATENCY_MS`
+  để mô phỏng trễ relay) + mở client thật → đo trên chính máy dev, không cần
+  chờ user test. Lưu ý console Windows cần `PYTHONIOENCODING=utf-8`.
+
+### Checklist khi có report "lag/giật" (làm theo thứ tự)
+
+1. **Hỏi triệu chứng theo hành vi**: chỉ movement? chỉ thao tác? mọi lúc?
+   "Chỉ movement" → thủ phạm chạy theo vị trí player (fade, camera, mask…).
+   "Mọi lúc" → overlay/compositor. "Thỉnh thoảng" → GC/resize/bake.
+2. **Hỏi fps lúc giật (F3)**: fps cao mà giật = mạng/netcode; fps thấp = render.
+3. **Test mobile cùng map**: mượt = client PC; lag cả hai = server/mạng.
+4. **Instrument từng hàm** (đoạn code ở trên) khi di chuyển — tìm hàm có
+   `totalMs` vọt lên. KHÔNG fix gì trước khi có số.
+5. **Bisect `?fx=`** để khoanh vùng lớp overlay nếu instrument không chỉ ra.
+6. Với bug GPU/upload: kiểm tra **fast path có đang chạy không** (log/assert
+   lúc boot) — đừng tin rằng nó chạy chỉ vì code "có vẻ đúng".
+7. Đừng fix theo `[DESYNC] d=1.5–3` ở IDLE — hành vi chấp nhận từ trước
+   (mục 5b). Đừng "fix" counter `x/0` — nó không phải lỗi.
+
+### Tóm tắt 1 dòng cho session sau
+
+> Lag PC "chỉ khi di chuyển" = `updateOccluderFade` upload cả canvas 41 MB
+> mỗi bước vì probe `wrapper.glTexture` chết sau khi Phaser 3.60 đổi thành
+> `webGLTexture` — PHẢI đo từng hàm khi đi bộ thật để bắt; đọc code không
+> bao giờ thấy.
+
+
 
 ## 2. Auth hiện tại
 - **Quick-play guest**: browser sinh `guest_id` (900xxx…) lưu localStorage →
