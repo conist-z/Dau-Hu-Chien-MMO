@@ -1448,14 +1448,75 @@ body.mobile-ui {
 }
 
 /* ---- LANDSCAPE-LOCKED game (user spec: game mặc định màn ngang) ----
- * The rotate-device splash is now a TRANSIENT 0.5s flash, not a blocking
+ * The rotate-device splash is now a TRANSIENT flash, not a blocking
  * veil: the game forces landscape itself (orientation lock + landscape
  * layout), so a phone held portrait shows the hint for half a second,
  * then it fades out and play continues regardless. REAL DEVICES ONLY
  * (pointer:coarse media query): the desktop Shift+F9 preview must never
  * splash — a monitor can't be rotated. #rotate-veil is display:none by
  * default. */
+/* ---- FORCE LANDSCAPE on portrait phones (user spec: the game is ALWAYS
+ * landscape, even when the phone is held upright) ----
+ * screen.orientation.lock() only works in fullscreen on some browsers, so
+ * the guarantee comes from CSS: body.is-touch-device + portrait rotates
+ * #game-root (the canvas) 90deg into a landscape viewport built from the
+ * real (short × long) screen dimensions, and rotates the HUD back -90deg
+ * with swapped width/height. Touch/pointer coordinates are NOT remapped by
+ * CSS transforms — main.ts applies the swap in JS (see ROTATE FIX). The
+ * rotate splash still flashes (2.5s) as the explanation for the flip. */
+body.is-touch-device #game-root {
+  transform-origin: top left;
+}
+@media (pointer: coarse) and (orientation: portrait) {
+  body.is-touch-device #game-root {
+    position: fixed;
+    top: 0;
+    left: 100vw; /* rotate(90deg) around the top-left corner swings the
+                  * element down into the visible viewport */
+    width: 100vh;  /* physical landscape = short side as width */
+    height: 100vw; /* long side as height */
+    transform: rotate(90deg);
+  }
+}
+
 #rotate-veil { display: none; }
+/* HUD + overlays follow the canvas into the rotated landscape frame: they
+ * are position:fixed children of body (not #game-root), so they need the
+ * same rotation with coordinates swapped (fixed positioning ignores the
+ * parent's transform — each fixed layer must be rotated individually).
+ * #rotate-veil is EXCLUDED on purpose: it must stay readable in PHYSICAL
+ * screen space ("xoay ngang" instructions make no sense rotated). */
+@media (pointer: coarse) and (orientation: portrait) {
+  body.is-touch-device #overlay,
+  body.is-touch-device #inv-panel,
+  body.is-touch-device #hud-hub,
+  body.is-touch-device #mobile-controls,
+  body.is-touch-device #profile-popup,
+  body.is-touch-device #nx-banner {
+    position: fixed;
+    top: 0;
+    left: 100vw;
+    width: 100vh;
+    height: 100vw;
+    transform: rotate(90deg);
+    transform-origin: top left;
+  }
+  /* Any other fixed element (toasts, day/night canvas) — rotate them too.
+   * #daynight-fx draws in game space; keep it glued to the canvas. */
+  body.is-touch-device #daynight-fx {
+    position: fixed;
+    top: 0;
+    left: 100vw;
+    width: 100vh;
+    height: 100vw;
+    transform: rotate(90deg);
+    transform-origin: top left;
+  }
+}
+
+/* ROTATE SPLASH (real portrait phones only): stays 2.5s, then fades.
+ * pointer-events:none means it can NEVER block what's underneath (no
+ * dead-end veil). JS re-triggers it on every flip back to portrait. */
 @media (pointer: coarse) and (orientation: portrait) {
   #rotate-veil {
     display: flex;
@@ -1473,16 +1534,16 @@ body.mobile-ui {
     padding: 24px;
     user-select: none;
     -webkit-user-select: none;
-    /* 0.5s fully visible, then a 0.4s fade to 0 — forwards keeps it
+    /* 2.5s fully visible, then a 0.4s fade to 0 — forwards keeps it
      * invisible afterwards, and pointer-events:none means the splash can
      * NEVER block what's underneath (no dead-end veil). JS re-triggers it
      * on every flip back to portrait (main.ts orientation listener). */
     pointer-events: none;
-    animation: rv-splash 0.9s ease forwards;
+    animation: rv-splash 2.9s ease forwards;
   }
   @keyframes rv-splash {
     0% { opacity: 1; }
-    55.6% { opacity: 1; } /* 0.5s of the 0.9s run */
+    86.2% { opacity: 1; } /* 2.5s of the 2.9s run */
     100% { opacity: 0; }
   }
   #rotate-veil .rv-icon { font-size: 56px; animation: rv-tilt 1.6s ease-in-out infinite; }

@@ -74,11 +74,11 @@ window.addEventListener("keydown", (e) => {
  *  the JS gates below all read this. */
 const MOBILE_UI = wantMobileUI;
 
-// ROTATE SPLASH (real devices only): the portrait hint auto-fades after
-// 0.5s (CSS rv-splash). Re-trigger it every time the device flips BACK to
-// portrait — restart the animation by blanking and restoring it around a
-// forced reflow. Never fires on desktop (no orientationchange to portrait
-// on a monitor; also gated on isTouchDevice for safety).
+// ROTATE SPLASH (real devices only): the portrait hint stays 2.5s, then
+// auto-fades (CSS rv-splash). Re-triggered every time the device flips
+// BACK to portrait — restart the animation by blanking and restoring it
+// around a forced reflow. Never fires on desktop (no orientationchange to
+// portrait on a monitor; also gated on isTouchDevice for safety).
 if (isTouchDevice) {
   const veil = document.getElementById("rotate-veil");
   if (veil) {
@@ -93,6 +93,54 @@ if (isTouchDevice) {
       setTimeout(retriggerSplash, 60);
     });
   }
+}
+
+// ---- ROTATE FIX: touch coordinate mapping under the CSS rotation ----
+// When a phone is held PORTRAIT, CSS rotates #game-root 90° into a
+// landscape frame (styles.css FORCE LANDSCAPE). CSS transforms do NOT
+// remap pointer events: a physical tap at (x, y) still reports clientX/Y
+// in PHYSICAL screen space, while the game expects LOGICAL landscape
+// coordinates. The rotation is exactly: logical = R(-90°) · physical.
+// For rotate(90deg) around top-left with left:100vw:
+//   logicalX = physicalY, logicalY = physicalWidth − physicalX
+// MobileControls normalises tap points by window.innerWidth/Height before
+// calling the hooks, so patching the getters is the single choke point —
+// every tap/long-press/pinch in mobile_controls.ts gets fixed coordinates
+// without touching its logic. Desktop/landscape phones are untouched.
+if (isTouchDevice) {
+  const physicalW = (): number => Math.max(window.innerWidth, window.innerHeight);
+  const isPortraitPhysical = (): boolean =>
+    window.matchMedia("(orientation: portrait)").matches;
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    get(): number {
+      return isPortraitPhysical() ? window.innerHeight : window.innerWidth;
+    },
+  });
+  Object.defineProperty(window, "innerHeight", {
+    configurable: true,
+    get(): number {
+      return isPortraitPhysical() ? window.innerWidth : window.innerHeight;
+    },
+  });
+  // Normalised mobile hooks divide by these getters; to finish the R(-90°)
+  // mapping we must also SWAP + flip the point itself. Monkey-patch the
+  // prototype: clientX/clientY are read-only properties on PointerEvent,
+  // so wrap them per-event in a passive capture listener (no side effects
+  // on desktop — portrait check fails there).
+  window.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!isPortraitPhysical()) return;
+      const px = e.clientX;
+      const py = e.clientY;
+      const W = physicalW(); // physical short→long axis length
+      // logicalX = py, logicalY = W − px (rotate −90° about the frame).
+      Object.defineProperty(e, "clientX", { value: py, configurable: true });
+      Object.defineProperty(e, "clientY", { value: W - px, configurable: true });
+    },
+    { capture: true },
+  );
 }
 
 // Kaetram hub: wire the pages to the scene (minimap source, debug toggle,
