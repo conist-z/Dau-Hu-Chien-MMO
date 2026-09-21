@@ -975,10 +975,16 @@ export class WorldScene extends Phaser.Scene {
     const tw = map.tile_width;
     const th = map.tile_height;
     // DEDUPE GUARD (PC triple-load stutter): a repeated welcome for the SAME
-    // map with the SAME sheet set is a no-op — skip the whole bake (a
+    // map with the SAME usable sheet set is a no-op — skip the whole bake (a
     // full-map canvas repaint + the 88 MB occluder getImageData). Portal
     // switches / genuine sheet changes still bake because the sig changes.
-    const sig = `${map.id}|${map.tilesets.filter((t) => t.image).map((t) => t.image).join(",")}`;
+    // The sig keys on the USABLE (decoded) sheets, not the requested ones:
+    // an early partial bake (only some sheets decoded yet) must NOT pin the
+    // sig, or the late sheet would arrive and be skipped forever (holes).
+    const usableImgs = map.tilesets
+      .filter((t) => t.image && this.textures.exists(this.tileTextures.get(t.image) ?? ""))
+      .map((t) => t.image);
+    const sig = `${map.id}|${usableImgs.length}|${usableImgs.join(",")}`;
     const alreadyUsable = this.mapBake !== null && this.bakeSig === sig;
     if (alreadyUsable) return;
     this.bakeSig = sig;
