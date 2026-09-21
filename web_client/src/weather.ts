@@ -624,9 +624,11 @@ export class WeatherFx {
       this.step(t);
       this.draw(t);
       // Idle shutdown: transition finished and no live weather left.
+      // Idle: nothing live -> stop the rAF AND skip the per-frame
+      // clearRect (a full-window 2D clear every frame is a real cost
+      // stacked under the Phaser canvas on PC).
       if (!this.current && (t - this.transitionT0) >= TRANSITION_MS) {
         this.running = false;
-        this.ctx.clearRect(0, 0, this.w, this.h);
         cancelAnimationFrame(this.raf);
         return;
       }

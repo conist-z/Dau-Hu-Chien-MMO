@@ -95,6 +95,10 @@ if (perf.daynight) {
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
+  // Keep the dGPU/iGPU choice at full-power: 3.90 auto-drops to the low
+  // pipeline on weak adapters and Windows battery saver halves rAF on
+  // integrated GPUs — the PC 30fps stutter (mobile was smooth).
+  powerPreference: "high-performance",
   parent: "game-root",
   backgroundColor: "#20303c",
   // Pixel-art rendering: nearest-neighbour sampling + rounded pixels. The
