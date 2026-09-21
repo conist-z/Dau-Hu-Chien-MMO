@@ -92,6 +92,15 @@ scene.onPlayerClick = (p) => showProfilePopup(p);
 if (perf.weather) {
   weatherFx.mount(document.getElementById("game-root")!);
 }
+// Weather camera hook: rain/snow/CLOUD SHADOWS anchor to the MAP (world
+// space) — they slide across the viewport as the player walks instead of
+// being glued to the screen. Without this hook camScroll stays {0,0} and
+// every blob sticks to the player's screen ("mây bám màn hình") — the block
+// was deleted by accident in 8add5c7's main.ts cleanup; restored verbatim.
+weatherFx.setCameraHook(() => {
+  const cam = scene.cameras.main;
+  return { x: cam.scrollX, y: cam.scrollY, zoom: cam.zoom };
+});
 // Day/night tint now renders INSIDE the Phaser canvas as GPU rectangles
 // (daynight_phaser.ts, driven from WorldScene.update) — the standalone DOM
 // canvas was the PC movement stutter: blending a full-window 2D canvas over
@@ -158,6 +167,10 @@ function applyTexture(name: string, b64: string): void {
       const MOB_CELLS: Record<string, [number, number]> = {
         zombie: [32, 32], slime: [32, 32], skeleton: [48, 48],
         spider: [35, 35], bat: [32, 48], rat: [32, 32],
+        // Cave/forest packs — a missing entry silently fell back to 32x32
+        // and mis-cropped goblin (26x26) / spectre (34x34) frames.
+        skeleton2: [48, 48], spectre: [34, 34],
+        goblin: [26, 26], hobgoblin: [32, 32],
       };
       const [fw, fh] = MOB_CELLS[mobId] ?? [32, 32];
       game.textures.addSpriteSheet(key, img, { frameWidth: fw, frameHeight: fh });
