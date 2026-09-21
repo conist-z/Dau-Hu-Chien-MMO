@@ -22,9 +22,12 @@ function flag(name: string): boolean {
 }
 
 export const perf = {
-  weather: raw === null || raw === "0" ? false : flag("weather"),
-  daynight: raw === null || raw === "0" ? false : flag("daynight"),
-  cave: raw === null || raw === "0" ? false : flag("cave"),
+  // NOTE (bug đã sửa): trước đây nhánh này là `raw === null || raw === "0" ? false`
+  // — nghĩa là khi URL KHÔNG có ?fx= thì mọi overlay bị tắt oan (mất weather,
+  // daynight, cave ambience hoàn toàn). `null` phải là "bật hết":
+  weather: raw === "0" || raw === "off" ? false : flag("weather"),
+  daynight: raw === "0" || raw === "off" ? false : flag("daynight"),
+  cave: raw === "0" || raw === "off" ? false : flag("cave"),
   /** Human-readable tag for the F3 debug line. */
   get label(): string {
     if (raw === "0" || raw === "off") return "fx=OFF";

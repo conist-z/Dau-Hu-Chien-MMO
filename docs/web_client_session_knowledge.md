@@ -204,6 +204,62 @@ git add … ; git commit; git push github-dauhu main; git push origin main
 - `.env` trên panel bot có `RELAY_TOKEN` + `RELAY_URL` (config.py có fallback
   cứng vì panel có lúc không load được .env).
 
+## 1c. 🖥️ LAG WEB PC (21–22/09): BÀI HỌC DEBUG + CÁC CẦM FIX ĐÃ LẮP
+
+> Đợt này tiêu ~6 lượt fix mới dìm được lag PC. Ghi lại để **lần sau đỡ đi
+> vòng** — thứ tự kiểm tra dưới đây là thứ tự đúng, đừng nhảy cóc.
+
+### Triệu chứng & hint quyết định
+- **PC lag, mobile mượt** (cùng map, cùng server) → loại trừ server/mạng/netcode
+  ngay lập tức; bài toán là **chi phí render client trên màn hình lớn/DPR cao**.
+- **Loading counter dạng `x/0`** trên PC nhưng `1/0` bình thường trên mobile →
+  PC đang load map **nhiều lần** (mỗi welcome lặp = 1 lần re-bake full map).
+- **F3 console `bakeMapIfReady` + warning `getImageData/willReadFrequently`** →
+  bake full-map (bigmap = canvas ~5760×3840 + readback ~88 MB) đang chạy lại.
+
+### Các thủ phạm thật (theo thứ tự phát hiện)
+1. **Watchdog alt-tab giết join đang load**: age-check đọc `lastSnapshotAt=0`
+   thành `Infinity` → alt-tab vài giây trước snapshot đầu = reconnect oan →
+   welcome thứ 2 → bake lại full map. Fix: gate `everWelcomed` — không watchdog
+   khi chưa từng nhận snapshot.
+2. **Bake lặp khi welcome lặp**: thêm dedupe theo sig (map + tilesets + số sheet
+   decode được) — welcome lặp với cùng sig thì bỏ qua bake. Sig PHẢI tính cả
+   số sheet decoded, nếu không sẽ bake-sớm-thiếu-sheet → map thủng vĩnh viễn.
+3. **Held-key input chỉ bắn 1 lần** (OS auto-repeat bị lọc) → 19/20 flush là
+   heartbeat `dx=0` → server không tích hợp di chuyển → rubber-band 20 Hz.
+   Fix: mỗi flush 20 Hz luôn mang vector đang giữ + vị trí predicted live.
+4. **Replay/rewind mỗi snapshot** với client-authoritative converge = tua avatar
+   ngược về thân server đang lag rồi chạy lại = giật dây thun. Fix: chỉ rewrite
+   prediction khi drift vượt ngưỡng (hoặc server đứng/kẹt thật).
+5. **Converge server kẹt tường**: converge đường thẳng không vòng vật cản → thân
+   kẹt, `d` phình, snap 2 chiều. Fix: rescue teleport khi thân đứng im quá lâu
+   trong khi còn drift.
+
+### Cầu chì để không lặp lại cảnh này
+- **`web_client/src/perf.ts` — công tắc `?fx=` trên URL**:
+  `?fx=0` tắt hết overlay (weather/daynight/cave) • `?fx=weather` chỉ weather •
+  `?fx=daynight` • `?fx=cave` • không tham số = bật hết. F3 in `fx=...` để xác
+  nhận. Khi có report lag: **bắt đầu bằng bisect qua đây trước khi sửa code**.
+- **F3 có sẵn**: `fps`, `pred/srv/d=`, `in=/ack=/rtt=` — đọc số liệu TRƯỚC, đừng
+  fix theo từng dòng `[DESYNC]` (docs mục 5b đã cảnh báo).
+
+### 🚨 LỖI ĐẮT: bug `?fx=` tắt oan weather (22/09)
+Viết `perf.ts` lúc vội thành `weather: raw === null || raw === "0" ? false :
+...` — nghĩa là **URL không có `?fx=` = TẮT HẾT overlay** thay vì bật hết.
+Kết quả: mất weather/daynight/cave ambience hoàn toàn mà không ai để ý tới
+file bisect vì "nó chỉ là công tắc debug". **Quy tắc: mọi kill-switch debug
+phải default-ON khi param vắng mặt, và test 1 lần ngay sau khi viết.**
+Bundle đã push lúc đó chứa `Lt===null||Lt==="0"?!1:...` — nếu thấy bundle có
+pattern `===null||...==="0"?!1` trong perf gate thì là bản lỗi.
+
+### Checklist khi có report "lag PC"
+1. Hỏi fps (F3) — dưới 50 = render; 50+ = netcode/server.
+2. Test mobile cùng map — mượt = client PC; lag cả 2 = server/mạng.
+3. Bisect `?fx=0` → `?fx=weather,daynight,cave` từng lớp.
+4. Đọc `in=/ack=` — ack phải ~bằng in (20/s); lệch lớn = frame rơi trên relay.
+5. Kiểm tra loading counter — `x/0` bất thường = re-bake lặp.
+6. **Đọc lại mục 5b** — `d=1.5–3` ở IDLE là ACCEPTED, đừng fix theo nó.
+
 ## 2. Auth hiện tại
 - **Quick-play guest**: browser sinh `guest_id` (900xxx…) lưu localStorage →
   `guest_login` frame → token `guest:<id>`. Token **chỉ sống trong RAM bot** —
