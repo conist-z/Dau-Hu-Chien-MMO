@@ -1753,12 +1753,17 @@ export class WorldScene extends Phaser.Scene {
     const tex = this.textures.get(this.occluderTexKey);
     const src = tex ? tex.getSourceImage() : null;
     // glTexture lives on the TextureSource (tex.source[0]); it is a
-    // WebGLTextureWrapper whose .glTexture is the raw WebGLTexture.
+    // WebGLTextureWrapper whose .webGLTexture is the raw WebGLTexture
+    // (Phaser 3.60+: the wrapper exposes .webGLTexture, NOT .glTexture —
+    // the old probe read .glTexture.glTexture which was always undefined,
+    // silently disabling the fast sub-rect upload and falling back to
+    // updateCanvasTexture = a full 3584x2896 re-upload on EVERY fade step
+    // = the 59ms movement stutter measured on the local stack).
     const tsrc = (
-      tex as unknown as { source?: { glTexture?: { glTexture?: WebGLTexture } }[] }
+      tex as unknown as { source?: { glTexture?: { webGLTexture?: WebGLTexture; glTexture?: WebGLTexture } }[] }
     )?.source?.[0];
     const wrapper = tsrc?.glTexture;
-    const raw = wrapper?.glTexture;
+    const raw = wrapper?.webGLTexture ?? wrapper?.glTexture;
     const renderer = this.game.renderer as unknown as {
       gl?: WebGL2RenderingContext;
       updateCanvasTexture?: (

@@ -559,7 +559,13 @@ export class WeatherFx {
   // ---------------------------------------------------------------- engine
 
   private resize(): void {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // dpr = 1 (PC PERF 22/09): this canvas is composited over the WebGL
+    // game canvas on EVERY movement frame. At dpr 2 the blend cost 4x's
+    // with nothing visually gained (particles are soft/animated — not
+    // pixel-art-critical). Mirrors daynight's dpr-1 decision; the tint
+    // canvas is gone entirely (GPU rects now), this is the LAST 2D
+    // overlay layer left over the game canvas.
+    this.dpr = 1;
     this.w = window.innerWidth;
     this.h = window.innerHeight;
     this.canvas.width = Math.max(1, Math.round(this.w * this.dpr));
