@@ -59,5 +59,10 @@ class SessionTracker:
         info = self._sessions.get((channel_id, user_id))
         return None if info is None else max(0.0, now - info.started_at)
 
+    def all(self) -> List[Tuple[int, int]]:
+        """Live (channel_id, user_id) pairs — the real Discord-online set
+        for player counts (web counts come from the session registry)."""
+        return list(self._sessions.keys())
+
     def __len__(self) -> int:
         return len(self._sessions)

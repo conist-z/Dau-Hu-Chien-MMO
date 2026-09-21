@@ -95,6 +95,19 @@ class SessionRegistry:
         self._sessions[token] = sess
         return sess
 
+    def channel_of(self, user_id: int) -> Optional[int]:
+        """The channel of the user's most recent live session (None if none)."""
+        best: Optional[WebSession] = None
+        now = time.monotonic()
+        for s in self._sessions.values():
+            if s.user_id != user_id:
+                continue
+            if s.orphaned_at and now - s.orphaned_at > SESSION_GRACE_SECONDS:
+                continue
+            if best is None or s.orphaned_at == 0:
+                best = s
+        return best.channel_id if best is not None else None
+
     def get(self, token: str) -> Optional[WebSession]:
         sess = self._sessions.get(token)
         if sess is not None and sess.orphaned_at:
@@ -103,6 +116,16 @@ class SessionRegistry:
                 self._sessions.pop(token, None)
                 return None
         return sess
+
+    def live_user_ids(self) -> set:
+        """user_ids with a live (non-orphan-expired) web session — the REAL
+        online set for player counts (orphaned sockets within the grace
+        window count: their client is auto-reconnecting)."""
+        now = time.monotonic()
+        return {
+            s.user_id for s in self._sessions.values()
+            if not s.orphaned_at or now - s.orphaned_at <= SESSION_GRACE_SECONDS
+        }
 
     def drop(self, token: str) -> None:
         self._sessions.pop(token, None)

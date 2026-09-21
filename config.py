@@ -104,3 +104,6 @@ EAT_SPEED_MULT = 0.5   # move speed multiplier while eating
 WEB_AIM_RANGE_TOLERANCE = int(os.getenv("WEB_AIM_RANGE_TOLERANCE", "1"))  # lag slack for click targeting
 # Max simultaneous web players per scenario (design ceiling; extra joins wait).
 WEB_MAX_PLAYERS = int(os.getenv("WEB_MAX_PLAYERS", "15"))
+# Display name of the MAIN server in the web lobby picklist (user spec:
+# one world named "Demo by conist"; new players auto-join it).
+DEMO_SERVER_NAME = os.getenv("DEMO_SERVER_NAME", "Demo by conist")

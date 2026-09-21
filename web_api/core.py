@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from config import WEB_TICK_HZ
+from config import DEMO_SERVER_NAME, WEB_TICK_HZ
 from game.manager import GameManager
 from web_api import auth
 from web_api.auth import OAuthError
@@ -261,15 +261,32 @@ class WebHub:
 
     async def _handle_list(self, sess: WebSession) -> None:
         """Joinable scenarios for the logged-in player (join screen picklist)."""
+        live_web = self.registry.live_user_ids()
+        discord_pairs = self.manager.sessions.all()
         items = []
         for rt in self.manager.runtimes.values():
+            # REAL PLAYER COUNT: distinct users that are EITHER a live web
+            # session on this runtime OR a live Discord session on this
+            # channel. The old len(get_visible_players()) counted every
+            # abandoned Player row forever (the "39 player" ghost army).
+            users = {
+                uid for uid in live_web
+                if self.manager.runtimes.get(
+                    self.registry.channel_of(uid) or rt.channel_id) is rt
+            }
+            users |= {uid for (cid, uid) in discord_pairs if cid == rt.channel_id}
+            # Player bodies currently web-controlled on THIS runtime also
+            # count (their session registry entry may sit on another channel
+            # id after a portal hop; the body is here).
+            users |= {p.user_id for p in rt.state.players.values() if p.is_web
+                      and p.user_id in live_web}
             items.append({
                 # STRING id: Discord snowflakes exceed JS Number precision;
                 # the Node relay mangles raw ints (trailing digits -> 00).
                 "channel_id": str(rt.channel_id),
                 "map_id": rt.map_data.map_id,
-                "map_name": rt.map_data.display_name or rt.map_data.map_id,
-                "players": len(rt.state.get_visible_players()),
+                "map_name": DEMO_SERVER_NAME,
+                "players": len(users),
             })
         await self.send_to_client_conn(
             sess, {"type": "scenario_list", "items": items}

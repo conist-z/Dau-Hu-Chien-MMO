@@ -489,6 +489,26 @@ const net = new Net({
       localStorage.setItem("last_channel", String(channelId));
       net.joinScenario(channelId, token);
     });
+    // AUTO-JOIN the main server ("Demo by conist") for anyone not already
+    // bound to a world: first visit, and any session whose last_channel no
+    // longer exists in the list. Applies to BOTH pc and mobile — they share
+    // this exact code path (the lobby is one component).
+    const haveSaved = localStorage.getItem("last_channel");
+    const savedExists = haveSaved && items.some(
+      (i) => String(i.channel_id) === haveSaved,
+    );
+    if (!savedExists) {
+      const demo = items.find((i) => i.map_name === "Demo by conist")
+        ?? (items.length === 1 ? items[0] : undefined);
+      if (demo) {
+        pendingRejoinChannel = null;
+        const token = localStorage.getItem("web_token") ?? "";
+        localStorage.setItem("last_channel", String(demo.channel_id));
+        hud.setLobbyStatus(null);
+        net.joinScenario(demo.channel_id, token);
+        return;
+      }
+    }
   },
   onInventory: applyInventory,
   onCraftState: (_matGrid, result) => {

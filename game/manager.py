@@ -446,6 +446,20 @@ class GameManager:
                 idle_for = (
                     now - info.last_activity if info is not None else timeout
                 )
+                # REAL PLAYER COUNT ("39 player là thế nào"): an inactivity
+                # end used to leave the Player row in state with visible=True
+                # forever — every abandoned session kept counting in
+                # get_visible_players (scenario_list, snapshots, renderer).
+                # Hide the body (row stays: position/stats persist, rejoin
+                # restores everything — see SessionEndAdapter docstring).
+                rt2 = self.get_runtime_for(channel_id, user_id)
+                if rt2 is not None:
+                    ghost = rt2.state.get_player(user_id)
+                    if ghost is not None and user_id not in rt2.web_sessions:
+                        ghost.visible = False
+                        ghost.is_web = False
+                        ghost.mode = "chat"
+                        self._schedule_save(rt2, ghost)
                 try:
                     if self.session_adapter is not None:
                         await self.session_adapter.end(
@@ -1029,10 +1043,23 @@ class GameManager:
                         rng=self.zombie_rng,
                     )
                 else:
+                    from game.mob_profiles import active_at as _mob_active
+
                     tick_dt = 1.0 / max(1.0, WEB_TICK_HZ)
+                    # Per-map activity window (game/mob_profiles.py): the
+                    # cave roams 24/7, the forest prowls day AND night, the
+                    # bigmap stays night-only.
+                    now_s = _ingame_s()
+                    map_id = rt.map_data.map_id
+                    from game.mob_profiles import (
+                        _mob_spawn_chance as _mob_chance,
+                    )
+
                     zres = _z_web_tick(
-                        rt.state, rt.collision, _is_night(_ingame_s()),
+                        rt.state, rt.collision, _mob_active(map_id, now_s),
                         tick_dt, rng=self.zombie_rng,
+                        max_count=self._mob_cap_for(rt, now_s),
+                        spawn_chance=_mob_chance(map_id),
                     )
                 if zres.changed:
                     zombie_touched = True
@@ -2192,6 +2219,19 @@ class GameManager:
                         {"focused_user_id": uid, "type": "zombie"},
                     )
 
+    def _mob_cap_for(self, rt, now_sec: int) -> int:
+        """Per-map live-mob cap at this in-game hour (game/mob_profiles.py):
+        profile max_count scaled by the map's day/night rhythm, floored at 1.
+        Trade zones are already skipped by the callers."""
+        import math as _math
+
+        from game.mob_profiles import day_cap_scale, profile_for
+
+        prof = profile_for(rt.map_data.map_id)
+        base = int(prof.get("max_count", 4))
+        scale = day_cap_scale(rt.map_data.map_id, now_sec)
+        return max(1, _math.ceil(base * scale))
+
     def start_zombies(self, enabled: bool = True) -> None:
         """Start the shared night-zombie loop once."""
         if not enabled:
@@ -2246,14 +2286,26 @@ class GameManager:
                         # wander). Visible zombies are FROZEN here — they take
                         # one turn per player action in dispatch(), never from
                         # this loop.
+                        # Per-map spawn profile (game/mob_profiles.py):
+                        # kinds roster + cap + chance + activity window.
+                        from game.mob_profiles import (
+                            active_at as _mob_active,
+                            profile_for as _mob_profile,
+                        )
+
+                        map_id = rt.map_data.map_id
+                        prof = _mob_profile(map_id)
+                        map_night = _mob_active(map_id, now_sec)
                         result = tick_zombies(
                             rt.state,
                             rt.collision,
                             self.zombie_view_rects(rt),
-                            night,
+                            map_night,
                             rng=self.zombie_rng,
-                            max_count=area_cap,
-                            spawn_chance=ZOMBIE_SPAWN_CHANCE,
+                            max_count=self._mob_cap_for(rt, now_sec),
+                            spawn_chance=float(
+                                prof.get("spawn_chance", ZOMBIE_SPAWN_CHANCE)
+                            ),
                         )
                     # Off-screen wandering does not need an upload. Refresh
                     # only when a creature becomes visible or is removed.
