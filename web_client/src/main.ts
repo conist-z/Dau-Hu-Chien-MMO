@@ -26,6 +26,54 @@ let pendingRejoinChannel: string | null = null;
 const hud = new Hud();
 const scene = new WorldScene();
 
+// =====================================================================
+// MOBILE-UI MODE FLAG (PC ↔ mobile parity rule, docs §1b)
+// =====================================================================
+// One body class drives EVERY mobile decision: CSS layouts (hub tray,
+// chat chip, rotate veil…), the touch-controls wiring, fullscreen and the
+// two-tap aim mode. Resolution order (first hit wins):
+//   1. ?mobile=1  → force ON    (desktop preview of the phone build)
+//   2. ?mobile=0  → force OFF   (real phone, prefer the PC layout)
+//   3. Shift+F9   → LIVE TOGGLE while playing (also persists)
+//   4. localStorage "mobile-ui" ("1"/"0" from a previous toggle)
+//   5. Auto: real touch device (pointer: coarse) or a narrow viewport
+// Shift+F9 reloads the page so the class-gated CSS + fullscreen + aim
+// wiring all re-initise coherently — no half-toggled hybrid state.
+const MOBILE_UI_KEY = "mobile-ui";
+const urlMobile = new URLSearchParams(location.search).get("mobile");
+const storedMobile = localStorage.getItem(MOBILE_UI_KEY);
+const isTouchDevice =
+  window.matchMedia("(pointer: coarse)").matches ||
+  Math.min(window.innerWidth, window.innerHeight) <= 480;
+const wantMobileUI =
+  urlMobile === "1" ? true :
+  urlMobile === "0" ? false :
+  storedMobile === "1" ? true :
+  storedMobile === "0" ? false :
+  isTouchDevice;
+if (wantMobileUI) {
+  document.body.classList.add("mobile-ui");
+  if (isTouchDevice) document.body.classList.add("is-touch-device");
+}
+
+/** Shift+F9: flip the mobile UI on desktop/phone and reload — the CSS is
+ *  class-gated, so a reload is the only way to re-run the gate wiring
+ *  (fullscreen, chat chip injection, touch layer) coherently. */
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F9" && e.shiftKey) {
+    e.preventDefault();
+    const next = document.body.classList.contains("mobile-ui") ? "0" : "1";
+    localStorage.setItem(MOBILE_UI_KEY, next);
+    const url = new URL(location.href);
+    url.searchParams.delete("mobile"); // the toggle wins over a stale param
+    location.replace(url.toString());
+  }
+});
+
+/** Single source of truth for "run the mobile gameplay" — CSS class AND
+ *  the JS gates below all read this. */
+const MOBILE_UI = wantMobileUI;
+
 // Kaetram hub: wire the pages to the scene (minimap source, debug toggle,
 // player row → profile card) BEFORE any snapshot can arrive.
 hud.attachHubPages(scene, (p) => showProfilePopup(p));
@@ -300,13 +348,13 @@ const net = new Net({
       lock?: (o: string) => Promise<void>;
     }) | undefined;
     so?.lock?.("landscape").catch(() => { /* unsupported — veil handles it */ });
-    // FULLSCREEN (mobile only): entering the game hides the browser URL
-    // bar/search chrome — the whole screen becomes the game. Must be called
-    // inside the welcome handling of a user-gesture-initiated flow (the
-    // login/play click chain) to satisfy the browser's gesture requirement;
-    // wrapped so desktop browsers and denied requests are plain no-ops.
-    const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
-    if (isTouchDevice && !document.fullscreenElement) {
+    // FULLSCREEN when the MOBILE UI is active (real phone OR the desktop
+    // ?mobile=1 / Shift+F9 preview — the preview should look like a phone,
+    // URL bar included). Must be called inside the welcome handling of a
+    // user-gesture-initiated flow (the login/play click chain) to satisfy
+    // the browser's gesture requirement; wrapped so denied requests are
+    // plain no-ops.
+    if (MOBILE_UI && !document.fullscreenElement) {
       const root = document.documentElement;
       const fs = root.requestFullscreen?.({ navigationUI: "hide" })
         ?? (root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> })
@@ -931,12 +979,14 @@ const mobile = new MobileControls({
 });
 mobile.mount();
 
-// ---- MOBILE CHAT CHIP + TRAY OUTSIDE-TAP (touch devices only) ----
+// ---- MOBILE CHAT CHIP + TRAY OUTSIDE-TAP (mobile-ui mode only) ----
 // Chat moves to the TOP-left on phones (CSS above) as a collapsed chip:
 // tap = expand log + input; a tap OUTSIDE the chat frame collapses it.
 // The unread badge counts lines that arrived while collapsed (cleared on
 // open) — the player never silently misses chat on a phone.
-if (window.matchMedia("(pointer: coarse)").matches) {
+// MOBILE_UI (not matchMedia): the desktop ?mobile=1 / Shift+F9 preview
+// gets the exact same chat chip as a real phone (parity rule).
+if (MOBILE_UI) {
   const chat = document.getElementById("hud-chat")!;
   const log = document.getElementById("chat-log")!;
   const toggle = document.createElement("div");
