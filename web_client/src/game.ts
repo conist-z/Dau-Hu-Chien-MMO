@@ -2370,6 +2370,16 @@ export class WorldScene extends Phaser.Scene {
   /** Mobile aim helpers — see mobileAimTile above. */
   hasAimTarget(): boolean { return this.mobileAimTile !== null; }
 
+  /** STICKY LOCK (flicker-free rapid tapping): set the aim tile without
+   *  any two-tap gate — the box stays put across rapid taps on the same
+   *  tile and only re-renders when the lock actually moves. */
+  lockAimTarget(t: { x: number; y: number }): void {
+    this.mobileAimTile = { ...t };
+  }
+
+  /** Drop the sticky lock (box hides). */
+  clearAimTarget(): void { this.mobileAimTile = null; }
+
   peekAimTarget(): { x: number; y: number } | null {
     return this.mobileAimTile ? { ...this.mobileAimTile } : null;
   }

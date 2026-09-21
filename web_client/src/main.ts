@@ -954,29 +954,24 @@ const mobile = new MobileControls({
   onToggleInventory: () => hud.toggleInventory(),
   onTapWorld: (sx, sy) => {
     // Same pipeline as a desktop primary click (onCanvasAction "primary").
-    // MOBILE AIM MODE: touch has no cursor — the finger is imprecise, and
-    // the old tap-to-act fired on whatever tile happened to sit under it
-    // ("đập phá cứ lệch lệch"). Two-tap flow instead: FIRST tap arms the
-    // green target square on the tile; SECOND tap on the SAME tile
-    // executes chop/break/attack. (onTapWorld only ever fires from
-    // MobileControls, so every call here is a touch call.)
-    if (!scene.mobileTapAim(sx, sy)) return; // first tap: aim armed, no action
-    // NOTE: NO setMouseTile here — that seeds the DESKTOP hover square,
-    // which then re-rendered at the last tap point every frame (the stale
-    // blue box "hiện khi thao tác đè giữ đồ"). Touch aiming lives entirely
-    // in scene.mobileAimTile; the desktop cursor square stays mouse-only.
-    const tile = scene.screenToTile(sx, sy);
-    if (!tile) {
-      net.action("chop");
-      scene.swingSelfHand();
-      return;
-    }
-    const target = scene.clampClickTile(tile);
-    if (!target) {
-      net.actionAt("chop", tile.x, tile.y);
-      scene.swingSelfHand();
-      return;
-    }
+    // MOBILE AIM — STICKY TARGET (no flicker): the old two-tap gate armed
+    // a square then REQUIRED a second tap; rapid tap-to-chop sessions
+    // re-armed/flashed the box every tap ("nháy nháy khựng khựng"). Now:
+    // the FIRST tap locks a sticky target tile (green box, steady); every
+    // later tap on a tile ALREADY locked (or clamped onto it) acts AT ONCE
+    // — chop/break/attack repeat as fast as you can tap. Tap a different
+    // tile = re-lock (one quiet transition, no blink). Tap empty ground
+    // with nothing targetable = clears the lock. The box never toggles
+    // per action.
+    const tapped = scene.screenToTile(sx, sy);
+    const target = tapped ? scene.clampClickTile(tapped) ?? tapped : null;
+    const existing = scene.peekAimTarget();
+    const sameLock = existing && target &&
+      target.x === existing.x && target.y === existing.y;
+    if (!target) { scene.clearAimTarget(); return; }
+    if (!sameLock) scene.lockAimTarget(target);
+    // Act immediately either way — rapid taps on a locked tile chop at
+    // full speed; a fresh lock also acts at once (tap-to-hit = instant).
     if (scene.zombieNear(target)) {
       net.action("attack");
       scene.swingSelfHand();
@@ -1094,17 +1089,10 @@ if (MOBILE_UI) {
     gear.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       e.stopPropagation(); // not an outside tap
-      const willOpen = !document.body.classList.contains("hub-open");
-      setHubOpen(willOpen);
-      // The GEAR is the settings button (user spec): a tap when closed
-      // rolls the reel out AND opens the real settings page; a tap when
-      // open just rolls it back in. Routed through the same bar-button
-      // click path Kaetram binds (#settings-button), so state stays in
-      // sync (active sprite, open-one-close-others).
-      if (willOpen) {
-        const real = document.getElementById("settings-button");
-        real?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      }
+      // The gear ONLY rolls the reel (user correction: opening settings
+      // here made the reel pointless — every other button still needs a
+      // first tap to reveal, then its own tap to use).
+      setHubOpen(!document.body.classList.contains("hub-open"));
     });
     // Taps inside the open strip are hub business, not outside taps.
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());

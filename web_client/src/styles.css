@@ -514,12 +514,10 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
    * reserve assumed a tall desktop window). */
   max-height: min(calc(100vh - 140px), calc(100dvh - 84px));
   overflow-y: auto;
-  /* NO coarse browser scrollbar: the default 14px system bar inside the
-   * pixel-art panel was the "xấu vl". Touch/drag still scrolls natively;
-   * the fading edges below communicate overflow far more elegantly. */
+  /* NO coarse browser scrollbar + NO fade: the panel shows its content
+   * in FULL (user rule — no "mờ mờ bên dưới"). Overflow is simply cut
+   * at the frame edge like a real window; touch/drag scrolls natively. */
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
   /* Panel show/hide animation (pop-in / shrink-out). The .closing class
      plays the exit keyframes before the JS flips .hidden after 140ms. */
   transform-origin: 12px 8px;

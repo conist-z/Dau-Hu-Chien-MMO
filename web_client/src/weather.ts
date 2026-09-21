@@ -319,12 +319,12 @@ const FALLBACK_CFG: Record<string, {
   len: [number, number]; wid: [number, number]; al: [number, number];
   col: string[]; kind: "streak" | "flake" | "dash" | "mist";
 }> = {
-  rain: { n: 90, f: 46, spd: 620, dr: 130, len: [14, 30], wid: [1.4, 2.2],
-    al: [0.38, 0.7], col: ["#cfE2ff", "#b6d0ff"].map((c) => c.toLowerCase()), kind: "streak" },
-  heavy_rain: { n: 150, f: 76, spd: 840, dr: 190, len: [20, 38], wid: [1.8, 2.8],
-    al: [0.5, 0.85], col: ["#d6e6ff", "#c0d8ff"], kind: "streak" },
-  storm: { n: 165, f: 84, spd: 900, dr: 230, len: [22, 42], wid: [2.2, 3.2],
-    al: [0.55, 0.9], col: ["#d2e4ff", "#bcd6ff"], kind: "streak" },
+  rain: { n: 130, f: 66, spd: 640, dr: 150, len: [10, 22], wid: [1.0, 1.6],
+    al: [0.22, 0.5], col: ["#cfe2ff", "#b6d0ff", "#dbe8ff"], kind: "streak" },
+  heavy_rain: { n: 210, f: 108, spd: 860, dr: 200, len: [14, 28], wid: [1.2, 2.0],
+    al: [0.28, 0.6], col: ["#d6e6ff", "#c0d8ff", "#e2ecff"], kind: "streak" },
+  storm: { n: 235, f: 122, spd: 920, dr: 240, len: [16, 32], wid: [1.4, 2.2],
+    al: [0.32, 0.65], col: ["#d2e4ff", "#bcd6ff", "#e0eaff"], kind: "streak" },
   // Snow: rich individual flakes — wide size band, per-flake drift + sway
   // (applied in step()), slow twinkle via alpha variance, several whites.
   snow: { n: 110, f: 60, spd: 70, dr: 26, len: [1.6, 5.2], wid: [1.6, 5.2],
@@ -524,6 +524,23 @@ export class WeatherFx {
         img.onload = () => { this.cloudImg = img; };
         img.src = `${FX_ROOT}/cloud/cloud.png`;
       }
+    }
+    // Rain keys: the CraftPix sheet pack looks BAD tiled on the web (256×32
+    // strips of opaque hard dashes — "mưa xấu vl"). Skip the sheets entirely
+    // and run the PROCEDURAL streak field permanently: individual slanted
+    // lines with per-drop length/speed/alpha read organic at any zoom and
+    // any viewport. (Bolts for storm still load below.)
+    if (style.sheet === "rain") {
+      slot.proceduralKind = FALLBACK_CFG[key]?.kind ?? "streak";
+      this.seedProcedural(slot, key);
+      if (style.bolt) {
+        const boltFiles = SHEET_FILES.thunder ?? [];
+        const boltSheets = (await Promise.all(boltFiles.map((n) => loadSheet("thunder", n))))
+          .filter((s): s is Sheet => s !== null);
+        if (this.current !== slot) return;
+        slot.bolts = boltSheets.map((s) => s.img);
+      }
+      return;
     }
     // Warm the fallback immediately so the first raindrops are visible while
     // the sheets stream in (procedural is swapped out once they arrive).
@@ -1020,7 +1037,14 @@ export class WeatherFx {
           const vlen = Math.hypot(p.vx, p.vy) || 1;
           const ux = (p.vx / vlen) * p.len;
           const uy = (p.vy / vlen) * p.len;
-          ctx.strokeStyle = p.color;
+          // Rounded caps + a head-to-tail alpha gradient: the drop fades
+          // into its own trail instead of a hard double-hard line — the
+          // "silk" look; hard square caps read as confetti dashes.
+          ctx.lineCap = "round";
+          const g = ctx.createLinearGradient(px, py, px - ux, py - uy);
+          g.addColorStop(0, p.color);
+          g.addColorStop(1, "rgba(180,208,255,0)");
+          ctx.strokeStyle = g;
           ctx.lineWidth = p.width;
           ctx.beginPath();
           ctx.moveTo(px, py);
