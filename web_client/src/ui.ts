@@ -2648,33 +2648,55 @@ export class Hud {
     // without a menu (inventory → bag panel, chat → focus input, guilds/
     // friends → not built server-side yet) get the original toggle feel.
     const bar = document.getElementById("buttons")!;
-    // MOBILE JS SCROLL for the hub strip: native touch scroll dies inside
-    // the 90°-rotated landscape frame (browser gesture classification
-    // doesn't follow CSS transforms), so a pointer drag scrolls the strip
-    // MANUALLY. A tap (moved ≤ 8px, ≤ 350ms) is left alone — the browser
-    // still fires the click on the button. Unconditional: harmless on
-    // desktop (drag-to-scroll is even handy there), zero gating.
+    // MOBILE DRAG-SCROLL with MOMENTUM for the hub reel: pointer drag
+    // scrolls the strip manually; the release velocity keeps gliding and
+    // decays (feels like a native list, not a stiff 1:1 drag). A tap
+    // (moved ≤ 8px) still clicks the button; after a real drag the
+    // trailing click is swallowed so lifting the finger can't press one.
     let sId: number | null = null;
-    let sStartY = 0, sLastY = 0, sStartT = 0, sMoved = false;
+    let sStartY = 0, sLastY = 0, sLastT = 0, sStartT = 0, sMoved = false;
+    let sVel = 0;            // px/s, + = scrolling toward the bottom
+    let sMomentum = 0;       // animation-frame id
+    const stopMomentum = (): void => {
+      if (sMomentum) { cancelAnimationFrame(sMomentum); sMomentum = 0; }
+    };
     bar.addEventListener("pointerdown", (e) => {
+      stopMomentum();
       if (bar.scrollHeight <= bar.clientHeight + 1) return; // nothing to scroll
       sId = e.pointerId; sStartY = sLastY = e.clientY;
-      sStartT = performance.now(); sMoved = false;
+      sLastT = sStartT = performance.now(); sMoved = false; sVel = 0;
     });
     bar.addEventListener("pointermove", (e) => {
       if (e.pointerId !== sId) return;
+      const now = performance.now();
       const dy = e.clientY - sLastY;
       if (dy !== 0) bar.scrollTop -= dy; // drag up = scroll down (natural)
-      sLastY = e.clientY;
+      const dt = Math.max(1, now - sLastT);
+      sVel = 0.8 * (-dy / dt) * 1000 + 0.2 * sVel; // smoothed velocity
+      sLastY = e.clientY; sLastT = now;
       if (Math.abs(e.clientY - sStartY) > 8) sMoved = true;
     });
     const endBarDrag = (e: PointerEvent): void => {
       if (e.pointerId !== sId) return;
       sId = null;
-      // A real drag right after a scroll: swallow the trailing click so
-      // lifting the finger doesn't ALSO press whatever button it lands on.
       if (sMoved && performance.now() - sStartT < 600) {
         bar.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true });
+      }
+      // MOMENTUM: glide at release velocity, exponential decay (~0.95/frame).
+      if (Math.abs(sVel) > 60 && bar.scrollHeight > bar.clientHeight + 1) {
+        let last = performance.now();
+        const glide = (): void => {
+          const now = performance.now();
+          const dt = Math.min(48, now - last);
+          last = now;
+          bar.scrollTop += sVel * dt / 1000;
+          sVel *= Math.pow(0.94, dt / 16.7);
+          const clamped =
+            bar.scrollTop <= 0 || bar.scrollTop >= bar.scrollHeight - bar.clientHeight;
+          if (Math.abs(sVel) > 25 && !clamped) sMomentum = requestAnimationFrame(glide);
+          else sMomentum = 0;
+        };
+        sMomentum = requestAnimationFrame(glide);
       }
     };
     bar.addEventListener("pointerup", endBarDrag);

@@ -335,23 +335,25 @@ body.mobile-ui #hub-roll-btn::after {
 body.mobile-ui #hub-roll-btn.open::after { background-position: -44px -200px; }
 body.mobile-ui #hud-hub #buttons.shown {
   display: flex !important;
-  max-height: 166px;
+  /* Taller peek (5 buttons) — the 3-button strip read as a stub ("quá
+   * nhỏ, thấp quá mức"). */
+  max-height: 270px;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;   /* scrolling it never pans the camera */
   flex-direction: column;
   bottom: 0;
   right: 0;
-  padding: 8px 4px 8px 8px;
-  gap: 4px;
+  padding: 10px 6px 10px 10px;
+  gap: 6px;
+  /* NO visible scrollbar: the drag-to-scroll is owned by JS (ui.ts) with
+   * momentum; a scrollbar inside a 56px-wide slab looked clumsy. */
+  scrollbar-width: none;
   /* Readable slab so buttons survive bright terrain. */
-  background: rgba(10, 12, 18, 0.72);
+  background: rgba(10, 12, 18, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px 0 0 14px;
+  border-radius: 16px 0 0 16px;
   backdrop-filter: blur(6px);
-  /* Slim scrollbar (WebKit) + Firefox thin. */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
   touch-action: none;
   /* ROLL-UP: resting = slid fully below the screen edge, faded, and
    * untouchable. body.hub-open rolls it up. transform/opacity only. */
@@ -359,6 +361,13 @@ body.mobile-ui #hud-hub #buttons.shown {
   opacity: 0;
   pointer-events: none;
   transition: transform 0.28s cubic-bezier(0.22, 0.9, 0.36, 1), opacity 0.2s ease;
+}
+body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar { display: none; }
+/* Top/bottom fade masks the button cut-off mid-scroll — the strip reads
+ * as a flowing reel instead of a hard-clipped window (the "đần" look). */
+body.mobile-ui #hud-hub #buttons.shown {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
 }
 body.mobile-ui.hub-open #hud-hub #buttons.shown {
   transform: translateY(0);

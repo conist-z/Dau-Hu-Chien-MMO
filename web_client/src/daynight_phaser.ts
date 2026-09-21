@@ -76,14 +76,21 @@ export class DayNightPhaser {
       return;
     }
     const cam = this.scene.cameras.main;
-    // ANCHOR: screen center via scrollFactor(0) coordinates. The first
-    // version positioned at cam.midPoint (WORLD coords) while the rects
-    // are scrollFactor(0) (SCREEN coords) — the offset between the two
-    // grew with camera scroll, so the dark sheet drifted as you walked
-    // ("1 bên sáng 1 bên tối, layer chạy theo người"). cam.width/2 in
-    // scrollFactor-0 space is a fixed screen point under any scroll/zoom.
+    // ANCHOR + SIZE from the LIVE camera every frame:
+    //  • center via scrollFactor(0) coords — a fixed screen point under
+    //    any scroll (the old cam.midPoint drifted with camera scroll).
+    //  • size = viewport / zoom + margin. scrollFactor(0) objects are
+    //    still scaled by camera zoom around the center, so a rect sized
+    //    from scene.scale.width covered only PART of the screen when the
+    //    camera was zoomed out (the "nửa tối nửa sáng" screenshot: the
+    //    right half was the rect, the left half bare map). Dividing by
+    //    zoom + a margin guarantees full coverage at any zoom/resize.
+    const w = cam.width / cam.zoom + 200;
+    const h = cam.height / cam.zoom + 200;
     this.dark.setPosition(cam.width / 2, cam.height / 2);
     this.cast.setPosition(cam.width / 2, cam.height / 2);
+    this.dark.setSize(w, h);
+    this.cast.setSize(w, h);
     const [r, g, b] = tintFactor(sec);
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const ambient = Math.max(MIN_AMBIENT, 1 - DARK_STRENGTH * (1 - lum));
