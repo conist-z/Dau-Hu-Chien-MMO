@@ -74,6 +74,27 @@ window.addEventListener("keydown", (e) => {
  *  the JS gates below all read this. */
 const MOBILE_UI = wantMobileUI;
 
+// ROTATE SPLASH (real devices only): the portrait hint auto-fades after
+// 0.5s (CSS rv-splash). Re-trigger it every time the device flips BACK to
+// portrait — restart the animation by blanking and restoring it around a
+// forced reflow. Never fires on desktop (no orientationchange to portrait
+// on a monitor; also gated on isTouchDevice for safety).
+if (isTouchDevice) {
+  const veil = document.getElementById("rotate-veil");
+  if (veil) {
+    const retriggerSplash = (): void => {
+      if (!window.matchMedia("(orientation: portrait)").matches) return;
+      veil.style.animation = "none";
+      void veil.offsetWidth; // flush — without this the animation restarts
+      veil.style.animation = ""; // restore the stylesheet's rv-splash
+    };
+    window.addEventListener("orientationchange", () => {
+      // Browsers report the new orientation lazily — retry on the next tick.
+      setTimeout(retriggerSplash, 60);
+    });
+  }
+}
+
 // Kaetram hub: wire the pages to the scene (minimap source, debug toggle,
 // player row → profile card) BEFORE any snapshot can arrive.
 hud.attachHubPages(scene, (p) => showProfilePopup(p));
@@ -924,7 +945,10 @@ const mobile = new MobileControls({
     // executes chop/break/attack. (onTapWorld only ever fires from
     // MobileControls, so every call here is a touch call.)
     if (!scene.mobileTapAim(sx, sy)) return; // first tap: aim armed, no action
-    scene.setMouseTile({ x: sx, y: sy });
+    // NOTE: NO setMouseTile here — that seeds the DESKTOP hover square,
+    // which then re-rendered at the last tap point every frame (the stale
+    // blue box "hiện khi thao tác đè giữ đồ"). Touch aiming lives entirely
+    // in scene.mobileAimTile; the desktop cursor square stays mouse-only.
     const tile = scene.screenToTile(sx, sy);
     if (!tile) {
       net.action("chop");
@@ -950,10 +974,12 @@ const mobile = new MobileControls({
     // Same pipeline as a desktop secondary click (place / eat / station).
     // MOBILE AIM: a long press ALWAYS acts at the held finger's tile (no
     // confirmation gate — placing is already a deliberate hold) and clears
-    // any armed target so the stale green square never lingers.
+    // any armed target so the stale green square never lingers. The tile is
+    // passed INTO hoveringStation: touch never moves the desktop cursor, so
+    // the parameterless read was always null/stale there.
     scene.consumeAimTarget();
     const tile = scene.screenToTile(sx, sy);
-    if (tile && scene.hoveringStation()) {
+    if (tile && scene.hoveringStation(tile)) {
       scene.stationInteract();
       return;
     }

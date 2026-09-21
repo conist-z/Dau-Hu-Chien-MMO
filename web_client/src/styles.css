@@ -1547,12 +1547,13 @@ body.mobile-ui {
 }
 
 /* ---- LANDSCAPE-LOCKED game (user spec: game mặc định màn ngang) ----
- * A full-screen rotate-device veil shows whenever a TOUCH device holds the
- * phone in portrait — the map view is designed for landscape aspect.
- * REAL DEVICES ONLY (pointer:coarse media query): the desktop Shift+F9
- * preview must never veil — a monitor can't be rotated and the veil would
- * be a dead end. Desktop / wide screens are never affected; #rotate-veil
- * is display:none by default. */
+ * The rotate-device splash is now a TRANSIENT 0.5s flash, not a blocking
+ * veil: the game forces landscape itself (orientation lock + landscape
+ * layout), so a phone held portrait shows the hint for half a second,
+ * then it fades out and play continues regardless. REAL DEVICES ONLY
+ * (pointer:coarse media query): the desktop Shift+F9 preview must never
+ * splash — a monitor can't be rotated. #rotate-veil is display:none by
+ * default. */
 #rotate-veil { display: none; }
 @media (pointer: coarse) and (orientation: portrait) {
   #rotate-veil {
@@ -1571,6 +1572,17 @@ body.mobile-ui {
     padding: 24px;
     user-select: none;
     -webkit-user-select: none;
+    /* 0.5s fully visible, then a 0.4s fade to 0 — forwards keeps it
+     * invisible afterwards, and pointer-events:none means the splash can
+     * NEVER block what's underneath (no dead-end veil). JS re-triggers it
+     * on every flip back to portrait (main.ts orientation listener). */
+    pointer-events: none;
+    animation: rv-splash 0.9s ease forwards;
+  }
+  @keyframes rv-splash {
+    0% { opacity: 1; }
+    55.6% { opacity: 1; } /* 0.5s of the 0.9s run */
+    100% { opacity: 0; }
   }
   #rotate-veil .rv-icon { font-size: 56px; animation: rv-tilt 1.6s ease-in-out infinite; }
   #rotate-veil h2 { margin: 0; font-size: 20px; }

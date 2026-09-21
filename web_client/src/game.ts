@@ -2385,19 +2385,25 @@ export class WorldScene extends Phaser.Scene {
    *  select the tile (hover square locks onto it, turns green); SECOND tap
    *  on the SAME tile = confirmed -> returns true (caller executes);
    *  tap on a DIFFERENT tile = re-aim -> returns false. Desktop is never
-   *  routed through this (main.ts branches on pointer type). */
+   *  routed through this (main.ts branches on pointer type).
+   *  OFFSET KILLER: the armed tile is the CLAMPED one — the exact tile the
+   *  server will act on (clampClickTile mirrors the server's aim clamp).
+   *  Showing the raw tapped tile while the action landed on the clamped
+   *  neighbour was the "box đập vẫn lệch" report: the box and the effect
+   *  MUST be the same tile, so they share one source of truth. */
   mobileTapAim(sx: number, sy: number): boolean {
     const tile = this.screenToTile(sx, sy);
     if (!tile) { this.mobileAimTile = null; return false; }
+    const target = this.clampClickTile(tile) ?? tile;
     if (
       this.mobileAimTile &&
-      this.mobileAimTile.x === tile.x &&
-      this.mobileAimTile.y === tile.y
+      this.mobileAimTile.x === target.x &&
+      this.mobileAimTile.y === target.y
     ) {
       this.mobileAimTile = null;
       return true; // confirmed
     }
-    this.mobileAimTile = tile;
+    this.mobileAimTile = target;
     return false;
   }
 
@@ -2405,6 +2411,10 @@ export class WorldScene extends Phaser.Scene {
     this.ensureHoverSquare();
     const sq = this.hoverSquare;
     if (!sq) return; // ensureHoverSquare guarantees construction; belt+braces
+    // The square must MATCH the tile cell: it was created 30x30 (hard-coded)
+    // while maps run 16/32/48px tiles — a wrong-size box reads as offset
+    // even when centred. Resize to the tile every frame (cheap).
+    sq.setSize(this.tilePx - 2, this.tilePx - 2);
     // MOBILE AIM LOCK: while a touch aim target is armed it OWNS the cursor
     // square (locked green = "tap again to act"). Otherwise the cursor
     // follows the live mouse tile as before (desktop unchanged).
@@ -2638,10 +2648,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** True when the CURRENT hover tile is a station in range (click router). */
-  hoveringStation(): boolean {
-    return !!this.nearestStation && !!this.mouseTile &&
-      this.mouseTile.x === this.nearestStation.x &&
-      this.mouseTile.y === this.nearestStation.y;
+  hoveringStation(tile?: { x: number; y: number } | null): boolean {
+    // Optional tile param: the mobile long-press passes the ACTUAL pressed
+    // tile — reading this.mouseTile there was always null/stale on touch
+    // (touch never moves a mouse cursor), so station interact misfired.
+    const t = tile ?? this.mouseTile;
+    return !!this.nearestStation && !!t &&
+      t.x === this.nearestStation.x &&
+      t.y === this.nearestStation.y;
   }
 
   /**
