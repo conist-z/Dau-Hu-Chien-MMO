@@ -36,8 +36,8 @@ export interface MobileHooks {
 
 /** Floating knob sizing (CSS px; the knob follows the finger). */
 const KNOB_SIZE = 76; // knob diameter on screen (128px art scaled down)
-const KNOB_RADIUS = 56; // max drag distance from the touch origin
-const RUN_THRESHOLD = 0.95; // |vector| treated as run
+const WALK_RADIUS = 60; // drag distance that maxes the WALK vector
+const RUN_RADIUS = WALK_RADIUS * 2; // beyond this = RUN (Shift equivalent)
 
 /** ms a finger must stay (and stay still) to count as a long press. */
 const LONG_PRESS_MS = 450;
@@ -110,7 +110,10 @@ export class MobileControls {
       }
       this.stickOrigin = { x: e.clientX, y: e.clientY };
       if (this.stickEl) {
-        this.stickEl.classList.remove("hidden");
+        // The knob is NEVER display:none after the first use: it lingers as a
+        // translucent ghost where released, then snaps to full opacity and
+        // teleports under the new finger on the next touch.
+        this.stickEl.classList.remove("hidden", "mc-idle");
         this.stickEl.style.left = `${e.clientX - KNOB_SIZE / 2}px`;
         this.stickEl.style.top = `${e.clientY - KNOB_SIZE / 2}px`;
         if (this.knobEl) this.knobEl.style.transform = "translate(0px, 0px)";
@@ -125,7 +128,10 @@ export class MobileControls {
       if (e.pointerId !== this.stickPointer) return;
       this.stickPointer = null;
       this.stickRunning = false;
-      this.stickEl?.classList.add("hidden");
+      // NOT display:none — the knob fades to translucent ghost at its last
+      // position (user spec: mờ + trong suốt, không biến mất). pointer-events
+      // stay off so it never blocks the look/canvas interactions.
+      this.stickEl?.classList.add("mc-idle");
       if (this.knobEl) this.knobEl.src = "/ui/mobile/stick_nub.png";
       this.hooks.onMove(0, 0, false);
     };
@@ -230,14 +236,16 @@ export class MobileControls {
     look.addEventListener("pointercancel", lookLift);
   }
 
-  /** Recompute the knob offset + emit the analog move vector. The knob
-   *  slides within KNOB_RADIUS of the touch origin; beyond that it clamps
-   *  (magnitude caps at 1). Full push = run → the knob lights purple. */
+  /** Recompute the knob offset + emit the analog move vector. Drag model:
+   *  0..WALK_RADIUS = walk speed ramp (0..1), WALK_RADIUS..RUN_RADIUS =
+   *  RUN (Shift equivalent — full walk vector + running flag). The knob
+   *  follows the finger up to RUN_RADIUS, then clamps at the rim. At run
+   *  the knob lights purple. */
   private updateNub(x: number, y: number): void {
     let dx = x - this.stickOrigin.x;
     let dy = y - this.stickOrigin.y;
     const len = Math.hypot(dx, dy);
-    const clamped = Math.min(len, KNOB_RADIUS);
+    const clamped = Math.min(len, RUN_RADIUS);
     if (len > 0) {
       dx = (dx / len) * clamped;
       dy = (dy / len) * clamped;
@@ -245,8 +253,12 @@ export class MobileControls {
     if (this.knobEl) {
       this.knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
     }
-    const mag = clamped / KNOB_RADIUS;
-    const running = mag >= RUN_THRESHOLD;
+    // Walk vector: 0..1 across WALK_RADIUS. Past WALK_RADIUS the player is
+    // running: vector stays at 1 and the running flag turns on (exactly the
+    // keyboard Shift behaviour — run never multiplies the vector, only the
+    // server-side speed).
+    const running = len >= WALK_RADIUS;
+    const mag = Math.min(1, len / WALK_RADIUS);
     if (running !== this.stickRunning) {
       this.stickRunning = running;
       if (this.knobEl) {
@@ -259,11 +271,11 @@ export class MobileControls {
     this.hooks.onMove(nx, ny, running);
   }
 
-  /** Clear movement + hide the knob (death / tab switch parity). */
+  /** Clear movement + ghost the knob (death / tab switch parity). */
   clear(): void {
     this.stickPointer = null;
     this.stickRunning = false;
-    this.stickEl?.classList.add("hidden");
+    this.stickEl?.classList.add("mc-idle");
     if (this.knobEl) {
       this.knobEl.style.transform = "translate(0px, 0px)";
       this.knobEl.src = "/ui/mobile/stick_nub.png";
