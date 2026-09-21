@@ -1154,12 +1154,11 @@ html, body {
   /* stick zone + buttons sit above it and capture their own touches. */
   #mc-look { position: absolute; inset: 0; touch-action: none; }
 
-  /* ---- Dynamic cross D-pad (Roblox-style follow-finger, Kenney art) ----
-   * #mc-stick-zone = the bottom-left activation area: touching anywhere in
-   * it spawns the pad under the finger. The pad is position:fixed and the
-   * ZONE owns the pointer (setPointerCapture) — the pad is visuals only.
-   * Layers: body image fills the box; 4 arm images are 50%-cells anchored
-   * to their side (the exact layout of the Python composite). */
+  /* ---- Floating knob joystick (user spec: NO ring, NO base — just one
+   * round knob that appears under the finger and can be dragged) ----
+   * #mc-stick-zone = the bottom-left activation area; the knob itself is
+   * position:fixed, pointer-events:none (the ZONE owns the pointer), and
+   * slides via transform (GPU-composited). */
   #mc-stick-zone {
     position: absolute;
     left: 0;
@@ -1169,39 +1168,19 @@ html, body {
     height: 46%;
     touch-action: none;
   }
-  #mc-stick {
+  #mc-knob {
     position: fixed;
-    width: 150px;   /* = PAD_SIZE (mobile_controls.ts) */
-    height: 150px;
+    width: 76px;    /* = KNOB_SIZE (mobile_controls.ts) */
+    height: 76px;
     pointer-events: none;
-    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+    image-rendering: pixelated;
+    user-select: none;
+    -webkit-user-select: none;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+    will-change: transform;
     z-index: 1;
   }
-  #mc-stick.hidden { display: none; }
-  /* Class-based shared rule (NOT #mc-stick img — that (1,0,1) specificity
-   * beat the per-arm id rules and pinned every arm to the top-left). */
-  #mc-stick > .mc-pad-base {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    image-rendering: pixelated;
-    pointer-events: none;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-  #mc-stick > img.mc-arm {
-    position: absolute;
-    width: 50%; height: 50%;
-    image-rendering: pixelated;
-    pointer-events: none;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-  /* id+element beats the shared rules above — all four sides explicit. */
-  #mc-stick > img#mc-el-n { top: 0; bottom: auto; left: 25%; right: auto; }
-  #mc-stick > img#mc-el-s { top: auto; bottom: 0; left: 25%; right: auto; }
-  #mc-stick > img#mc-el-w { top: 25%; bottom: auto; left: 0; right: auto; }
-  #mc-stick > img#mc-el-e { top: 25%; bottom: auto; left: auto; right: 0; }
+  #mc-knob.hidden { display: none; }
 
   /* ---- Action buttons (bottom-right): sprite bg + icon, pressed state */
   #mc-actions {
