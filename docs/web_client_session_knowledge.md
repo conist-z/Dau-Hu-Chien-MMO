@@ -1,5 +1,20 @@
 # Web Client — Kiến thức tổng hợp (session 09/2026)
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  🚨🚨🚨  DISCORD CLIENT ĐANG TẠM NGƯNG PHÁT TRIỂN  🚨🚨🚨          ║
+# ║                                                                  ║
+# ║  TẤT CẢ các thay đổi UI / rendering / tính năng MỚI chỉ nhắm     ║
+# ║  vào WEB CLIENT (web_client/, web_api/, relay).                  ║
+# ║                                                                  ║
+# ║ discord_ui/, rendering/ (Discord renderer), message D-pad, hub   ║
+# ║ message, screen/hub pair trên Discord — CHỈ giữ ở mức "không     ║
+# ║ hỏng" (bugfix sống còn), KHÔNG thêm tính năng mới vào đó.        ║
+# ║                                                                  ║
+# ║ Nếu task có vẻ liên quan Discord UI → ĐỌC LẠI YÊU CẦU: 99% là    ║
+# ║ người dùng muốn bên WEB. Đừng sửa discord_ui/rendering để thêm   ║
+# ║ tính năng — chỉ chạm khi game engine game/ dùng chung.           ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
 > Tài liệu gói toàn bộ kiến thức, kiến trúc, bug đã fix và quy trình debug của
 > session xây web client. Đọc trước khi đụng vào `web_client/`, `web_api/`,
 > `web_client/relay/` hoặc thay đổi luồng Discord bot ↔ web.
@@ -110,6 +125,64 @@ GameManager → GameState/Actions/Rules → SQLite
 |---|---|---|
 | Code Python (`web_api/`, `game/`, `config.py`…) | Panel bot qua `scripts/deploy_files.py <file…>` (vài giây) hoặc `scripts/upload_tree.py` (đầy đủ, lâu) | **Bấm Restart bot** trên panel |
 | Web client TS / relay | `cd web_client && npm run build` → copy `dist/` vào `web_client/relay/dist/` (NHỚ tạo lại `app-config.json` — lệnh `rm -rf + cp` nó biến mất) → `git push` | Railway **tự deploy** ~2 phút |
+
+## 1b. 📱 MOBILE WEB CLIENT — LUẬT ĐỒNG BỘ PC ↔ MOBILE (21/09)
+
+**Web client là MỘT codebase duy nhất phục vụ CẢ desktop (PC) và mobile
+(điện thoại/tablet). KHÔNG có 2 client riêng.** Mọi thay đổi khi làm việc
+với web PC đều phải được kiểm tra trên mobile — và ngược lại. Đây là luật,
+không phải gợi ý.
+
+### Luật cứng khi đụng web_client/
+1. **Một tính năng mới trên PC = phải dùng được trên mobile** (hoặc bị
+   ẩn có chủ đích trên mobile). Fix bug trên PC → kiểm tra bug tương đương
+   trên mobile. Fix bug trên mobile (touch, viewport, z-index…) → kiểm tra
+   không vỡ desktop (lớp mobile ẩn hoàn toàn trên PC).
+2. **UI/UX viết theo mobile-first khi chạm vào HUD/overlay**: bất kỳ element
+   DOM mới nào phủ màn hình phải tự hỏi "trên điện thoại nó đè lên gì?".
+   Z-index trên mobile: game canvas < weather/daynight (1) < #overlay HUD (2)
+   < #mobile-controls (3, chỉ bật trong game) < HUD pieces cao (4–6) <
+   popup/gate (cao hơn). Một lớp phủ màn hình đặt sai z-index sẽ nuốt click
+   đăng nhập (bug đã gặp — xem bên dưới).
+3. **Input phải đi qua CÙNG chuỗi cho cả 2 nền tảng**: touch controls tái
+   dùng đúng hook của bàn phím/chuột (MobileControls → KeyboardInput keys →
+   emit() → Net). KHÔNG BAO GIỜ viết đường input song song riêng cho mobile
+   — prediction, seq'd inputs, server path phải giống hệt PC.
+4. **Tap/long-press = click trái/phải**: mọi handler chuột mới (onCanvasAction
+   primary/secondary) phải có đường tap/long-press tương đương trong
+   `mobile_controls.ts`. Thêm action chuột mới trên PC mà quên mapping tap
+   là mất tính năng trên mobile.
+5. **Camera API dùng chung**: zoom/pan của mobile (`applyPinchZoom`,
+   `applyLookPan` trong game.ts) hoạt động cả trên PC nếu gọi — không viết
+   logic camera riêng cho desktop mà mobile không thấy được.
+6. **Viewport meta**: `index.html` có `viewport-fit=cover + user-scalable=no`
+   — pinch trên điện thoại điều khiển CAMERA (pinch-zoom trong
+   mobile_controls.ts), KHÔNG BAO GIỜ là page-zoom của trình duyệt. Đừng xóa
+   meta này khi sửa head.
+7. **Test cả 2 trước khi push**: build xong, mở Chrome devtools → device
+   emulation (iPhone/Pixel) kiểm: (a) login gate bấm được, (b) D-pad hiện ra
+   sau khi vào game, (c) tap đập block, (d) pinch zoom. Desktop kiểm: không
+   có nút cảm ứng nào hiện, WASD/chuột không bị ảnh hưởng.
+
+### Kiến trúc mobile (file liên quan)
+- `web_client/src/mobile_controls.ts` — toàn bộ lớp cảm ứng: D-pad 8 hướng
+  + nút ⚔️/🎒 + mặt LOOK (tap = primary, long-press = secondary, drag = pan,
+  pinch = zoom). Inject DOM bằng JS, không đụng index.html.
+- CSS: block `#mobile-controls` cuối `styles.css` — ẨN mặc định, chỉ hiện
+  khi `@media (pointer: coarse), (max-width: 820px)` VÀ có class `.mc-on`
+  (bật trong `onWelcome`, tắt trong `onConnectionChange(false)` — vì gate/
+  lobby nằm trong #overlay DƯỚI lớp này; bật sớm = nuốt nút đăng nhập —
+  bug đã sửa commit `7bb0717`).
+- `game.ts` camera API: `applyPinchZoom(factor)` (1.2–4.0×),
+  `applyLookPan(dx,dy)` (offset follow-point, tự trôi về player khi đi bộ),
+  `resetLookPan()`.
+- `main.ts`: `MobileControls` hooks — `setDir` ghi vào KeyboardInput.keys,
+  `onTapWorld`/`onLongPressWorld` chạy CÙNG pipeline với
+  `onCanvasAction` primary/secondary của PC.
+
+### Deploy mobile = deploy PC (một thể)
+Mobile không có build/deploy riêng: `npm run build` → copy `relay/dist/` →
+`git push` (Railway) là ra cả 2. Không bao giờ tách nhánh mobile.
 
 ```powershell
 # Quy trình chuẩn sau mỗi thay đổi web client:
@@ -476,6 +549,23 @@ ngưng build tiếp.** Mọi tính năng UI mới chỉ làm trên **web client*
 không thêm tính năng mới.
 
 ## 10. Hub bar dọc Kaetram (web client) — kiến trúc + sprite data
+
+**Đổi hướng 18/09: phase 1 (bar tự viết, page tự render đơn giản) bị
+chủ project từ chối — yêu cầu là CHÉP NGUYÊN UI gốc Kaetram cho từng page:
+đúng HTML structure (game.astro), đúng CSS (scss/game/impl/*.scss), đúng
+logic (menu/*.ts), đủ chức năng gốc.** Repo clone tại `_kaetram_ref/`
+(MPL 2.0, chấp nhận theo chủ project). Reference files:
+- HTML gốc: `packages/client/components/game.astro` (tất cả page containers:
+  quests, achievements, settings-page, leaderboards, bank, trade, crafting,
+  equipments, map-frame, guilds, friends-container, store, enchant…)
+- CSS gốc: `packages/client/scss/game/impl/` (_quests, _achievements,
+  _settings, _leaderboards, _bank, _crafting, _trade, _equipments, _map,
+  _profile, _guilds, _friends…) + `abstracts/_sprite.scss` + `_slice.scss`
+  (9-slice kit: slice-container, slice-inner-container, slice-list-item,
+  slice-dialog, slice-tab, slice-input, slice-button, close-container…)
+- Logic gốc: `packages/client/src/menu/*.ts` (quests, achievements,
+  settings, leaderboards, bank, crafting, trade, equipments, warp=map-frame,
+  guilds, friends…) — mỗi menu = super(selector, closeSelector, buttonSelector)
 
 Thanh nút dọc sát mép phải, ngay trên khung chat, mở các "page" kiểu Kaetram.
 Code: `web_client/src/hub_bar.ts` (bar + sprite mapping), `hub_pages.ts`

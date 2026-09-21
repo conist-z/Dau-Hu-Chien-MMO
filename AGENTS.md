@@ -1,5 +1,18 @@
 # Discord Map Game — Engineering Rules
 
+## 🚨 DEVELOPMENT FOCUS — READ FIRST 🚨
+
+**DISCORD CLIENT ĐANG TẠM NGƯNG PHÁT TRIỂN (paused).**
+All NEW UI / rendering / feature work targets the **WEB CLIENT ONLY**
+(`web_client/`, `web_api/`, `web_client/relay/`). The Discord-side UI
+(`discord_ui/`, `rendering/` Discord renderer, D-pad/hub/screen messages) is
+**maintenance mode**: keep it from breaking, do NOT add new features there.
+When a task sounds like "UI/preview/map view", assume the user means the
+**web client** unless stated otherwise. Only touch `discord_ui/`/`rendering/`
+for survival bugfixes or shared engine code in `game/`.
+
+---
+
 You are implementing a Discord-native multiplayer map game.
 
 The game screen MUST live entirely inside a Discord message. Do NOT create or require an external web frontend.
@@ -115,6 +128,11 @@ cd "D:\dự án mini build bot discord mmo event"
 # ⚠️ Mouse input MUST bind to `game.canvas` (Phaser) — NEVER `querySelector("#game-root canvas")`:
 # the weather-fx canvas mounts into #game-root BEFORE Phaser, so that selector grabs the wrong
 # (pointer-events: none) canvas → hover box + clicks silently die, right-click leaks Chrome menu.
+# ⚠️ PC ↔ MOBILE SYNC (hard rule): the web client serves desktop AND mobile from ONE codebase.
+# Any PC change must be checked on mobile (device emulation) and vice versa — new mouse actions
+# need tap/long-press parity in src/mobile_controls.ts; any full-screen DOM layer needs its
+# z-index checked against the mobile controls layer + login gate (mobile must only activate
+# in-game via .mc-on). Details: docs/web_client_session_knowledge.md §1b.
 cd web_client; npm run build
 rm -rf relay/dist; cp -r dist relay/dist
 # recreate web_client/relay/dist/app-config.json (client_id + redirect_uri) if wiped
