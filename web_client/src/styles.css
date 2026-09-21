@@ -514,10 +514,17 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
    * reserve assumed a tall desktop window). */
   max-height: min(calc(100vh - 140px), calc(100dvh - 84px));
   overflow-y: auto;
+  /* NO coarse browser scrollbar: the default 14px system bar inside the
+   * pixel-art panel was the "xấu vl". Touch/drag still scrolls natively;
+   * the fading edges below communicate overflow far more elegantly. */
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
   /* Panel show/hide animation (pop-in / shrink-out). The .closing class
      plays the exit keyframes before the JS flips .hidden after 140ms. */
   transform-origin: 12px 8px;
 }
+#inv-panel::-webkit-scrollbar { display: none; }
 #inv-panel.anim-show { animation: panel-pop-in 0.16s ease-out; }
 #inv-panel.anim-hide { animation: panel-pop-out 0.14s ease-in forwards; }
 @keyframes panel-pop-in {
@@ -834,19 +841,21 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
 }
 
 /* Quick-craft catalog scrollbar (drawn only when the recipe list overflows
-   the 3×5 grid). The rail spans exactly the slot region's top→bottom; the
-   thumb is 2px-wide pixel green, matching the kit's accent palette. */
+   the 3×5 grid). Hairline pixel rail: half the old width + softened
+   background, so it hints instead of shouting. */
 .craft-scroll-rail {
   position: absolute;
   z-index: 3;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 2px;
   image-rendering: pixelated;
   pointer-events: none;
 }
 .craft-scroll-thumb {
   position: absolute;
-  background: #57c767;
-  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.4);
+  background: rgba(87, 199, 103, 0.85);
+  border-radius: 2px;
+  box-shadow: 0 0 3px rgba(87, 199, 103, 0.35);
   image-rendering: pixelated;
 }
 

@@ -1649,7 +1649,7 @@ export class Hud {
     const railH = railBottom - railTop;
     rail.className = "craft-scroll-rail";
     rail.style.cssText =
-      `left:${railX}px;top:${railTop}px;width:${2 * SC}px;height:${railH}px;`;
+      `left:${railX}px;top:${railTop}px;width:${1 * SC}px;height:${railH}px;`;
     // Thumb fraction: visible cells over total recipes (min 1 cell tall).
     const frac = Math.max(gridCells / totalRecipes, gridCells / (gridCells * 4));
     let thumbH = Math.max(2 * SC, Math.round(railH * Math.min(1, frac)));
@@ -2663,6 +2663,11 @@ export class Hud {
     bar.addEventListener("pointerdown", (e) => {
       stopMomentum();
       if (bar.scrollHeight <= bar.clientHeight + 1) return; // nothing to scroll
+      // CAPTURE: the finger sliding off the strip mid-drag (or lifting
+      // outside it) previously ended the gesture from nowhere — the drag
+      // died and a stray tap/click hit the hub or the world ("vuốt hay bị
+      // văng ra ngoài"). Capture keeps the whole gesture owned by the bar.
+      try { bar.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
       sId = e.pointerId; sStartY = sLastY = e.clientY;
       sLastT = sStartT = performance.now(); sMoved = false; sVel = 0;
     });
@@ -2682,8 +2687,9 @@ export class Hud {
       if (sMoved && performance.now() - sStartT < 600) {
         bar.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true });
       }
-      // MOMENTUM: glide at release velocity, exponential decay (~0.95/frame).
-      if (Math.abs(sVel) > 60 && bar.scrollHeight > bar.clientHeight + 1) {
+      // MOMENTUM: glide at release velocity, exponential decay (~0.94/frame).
+      // Lower trigger (30px/s) so short, slow flicks glide too.
+      if (Math.abs(sVel) > 30 && bar.scrollHeight > bar.clientHeight + 1) {
         let last = performance.now();
         const glide = (): void => {
           const now = performance.now();
