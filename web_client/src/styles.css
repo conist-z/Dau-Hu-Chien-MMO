@@ -296,7 +296,15 @@ body.mobile-ui #hud-hub #buttons.shown {
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;   /* scrolling it never pans the camera */
-  touch-action: pan-y;            /* vertical scroll only, taps stay taps */
+  /* BOTH axes: on portrait phones the whole frame is rotated 90° (FORCE
+   * LANDSCAPE), so the bar's visual scroll axis maps to a DIFFERENT
+   * physical axis — pan-y alone (the old value) made the browser classify
+   * every swipe along the bar as a forbidden gesture and the scroll died
+   * ("thanh cuộn ko hoạt động, chỉ còn 3 nút"). pan-x pan-y lets the
+   * browser pick whichever physical axis matches the rotated bar; the
+   * stick zone / look surface keep their own touch-action so camera pan
+   * is unaffected. */
+  touch-action: pan-x pan-y;      /* swipes scroll, taps stay taps */
   flex-direction: column;
   bottom: 0;
   right: 0;

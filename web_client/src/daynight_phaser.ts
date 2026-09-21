@@ -76,8 +76,14 @@ export class DayNightPhaser {
       return;
     }
     const cam = this.scene.cameras.main;
-    this.dark.setPosition(cam.midPoint.x, cam.midPoint.y);
-    this.cast.setPosition(cam.midPoint.x, cam.midPoint.y);
+    // ANCHOR: screen center via scrollFactor(0) coordinates. The first
+    // version positioned at cam.midPoint (WORLD coords) while the rects
+    // are scrollFactor(0) (SCREEN coords) — the offset between the two
+    // grew with camera scroll, so the dark sheet drifted as you walked
+    // ("1 bên sáng 1 bên tối, layer chạy theo người"). cam.width/2 in
+    // scrollFactor-0 space is a fixed screen point under any scroll/zoom.
+    this.dark.setPosition(cam.width / 2, cam.height / 2);
+    this.cast.setPosition(cam.width / 2, cam.height / 2);
     const [r, g, b] = tintFactor(sec);
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const ambient = Math.max(MIN_AMBIENT, 1 - DARK_STRENGTH * (1 - lum));
