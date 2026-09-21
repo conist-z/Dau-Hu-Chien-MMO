@@ -1085,6 +1085,9 @@ if (MOBILE_UI) {
     const setHubOpen = (open: boolean): void => {
       document.body.classList.toggle("hub-open", open);
       gear.classList.toggle("open", open);
+      // ui.ts listens: 300ms click grace after opening so the opening
+      // finger can't accidentally press the first reel button.
+      if (open) window.dispatchEvent(new Event("hub-reel-opened"));
     };
     gear.addEventListener("pointerdown", (e) => {
       e.preventDefault();

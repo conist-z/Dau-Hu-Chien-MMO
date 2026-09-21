@@ -2659,6 +2659,11 @@ export class Hud {
     let sStartY = 0, sLastY = 0, sLastT = 0, sStartT = 0, sMoved = false;
     let sVel = 0;            // px/s, + = scrolling toward the bottom
     let sMomentum = 0;       // animation-frame id
+    // OPEN GRACE: clicks are ignored for 300ms after the reel opens — the
+    // finger that opened it often rests over the first button and a quick
+    // second tap pressed it unintentionally ("vừa nhấn vào là bấm icon").
+    let reelOpenedAt = 0;
+    window.addEventListener("hub-reel-opened", () => { reelOpenedAt = performance.now(); });
     const stopMomentum = (): void => {
       if (sMomentum) { cancelAnimationFrame(sMomentum); sMomentum = 0; }
     };
@@ -2710,6 +2715,13 @@ export class Hud {
     bar.addEventListener("pointerup", endBarDrag);
     bar.addEventListener("pointercancel", endBarDrag);
     bar.addEventListener("click", (e) => {
+      // OPEN-GRACE GUARD: ignore button clicks in the first 300ms after
+      // the reel opened (accidental press from the opening finger).
+      if (reelOpenedAt && performance.now() - reelOpenedAt < 300) {
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
       const btn = (e.target as HTMLElement).closest("div[id$=-button]") as HTMLElement | null;
       if (!btn) return;
       switch (btn.id) {

@@ -371,12 +371,7 @@ body.mobile-ui #hud-hub #buttons.shown {
   transition: transform 0.28s cubic-bezier(0.22, 0.9, 0.36, 1), opacity 0.2s ease;
 }
 body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar { display: none; }
-/* Top/bottom fade masks the button cut-off mid-scroll — the strip reads
- * as a flowing reel instead of a hard-clipped window (the "đần" look). */
-body.mobile-ui #hud-hub #buttons.shown {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
-}
+/* NO fade mask (user rule): buttons show crisp to the slab edges. */
 body.mobile-ui.hub-open #hud-hub #buttons.shown {
   transform: translateY(0);
   opacity: 1;
@@ -526,13 +521,20 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
   transform-origin: 12px 8px;
   scale: var(--panel-scale, 1);
 }
-@media (max-height: 420px) {
+@media (max-height: 480px) {
   #inv-panel { --panel-scale: 0.82; }
 }
-@media (max-height: 340px) {
+@media (max-height: 400px) {
   #inv-panel { --panel-scale: 0.72; }
 }
+@media (max-height: 340px) {
+  #inv-panel { --panel-scale: 0.62; }
+}
 #inv-panel.anim-show { animation: panel-pop-in 0.16s ease-out; }
+/* SCALE-ANCHOR FIX: `scale` shrinks around transform-origin (12px 8px,
+ * top-left) — on tall layouts the bag+craft combo (594×449px) stays put
+ * and only grows downward; with the origin at the TOP-LEFT the scaled
+ * panel always fits under the top HUD bar and never spills left/right. */
 #inv-panel.anim-hide { animation: panel-pop-out 0.14s ease-in forwards; }
 @keyframes panel-pop-in {
   from { opacity: 0; transform: scale(0.86) translateY(-6px); }
