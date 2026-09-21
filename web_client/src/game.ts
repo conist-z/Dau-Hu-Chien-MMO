@@ -1687,8 +1687,16 @@ export class WorldScene extends Phaser.Scene {
     // already hold the exact right pixels — skip everything (this beat ran
     // per frame and its allocations/readbacks were the movement stutter on
     // big Ekonia maps). Reuse one preallocated buffer otherwise.
-    if (this.selfX === this.lastFadeX && this.selfY === this.lastFadeY
-        && this.fadeBuf && this.fadeBuf.width === bw && this.fadeBuf.height === bh) {
+    // MOVEMENT THROTTLE (PC lag, 22/09): the float position changes EVERY
+    // frame while walking, so the old equality check never skipped and the
+    // full sqrt loop + texSubImage2D upload ran 60-144x/s — stuttering
+    // exactly (and only) while moving. The fade is a smooth radial gradient:
+    // recomputing it every 1/4 tile (~8-12 Hz at walk speed) is visually
+    // identical and cuts the per-step cost ~6x.
+    const MOVED = 0.25;
+    if (this.fadeBuf && this.fadeBuf.width === bw && this.fadeBuf.height === bh
+        && Math.abs(this.selfX - this.lastFadeX) < MOVED
+        && Math.abs(this.selfY - this.lastFadeY) < MOVED) {
       return;
     }
     this.lastFadeX = this.selfX;
@@ -2337,10 +2345,68 @@ export class WorldScene extends Phaser.Scene {
       .setVisible(false);
   }
 
+  /** MOBILE AIM TARGET (touch): the tile the player confirmed with a first
+   *  tap — a second tap on the SAME tile executes, a tap elsewhere re-aims.
+   *  null = aim mode idle (the hover square follows taps only). The cursor
+   *  (updateHoverSquare) drives it; the main.ts mobile hooks consume it via
+   *  hasAimTarget/peekAimTarget/consumeAimTarget. Pure client state: the
+   *  server still receives the tile the action lands on. */
+  private mobileAimTile: { x: number; y: number } | null = null;
+
+  /** Mobile aim helpers — see mobileAimTile above. */
+  hasAimTarget(): boolean { return this.mobileAimTile !== null; }
+
+  peekAimTarget(): { x: number; y: number } | null {
+    return this.mobileAimTile ? { ...this.mobileAimTile } : null;
+  }
+
+  /** Read-and-clear (executing an action dismisses the confirmation). */
+  consumeAimTarget(): { x: number; y: number } | null {
+    const t = this.mobileAimTile;
+    this.mobileAimTile = null;
+    return t ? { ...t } : null;
+  }
+
+  /** Two-tap aim state machine for touch: FIRST tap on a world point =
+   *  select the tile (hover square locks onto it, turns green); SECOND tap
+   *  on the SAME tile = confirmed -> returns true (caller executes);
+   *  tap on a DIFFERENT tile = re-aim -> returns false. Desktop is never
+   *  routed through this (main.ts branches on pointer type). */
+  mobileTapAim(sx: number, sy: number): boolean {
+    const tile = this.screenToTile(sx, sy);
+    if (!tile) { this.mobileAimTile = null; return false; }
+    if (
+      this.mobileAimTile &&
+      this.mobileAimTile.x === tile.x &&
+      this.mobileAimTile.y === tile.y
+    ) {
+      this.mobileAimTile = null;
+      return true; // confirmed
+    }
+    this.mobileAimTile = tile;
+    return false;
+  }
+
   private updateHoverSquare(): void {
     this.ensureHoverSquare();
-    if (!this.hoverSquare || !this.mouseTile) {
-      this.hoverSquare?.setVisible(false);
+    const sq = this.hoverSquare;
+    if (!sq) return; // ensureHoverSquare guarantees construction; belt+braces
+    // MOBILE AIM LOCK: while a touch aim target is armed it OWNS the cursor
+    // square (locked green = "tap again to act"). Otherwise the cursor
+    // follows the live mouse tile as before (desktop unchanged).
+    if (this.mobileAimTile) {
+      this.hoverSquare
+        .setPosition(this.mobileAimTile.x * this.tilePx + this.tilePx / 2, this.mobileAimTile.y * this.tilePx + this.tilePx / 2)
+        .setVisible(true)
+        .setDepth(100)
+        .setActive(true)
+        .setAlpha(1)
+        .setFillStyle(0x6fe08c, 0.14) // green tint: armed
+        .setStrokeStyle(2, 0x6fe08c, 0.95);
+      return;
+    }
+    if (!this.mouseTile) {
+      this.hoverSquare.setVisible(false);
       return;
     }
     this.hoverSquare
@@ -2348,7 +2414,9 @@ export class WorldScene extends Phaser.Scene {
       .setVisible(true)
       .setDepth(100)
       .setActive(true)
-      .setAlpha(1);
+      .setAlpha(1)
+      .setFillStyle(0x8fd4ff, 0.05) // default blue: hover
+      .setStrokeStyle(2, 0x8fd4ff, 0.9);
   }
 
   // ===== NPC tokens: emoji sprite + label + E/click dialogue =====
