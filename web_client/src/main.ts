@@ -74,89 +74,56 @@ window.addEventListener("keydown", (e) => {
  *  the JS gates below all read this. */
 const MOBILE_UI = wantMobileUI;
 
-// ROTATE SPLASH (real devices only): the portrait hint stays 2.5s, then
-// auto-fades (CSS rv-splash). Re-triggered every time the device flips
-// BACK to portrait — restart the animation by blanking and restoring it
-// around a forced reflow. Never fires on desktop (no orientationchange to
-// portrait on a monitor; also gated on isTouchDevice for safety).
+// ---- LANDSCAPE, final form (NO CSS rotation, NO coordinate remap) ----
+// History: a CSS 90°-rotate + pointer-remap hack (“FORCE LANDSCAPE”) was
+// the source of a whole bug family — knob misplacement, aim box offsets,
+// dead native scroll inside the rotated frame, login freeze (innerWidth
+// recursion). Removed entirely. The one true mechanism:
+//   fullscreen + screen.orientation.lock("landscape")
+// which OVERRIDES the phone's auto-rotate (auto on or off is irrelevant).
+// Devices without the lock API (iOS Safari) get a 2.5s “rotate your
+// phone” splash fallback, gated on body.orientation-lock-failed.
 if (isTouchDevice) {
+  const tryLockLandscape = async (): Promise<void> => {
+    // Lock only sticks while fullscreen — request/refresh it first.
+    if (!document.fullscreenElement) {
+      const root = document.documentElement;
+      const fs = root.requestFullscreen?.({ navigationUI: "hide" })
+        ?? (root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> })
+          .webkitRequestFullscreen?.();
+      try { await fs; } catch { /* denied — lock will likely fail too */ }
+    }
+    const so = screen.orientation as (ScreenOrientation & {
+      lock?: (o: string) => Promise<void>;
+    }) | undefined;
+    try {
+      await so?.lock?.("landscape");
+      document.body.classList.remove("orientation-lock-failed");
+    } catch {
+      // Real failure (no API / rejected): mark it so the splash fallback
+      // can show if the device is physically portrait.
+      document.body.classList.add("orientation-lock-failed");
+    }
+  };
+  // At welcome (inside the play-click gesture chain) + on every visibility
+  // change back into the game (lock can drop when the browser tab loses
+  // focus / the user swipes the URL bar back).
+  (window as unknown as { __lockLandscape?: () => Promise<void> }).__lockLandscape = tryLockLandscape;
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && MOBILE_UI) void tryLockLandscape();
+  });
+  // Splash re-trigger: only meaningful when the lock failed and the device
+  // is physically portrait — flip the animation back on.
   const veil = document.getElementById("rotate-veil");
   if (veil) {
     const retriggerSplash = (): void => {
+      if (!document.body.classList.contains("orientation-lock-failed")) return;
       if (!window.matchMedia("(orientation: portrait)").matches) return;
       veil.style.animation = "none";
-      void veil.offsetWidth; // flush — without this the animation restarts
+      void veil.offsetWidth; // flush — forces the animation restart
       veil.style.animation = ""; // restore the stylesheet's rv-splash
     };
-    window.addEventListener("orientationchange", () => {
-      // Browsers report the new orientation lazily — retry on the next tick.
-      setTimeout(retriggerSplash, 60);
-    });
-  }
-}
-
-// ---- ROTATE FIX: touch coordinate mapping under the CSS rotation ----
-// When a phone is held PORTRAIT, CSS rotates #game-root 90° into a
-// landscape frame (styles.css FORCE LANDSCAPE). CSS transforms do NOT
-// remap pointer events: a physical tap at (x, y) still reports clientX/Y
-// in PHYSICAL screen space, while the game expects LOGICAL landscape
-// coordinates. The rotation is exactly: logical = R(-90°) · physical.
-// For rotate(90deg) around top-left with left:100vw:
-//   logicalX = physicalY, logicalY = physicalWidth − physicalX
-// MobileControls normalises tap points by window.innerWidth/Height before
-// calling the hooks, so patching the getters is the single choke point —
-// every tap/long-press/pinch in mobile_controls.ts gets fixed coordinates
-// without touching its logic. Desktop/landscape phones are untouched.
-if (isTouchDevice) {
-  // PHYSICAL SHORT-SIDE length from documentElement — NOT window.* and NOT
-  // max(): the rotated landscape frame (styles.css FORCE LANDSCAPE) is
-  // built as left:100vw · width:100vh · rotate(90deg), so its on-screen
-  // width is 100vw = the viewport's SHORT side in portrait. The mapping
-  // "logicalY = physicalWidth − physicalX" needs exactly that side; the
-  // earlier Math.max(clientWidth, clientHeight) fed the LONG side into the
-  // formula and shifted every remapped point down by (long − short) — the
-  // "box xanh + block đặt bị lệch" bug on held-upright phones.
-  const physicalW = (): number => {
-    const d = document.documentElement;
-    return Math.min(d.clientWidth, d.clientHeight);
-  };
-  const isPortraitPhysical = (): boolean =>
-    window.matchMedia("(orientation: portrait)").matches;
-  // Logical getters: in portrait the game runs in a ROTATED landscape
-  // frame (styles.css FORCE LANDSCAPE), so the game + touch hooks must see
-  // landscape dimensions. Getters base on documentElement — reading them
-  // can never recurse.
-  Object.defineProperty(window, "innerWidth", {
-    configurable: true,
-    get(): number {
-      const d = document.documentElement;
-      return isPortraitPhysical() ? d.clientHeight : d.clientWidth;
-    },
-  });
-  Object.defineProperty(window, "innerHeight", {
-    configurable: true,
-    get(): number {
-      const d = document.documentElement;
-      return isPortraitPhysical() ? d.clientWidth : d.clientHeight;
-    },
-  });
-  // Normalised mobile hooks divide by these getters; to finish the R(-90°)
-  // mapping we must also SWAP + flip the point itself. clientX/clientY are
-  // read-only getters on PointerEvent, so shadow them per-event with own
-  // properties. ALL pointer phases are remapped (down/move/up/cancel) —
-  // remapping only pointerdown would mix coordinate systems mid-gesture
-  // (stick origin logical, drag deltas physical = wild jumps).
-  const rewritePoint = (e: PointerEvent): void => {
-    if (!isPortraitPhysical()) return;
-    const px = e.clientX;
-    const py = e.clientY;
-    const W = physicalW(); // physical long-axis length
-    // logicalX = py, logicalY = W − px (rotate −90° about the frame).
-    Object.defineProperty(e, "clientX", { value: py, configurable: true });
-    Object.defineProperty(e, "clientY", { value: W - px, configurable: true });
-  };
-  for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"] as const) {
-    window.addEventListener(type, rewritePoint, { capture: true, passive: true });
+    window.addEventListener("orientationchange", () => setTimeout(retriggerSplash, 60));
   }
 }
 
@@ -426,27 +393,11 @@ const net = new Net({
     // In-game now: reveal the touch controls (hidden during gate/lobby).
     (window as unknown as { __setMobileControls?: (on: boolean) => void })
       .__setMobileControls?.(true);
-    // Landscape lock: on mobile the game is designed for LANDSCAPE — request
-    // the OS orientation lock (works in most in-app browsers / after a user
-    // gesture; gracefully a no-op where unsupported — the CSS #rotate-veil
-    // still tells the user to rotate when the device stays portrait).
-    const so = screen.orientation as (ScreenOrientation & {
-      lock?: (o: string) => Promise<void>;
-    }) | undefined;
-    so?.lock?.("landscape").catch(() => { /* unsupported — veil handles it */ });
-    // FULLSCREEN when the MOBILE UI is active (real phone OR the desktop
-    // ?mobile=1 / Shift+F9 preview — the preview should look like a phone,
-    // URL bar included). Must be called inside the welcome handling of a
-    // user-gesture-initiated flow (the login/play click chain) to satisfy
-    // the browser's gesture requirement; wrapped so denied requests are
-    // plain no-ops.
-    if (MOBILE_UI && !document.fullscreenElement) {
-      const root = document.documentElement;
-      const fs = root.requestFullscreen?.({ navigationUI: "hide" })
-        ?? (root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> })
-          .webkitRequestFullscreen?.();
-      fs?.catch(() => { /* denied/unsupported — immersive stays a best-effort */ });
-    }
+    // Landscape: the one true mechanism (see LANDSCAPE final form above) —
+    // fullscreen + OS orientation lock, retried here inside the user-
+    // gesture chain where the browser allows it.
+    void (window as unknown as { __lockLandscape?: () => Promise<void> })
+      .__lockLandscape?.();
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
     beginLoadTracking(frame);
     hud.hideGate();
