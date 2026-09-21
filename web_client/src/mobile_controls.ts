@@ -63,6 +63,22 @@ export class MobileControls {
   /** Resting spot (viewport px, set on mount). Release → spring back here. */
   private homeX = 90;
   private homeY = 0; // set in mount() from window size
+  /** Re-anchor the home spot on rotate/resize (fullscreen + orientation
+   *  lock change the viewport mid-session); re-park the knob when idle. */
+  private onResize = (): void => {
+    this.homeX = 90;
+    this.homeY = this.computeHomeY();
+    if (this.stickPointer === null) this.parkKnob();
+  };
+
+  /** Home Y measures UP FROM THE BOTTOM edge (~96px above it). The first
+   *  version measured from the TOP (innerHeight * 0.22) — on a landscape
+   *  phone that planted the knob near the TOP-left while the stick zone
+   *  stayed bottom-left: the knob sat in the wrong corner and every grab
+   *  missed (the reported "joystick lệch tùm lum"). */
+  private computeHomeY(): number {
+    return window.innerHeight - Math.max(96, Math.round(window.innerHeight * 0.24));
+  }
 
   // look-area state (multi-touch: tracked per pointer id)
   private lookTouches = new Map<number, { x: number; y: number; startX: number; startY: number }>();
@@ -100,11 +116,12 @@ export class MobileControls {
       </div>
     `;
     document.body.appendChild(root);
+    window.addEventListener("resize", this.onResize);
     this.stickEl = document.getElementById("mc-knob");
     this.knobEl = this.stickEl as HTMLImageElement | null;
     // Home spot: bottom-left, above the chat frame (mirrors the CSS zone).
     this.homeX = 90;
-    this.homeY = Math.max(90, Math.round(window.innerHeight * 0.22));
+    this.homeY = this.computeHomeY();
     // Park the knob at its home spot immediately (visible + idle ghost) so
     // players SEE the joystick from the first frame in-game.
     this.parkKnob();
@@ -318,6 +335,7 @@ export class MobileControls {
 
   /** Drop the whole DOM (kept symmetrical with mount). */
   destroy(): void {
+    window.removeEventListener("resize", this.onResize);
     document.getElementById("mobile-controls")?.remove();
     this.stickEl = null;
     this.knobEl = null;

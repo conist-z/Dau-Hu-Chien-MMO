@@ -282,6 +282,19 @@ const net = new Net({
       lock?: (o: string) => Promise<void>;
     }) | undefined;
     so?.lock?.("landscape").catch(() => { /* unsupported — veil handles it */ });
+    // FULLSCREEN (mobile only): entering the game hides the browser URL
+    // bar/search chrome — the whole screen becomes the game. Must be called
+    // inside the welcome handling of a user-gesture-initiated flow (the
+    // login/play click chain) to satisfy the browser's gesture requirement;
+    // wrapped so desktop browsers and denied requests are plain no-ops.
+    const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+    if (isTouchDevice && !document.fullscreenElement) {
+      const root = document.documentElement;
+      const fs = root.requestFullscreen?.({ navigationUI: "hide" })
+        ?? (root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> })
+          .webkitRequestFullscreen?.();
+      fs?.catch(() => { /* denied/unsupported — immersive stays a best-effort */ });
+    }
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
     beginLoadTracking(frame);
     hud.hideGate();
