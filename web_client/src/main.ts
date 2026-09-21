@@ -9,7 +9,6 @@ import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
-import { dayNightFx } from "./daynight";
 import { perf } from "./perf";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
@@ -89,9 +88,10 @@ scene.onPlayerClick = (p) => showProfilePopup(p);
 if (perf.weather) {
   weatherFx.mount(document.getElementById("game-root")!);
 }
-if (perf.daynight) {
-  dayNightFx.mount(document.getElementById("game-root")!);
-}
+// Day/night tint moved INTO the Phaser scene (game.ts) — the old DOM overlay
+// canvas (daynight.ts) repainted full-window every rAF and its blend with the
+// WebGL canvas was the measurable PC-only lag (mobile smooth, PC 30fps).
+// import { dayNightFx } from "./daynight"; — no longer mounted.
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -316,7 +316,11 @@ const net = new Net({
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
     weatherFx.setWeather(null);
-    if (perf.daynight) dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
+    if (perf.daynight) {
+  // Day/night tint now renders INSIDE the Phaser canvas (scene.setDayNightClock)
+  // — the old standalone 2D overlay canvas was the PC-only lag source.
+  scene.setDayNightClock(12 * 3600); // prime: noon (no tint) until first snapshot
+}
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -345,7 +349,7 @@ const net = new Net({
     const cloudsOverride = (frame as { clouds_override?: number }).clouds_override ?? 0;
     const weatherKey = cloudsOverride > 0 ? "cloud_shadow" : frame.weather;
     weatherFx.setWeather(weatherKey, cloudsOverride);
-    if (perf.daynight) dayNightFx.setClock(frame.clock);
+    if (perf.daynight) scene.setDayNightClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
