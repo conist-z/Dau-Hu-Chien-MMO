@@ -142,18 +142,6 @@ const SWING_MS = 220;
 const SWING_EXTRA = 12;
 
 export class WorldScene extends Phaser.Scene {
-  // Day/night tint state fed from snapshots (main.ts). Rendered INSIDE the
-  // Phaser canvas as a fullscreen rect below the HUD — replacing the old
-  // standalone daynight.ts 2D canvas. That overlay was a full-window canvas
-  // repainting 2 fills every rAF frame; on PC (large viewport + dpr 2) the
-  // 3-canvas blend was THE measurable PC lag (mobile smooth, PC 30fps).
-  // Phaser already fills the same pixels in its own WebGL pass — an extra
-  // tinted rect there costs nothing compared to another canvas blend.
-  private dayNightClockSec = -1;
-  private dayNightRecvMs = 0;
-  private dayNightRect?: Phaser.GameObjects.Rectangle;
-  private dayNightLastKey = "";
-
   private welcome: WelcomePayload | null = null;
   private tileTextures = new Map<string, string>(); // image name -> texture key
   private loadedTilesets = new Set<string>(); // tileset images that arrived
@@ -1670,92 +1658,6 @@ export class WorldScene extends Phaser.Scene {
    * window edge), recomputed from the opaque snapshot — so walking away
    * restores the canopy exactly, with zero bake redraws.
    */
-  /** Feed the in-game second-of-day (called from main.ts per snapshot). */
-  setDayNightClock(secondsOfDay: number): void {
-    this.dayNightClockSec = secondsOfDay;
-    this.dayNightRecvMs = performance.now();
-  }
-
-  /** Day/night tint INSIDE the Phaser canvas — replaces the old standalone
-   * daynight.ts 2D overlay canvas (a full-window repaint every rAF frame;
-   * its blend with the WebGL canvas was the PC-only lag). The tint is one
-   * fullscreen scrollFactor(0) rectangle under the HUD: the color/alpha
-   * math mirrors daynight.ts exactly (black brightness fill + saturated
-   * hue wash merged into a single rgba fill — same visual result, since
-   * both were translucent source-over black+color).
-   * Recomputed at most 4x/second: the in-game clock moves ~1 visual step
-   * per several seconds, per-frame updates were pure waste. */
-  private updateDayNight(): void {
-    if (this.dayNightClockSec < 0) return;
-    const SECONDS_PER_DAY = 86400;
-    const INGAME_MULT = SECONDS_PER_DAY / 1800;
-    const sec = (this.dayNightClockSec +
-      ((performance.now() - this.dayNightRecvMs) / 1000) * INGAME_MULT) % SECONDS_PER_DAY;
-    // Gradient stops (verbatim from daynight.ts / rendering.daynight).
-    // [fraction_of_day, [r,g,b]] — night/dawn/day/dusk/night.
-    const NIGHT = [0x27, 0x26, 0x4c];
-    const DAWN = [0x49, 0x46, 0x88];
-    const DAY = [0xff, 0xf1, 0xd0];
-    const DUSK = [0x85, 0x46, 0x46];
-    const G: [number, number[]][] = [
-      [0.0, NIGHT], [(5 * 3600) / SECONDS_PER_DAY, NIGHT],
-      [(7 * 3600) / SECONDS_PER_DAY, DAWN], [0.5, DAY],
-      [(20 * 3600) / SECONDS_PER_DAY, DAY], [(22 * 3600) / SECONDS_PER_DAY, DUSK],
-      [0.99999, NIGHT],
-    ];
-    const frac = (sec < 0 ? 0 : sec) / SECONDS_PER_DAY;
-    let c = NIGHT;
-    for (let i = 0; i < G.length - 1; i++) {
-      const [f0, c0] = G[i];
-      const [f1, c1] = G[i + 1];
-      if (f0 <= frac && frac <= f1) {
-        const t = f1 === f0 ? 0 : (frac - f0) / (f1 - f0);
-        c = [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t, c0[2] + (c1[2] - c0[2]) * t];
-        break;
-      }
-    }
-    const lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
-    // Same ambient/cast model as daynight.ts: black fill alpha (1-ambient)
-    // plus the period hue wash — merged into one rgba (hue over black over
-    // scene ≈ same darkening, hue alpha kept separately would double-blend).
-    const DARK_STRENGTH = 0.55;
-    const MIN_AMBIENT = 0.45;
-    const CAST_ALPHA = 0.28;
-    const ambient = Math.max(MIN_AMBIENT, 1 - DARK_STRENGTH * (1 - lum));
-    const castA = Math.min(1, Math.max(0, (1 - lum) * CAST_ALPHA));
-    const darkA = Math.max(0, 1 - ambient) + castA;
-    // Midday fast path: no rect at all.
-    if (darkA < 0.004) {
-      if (this.dayNightRect) {
-        this.dayNightRect.setVisible(false);
-        this.dayNightLastKey = "";
-      }
-      return;
-    }
-    const key = `${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${darkA.toFixed(3)}`;
-    if (key === this.dayNightLastKey) return; // ≤4 changes/sec: skip draw
-    this.dayNightLastKey = key;
-    if (!this.dayNightRect) {
-      const cam = this.cameras.main;
-      this.dayNightRect = this.add.rectangle(0, 0, 1, 1, 0x000000, 0)
-        .setScrollFactor(0).setDepth(45); // above map+actors+darkness, under HUD DOM
-      cam.on("resize", () => this.fitDayNightRect());
-    }
-    const [r, g, b] = c;
-    this.dayNightRect.setFillStyle(
-      (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b), darkA,
-    );
-    this.dayNightRect.setVisible(true);
-    this.fitDayNightRect();
-  }
-
-  private fitDayNightRect(): void {
-    if (!this.dayNightRect) return;
-    const cam = this.cameras.main;
-    this.dayNightRect.setPosition(cam.scrollX, cam.scrollY);
-    this.dayNightRect.setSize(cam.width, cam.height);
-  }
-
   private updateOccluderFade(): void {
     // ?fx gate (perf.ts): the fade compositing uploads a sub-rect to the
     // canopy texture every step — skippable via ?fx=0 for perf isolation.
@@ -1930,8 +1832,6 @@ export class WorldScene extends Phaser.Scene {
     // Ekonia FadeOccluderLayer parity: smooth per-pixel canopy fade that
     // follows the player every frame (cheap — small window, typed loop).
     this.updateOccluderFade();
-    // Day/night tint inside the Phaser canvas (replaces the old DOM overlay).
-    this.updateDayNight();
     // Facing vector still feeds the hover square + swing geometry (the hand
     // dot itself is hidden once the paperdoll body renders).
     this.updateFacing();

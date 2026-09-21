@@ -9,6 +9,10 @@ import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
+// Day/night tint: kept as its own DOM canvas BUT throttled to 8 Hz + dpr 1 +
+// duplicate-frame skip (daynight.ts) — the per-rAF full-window repaint was
+// the PC-only lag. Same visual as before.
+import { dayNightFx } from "./daynight";
 import { perf } from "./perf";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
@@ -88,10 +92,12 @@ scene.onPlayerClick = (p) => showProfilePopup(p);
 if (perf.weather) {
   weatherFx.mount(document.getElementById("game-root")!);
 }
-// Day/night tint moved INTO the Phaser scene (game.ts) — the old DOM overlay
-// canvas (daynight.ts) repainted full-window every rAF and its blend with the
-// WebGL canvas was the measurable PC-only lag (mobile smooth, PC 30fps).
-// import { dayNightFx } from "./daynight"; — no longer mounted.
+// Day/night tint overlay: kept as its own DOM canvas BUT throttled to 8 Hz
+// + dpr 1 + duplicate-frame skip (daynight.ts) — the per-rAF full-window
+// repaint was the PC-only lag. Same visual as before.
+if (perf.daynight) {
+  dayNightFx.mount(document.getElementById("game-root")!);
+}
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -316,11 +322,7 @@ const net = new Net({
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
     weatherFx.setWeather(null);
-    if (perf.daynight) {
-  // Day/night tint now renders INSIDE the Phaser canvas (scene.setDayNightClock)
-  // — the old standalone 2D overlay canvas was the PC-only lag source.
-  scene.setDayNightClock(12 * 3600); // prime: noon (no tint) until first snapshot
-}
+    if (perf.daynight) dayNightFx.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
     hud.setWeather("sun_clouds");
     hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
   },
@@ -349,7 +351,7 @@ const net = new Net({
     const cloudsOverride = (frame as { clouds_override?: number }).clouds_override ?? 0;
     const weatherKey = cloudsOverride > 0 ? "cloud_shadow" : frame.weather;
     weatherFx.setWeather(weatherKey, cloudsOverride);
-    if (perf.daynight) scene.setDayNightClock(frame.clock);
+    if (perf.daynight) dayNightFx.setClock(frame.clock);
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
@@ -905,6 +907,73 @@ const mobile = new MobileControls({
   onDragLook: (dx, dy) => scene.applyLookPan(dx, dy),
 });
 mobile.mount();
+
+// ---- MOBILE CHAT CHIP + TRAY OUTSIDE-TAP (touch devices only) ----
+// Chat moves to the TOP-left on phones (CSS above) as a collapsed chip:
+// tap = expand log + input; a tap OUTSIDE the chat frame collapses it.
+// The unread badge counts lines that arrived while collapsed (cleared on
+// open) — the player never silently misses chat on a phone.
+if (window.matchMedia("(pointer: coarse)").matches) {
+  const chat = document.getElementById("hud-chat")!;
+  const log = document.getElementById("chat-log")!;
+  const toggle = document.createElement("div");
+  toggle.id = "chat-toggle";
+  toggle.setAttribute("role", "button");
+  toggle.innerHTML = `<span>💬 Chat</span><span class="ct-badge" id="chat-badge"></span>`;
+  chat.prepend(toggle);
+  const badge = toggle.querySelector(".ct-badge")!;
+  let unread = 0;
+  let chatOpen = false;
+  const renderBadge = (): void => {
+    badge.textContent = String(Math.min(unread, 99));
+    badge.classList.toggle("unseen", unread > 0 && !chatOpen);
+  };
+  const setChatOpen = (open: boolean): void => {
+    chatOpen = open;
+    chat.classList.toggle("chat-open", open);
+    if (open) {
+      unread = 0;
+      log.scrollTop = log.scrollHeight;
+    }
+    renderBadge();
+  };
+  toggle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // not an outside tap
+    setChatOpen(!chatOpen);
+  });
+  // Clicks inside the EXPANDED chat (log scroll, input focus) are not
+  // outside taps either.
+  chat.addEventListener("pointerdown", (e) => e.stopPropagation());
+  // Outside tap = collapse. Bubble-phase on window: taps INSIDE the chat
+  // bubble up from #hud-chat (whose pointerdown handlers don't stop
+  // propagation for non-toggle children), so the contains() check is the
+  // authoritative guard — one listener, one code path.
+  window.addEventListener("pointerdown", (e) => {
+    if (!chatOpen) return;
+    if (chat.contains(e.target as Node)) return;
+    setChatOpen(false);
+  });
+  // New chat line while collapsed → bump the badge (chatLine/chatPlayerLine
+  // append to #chat-log; watch it with a MutationObserver — zero coupling
+  // to the hud methods that render lines).
+  new MutationObserver(() => {
+    if (!chatOpen) unread += 1;
+    renderBadge();
+  }).observe(log, { childList: true });
+  renderBadge();
+
+  // HUB TRAY outside-tap: same rule as the chat chip — a tap anywhere
+  // outside the tray and the gear rolls the tray back in.
+  window.addEventListener("pointerdown", (e) => {
+    const tray = document.getElementById("buttons-tray");
+    if (!tray || !tray.classList.contains("open")) return;
+    const t = e.target as Node;
+    if (tray.contains(t)) return;
+    if (document.getElementById("settings-anchor")?.contains(t)) return;
+    hud.closeHubTray();
+  });
+}
 // Reveal the touch layer ONLY once a real game session starts (welcome):
 // the login gate + lobby sit in #overlay BELOW this layer, and an always-on
 // look surface swallowed every tap on the login button (mobile login bug).

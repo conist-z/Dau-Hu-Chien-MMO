@@ -65,8 +65,7 @@ export function tintFactor(sec: number): [number, number, number] {
 const SKIP_AMBIENT = 0.97;
 
 // --- Two-layer lighting (why not a colored multiply?) -----------------------
-// Brightness and mood are SEPARATE fills:
-//   1. AMBIENT — a BLACK fill at alpha (1 - luminance). Scaling brightness
+// Brightness and mood are SEPARATE fills:// 1. AMBIENT — a BLACK fill at alpha (1 - luminance). Scaling brightness
 //      equally on every channel never desaturates the scene (a colored
 //      multiply did: the dawn->noon gradient segment multiplied the screen
 //      with desaturated lavender-gray — "buổi sáng màu xám").
@@ -77,6 +76,13 @@ const DARK_STRENGTH = 0.55; // 0..1 — how much of the gradient darkness applie
 const MIN_AMBIENT = 0.45;   // floor: night never darker than this
 const CAST_ALPHA = 0.28;    // wash alpha at full night (fades to ~0 at noon)
 const SATURATE = 1.7;       // hue boost for the cast stops (1 = Godot raw)
+
+// PC PERF (22/09): this overlay used to repaint BOTH full-window fills on
+// EVERY rAF frame (60-144/s). Blending that canvas with the WebGL canvas on
+// a large viewport + dpr 2 was the measurable PC-only stutter (mobile was
+// smooth — small screen). The tint visually changes at most a few times per
+// second, so: draw at 8 Hz + dpr 1 + skip identical frames. Same look,
+// ~30x less fill cost.
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
@@ -130,6 +136,9 @@ export class DayNightFx {
   private h = 0;
   private dpr = 1;
   private running = false;
+  private lastDrawMs = 0;
+  private lastDrawKey = "";
+  private static DRAW_INTERVAL_MS = 125; // 8 Hz — the tint barely moves
 
   constructor() {
     const canvas = document.createElement("canvas");
@@ -162,7 +171,9 @@ export class DayNightFx {
   // ---------------------------------------------------------------- engine
 
   private resize(): void {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // dpr = 1: the tint is a flat translucent fill — extra device pixels are
+    // invisible (no edges to smooth) and at dpr 2 they 4x the blend cost.
+    this.dpr = 1;
     this.w = window.innerWidth;
     this.h = window.innerHeight;
     this.canvas.width = Math.max(1, Math.round(this.w * this.dpr));
@@ -170,6 +181,8 @@ export class DayNightFx {
     this.canvas.style.width = `${this.w}px`;
     this.canvas.style.height = `${this.h}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.lastDrawKey = ""; // force a redraw at the new size
+    this.lastDrawMs = 0;
   }
 
   /** Current interpolated in-game second-of-day. The in-game day runs at
@@ -203,6 +216,9 @@ export class DayNightFx {
   private draw(): void {
     const sec = this.currentSec();
     if (sec < 0) return;
+    const nowMs = performance.now();
+    if (nowMs - this.lastDrawMs < DayNightFx.DRAW_INTERVAL_MS) return;
+    this.lastDrawMs = nowMs;
     const [r, g, b] = tintFactor(sec);
     // 1. Ambient: brightness from the gradient's luminance.
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -216,10 +232,15 @@ export class DayNightFx {
       return;
     }
     const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.w, this.h);
     // 1. Black brightness fill: alpha (1-ambient) darkens exactly like a
     //    multiply by `ambient` — and can NEVER cover the screen (alpha < 1).
     const darkA = 1 - ambient;
+    // Skip the repaint entirely when the tint is visually identical — most
+    // frames at 8 Hz are duplicates anyway (gradient barely moves).
+    const key = `${darkA.toFixed(3)}|${Math.round(cast[0])},${Math.round(cast[1])},${Math.round(cast[2])}|${castA.toFixed(3)}`;
+    if (key === this.lastDrawKey) return;
+    this.lastDrawKey = key;
+    ctx.clearRect(0, 0, this.w, this.h);
     if (darkA > 0.004) {
       ctx.fillStyle = `rgba(0,0,0,${darkA.toFixed(3)})`;
       ctx.fillRect(0, 0, this.w, this.h);
