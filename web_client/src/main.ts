@@ -1094,7 +1094,17 @@ if (MOBILE_UI) {
     gear.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       e.stopPropagation(); // not an outside tap
-      setHubOpen(!document.body.classList.contains("hub-open"));
+      const willOpen = !document.body.classList.contains("hub-open");
+      setHubOpen(willOpen);
+      // The GEAR is the settings button (user spec): a tap when closed
+      // rolls the reel out AND opens the real settings page; a tap when
+      // open just rolls it back in. Routed through the same bar-button
+      // click path Kaetram binds (#settings-button), so state stays in
+      // sync (active sprite, open-one-close-others).
+      if (willOpen) {
+        const real = document.getElementById("settings-button");
+        real?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }
     });
     // Taps inside the open strip are hub business, not outside taps.
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());

@@ -304,10 +304,10 @@ body.mobile-ui.hub-open #hud-hub #buttons.shown {
 body.mobile-ui #hub-roll-btn {
   display: block;
   position: absolute;
-  right: calc(8px + env(safe-area-inset-right, 0px));
-  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-  width: 52px;
-  height: 56px;
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  width: 50px;
+  height: 54px;
   cursor: pointer;
   pointer-events: auto;
   z-index: 2;
@@ -1506,14 +1506,22 @@ body.mobile-ui {
   }
   #hud-topright .bar { height: 15px; }
 
-  /* ---- MOBILE HOTBAR: flush bottom-center (user fix) ----
-   * The bottom:170px portrait lift is a PORTRAIT-only need. In the locked
-   * LANDSCAPE game the hotbar floated mid-screen for no reason ("bị thụt
-   * hẳn xuống bên dưới" / buried). Landscape = back to the flush bottom
-   * edge (portrait keeps the lifted layout above). */
+  /* ---- MOBILE HOTBAR: flush bottom-center, COMPACT on phones ----
+   * Landscape = flush bottom edge. 7 slots × 52px + gaps ≈ 416px — on a
+   * ~640-700px logical-wide phone that crowds BOTH the joystick zone and
+   * the right-corner controls; 44px/slot keeps every slot thumb-friendly
+   * AND leaves clear margins. */
   @media (orientation: landscape) {
     #hud-hotbar {
       bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    }
+    #hud-hotbar .slot {
+      width: 44px;
+      height: 44px;
+    }
+    #hud-hotbar .slot .icon-img {
+      width: 30px;
+      height: 30px;
     }
   }
 }

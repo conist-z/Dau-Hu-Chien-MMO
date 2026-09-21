@@ -1205,10 +1205,12 @@ export class Hud {
           try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
           this.startDrag({ from: "bag", index: idx, stack: { ...st } }, e);
         });
-        slot.addEventListener("pointerup", (e) => {
-          if (e.pointerType === "mouse") return;
-          this.dropOn("bag", Number((e.currentTarget as HTMLElement).dataset.slot));
-        });
+        // NO slot-level pointerup here: it used to dropOn the ORIGIN slot
+        // unconditionally, racing (and winning against) the global window
+        // pointerup drop logic — every touch drag sprang back to where it
+        // started ("kéo/vức không dùng được"). The window pointerup
+        // handler owns the drop: nearestDropTarget picks the real hovered
+        // slot, outside-panels throws, otherwise cancel.
         slot.addEventListener("pointercancel", () => this.cancelDrag());
         slot.addEventListener("contextmenu", (e) => e.preventDefault());
         wrap.appendChild(slot);

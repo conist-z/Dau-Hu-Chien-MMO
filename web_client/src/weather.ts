@@ -80,20 +80,22 @@ const STYLES: Record<string, WeatherStyle> = {
     sheet: "", speedPx: 0, tint: "rgba(0,0,0,0)", cloudShadow: true,
   },
   rain: {
-    // Visibility boost (user rule 14/09: "mưa yếu phải lòi mắt"): the pack
-    // sheets are faint streaks — the boost brightens + thickens them without
-    // touching the artwork. cloudShadow: bóng mây trôi trên đất STACK cùng
-    // mưa (ekonia parity) — không bao giờ xuất hiện một mình.
-    sheet: "rain", speedPx: 200, tint: "rgba(12,18,34,0.12)", alphaBoost: 2.1,
+    // Visibility boost (user rule 14/09: "mưa yếu phải lòi mắt") — tempered
+    // from 2.1-2.4 down: with the adaptive 1.5× sheet scale the streaks are
+    // already thicker on phones, and the old boost stacked into hard opaque
+    // white dashes ("trông xấu"). Softer boost + slightly lower layer alpha
+    // = visible but silky rain. cloudShadow: bóng mây trôi trên đất STACK
+    // cùng mưa (ekonia parity) — không bao giờ xuất hiện một mình.
+    sheet: "rain", speedPx: 200, tint: "rgba(12,18,34,0.12)", alphaBoost: 1.6,
     cloudShadow: true,
   },
   heavy_rain: {
-    sheet: "rain", speedPx: 300, tint: "rgba(8,12,22,0.18)", alphaBoost: 2.3,
+    sheet: "rain", speedPx: 300, tint: "rgba(8,12,22,0.18)", alphaBoost: 1.75,
     cloudShadow: true,
   },
   storm: {
     sheet: "rain", speedPx: 300, tint: "rgba(5,9,18,0.22)", bolt: true,
-    alphaBoost: 2.4, cloudShadow: true,
+    alphaBoost: 1.85, cloudShadow: true,
   },
   snow: {
     // Snow is ALWAYS procedural: a tiled 32px strip can only ever repeat —
@@ -935,13 +937,23 @@ export class WeatherFx {
 
     const drawLayer = (sheet: Sheet, alpha: number, ox: number, oy: number): void => {
       ctx.globalAlpha = Math.min(1, alpha * intensity * boost);
-      const w = sheet.w;
-      const h = sheet.h;
-      let y = (oy % h) - h;
+      // ADAPTIVE SHEET SCALE: the 256×32 sheet tiled 1:1 reads as sparse
+      // hard dashes on phones (small viewport = few tiles + chunky streaks
+      // next to the zoomed 2× world art — the "mưa xấu hơn trên mobile"
+      // report). Drawing at 1.5× size both densifies coverage per tile and
+      // thickens the streaks to match the world's pixel scale; the wrap
+      // math is unchanged (modulo works on any tile size).
+      const sc = this.w < 900 ? 1.5 : 1;
+      const w = sheet.w * sc;
+      const h = sheet.h * sc;
+      // Softness: pre-set smoothing so the 1.5× upscale blurs streak edges
+      // slightly (crisper = the old "dây thun" look).
+      ctx.imageSmoothingEnabled = true;
+      let y = (((oy % h) + h) % h) - h;
       while (y < this.h) {
-        let x = (ox % w) - w;
+        let x = (((ox % w) + w) % w) - w;
         while (x < this.w) {
-          ctx.drawImage(sheet.img, x, y);
+          ctx.drawImage(sheet.img, x, y, w, h);
           x += w;
         }
         y += h;
