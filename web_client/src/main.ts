@@ -108,39 +108,53 @@ if (isTouchDevice) {
 // every tap/long-press/pinch in mobile_controls.ts gets fixed coordinates
 // without touching its logic. Desktop/landscape phones are untouched.
 if (isTouchDevice) {
-  const physicalW = (): number => Math.max(window.innerWidth, window.innerHeight);
+  // PHYSICAL dims from documentElement — NOT window.innerWidth/Height.
+  // The first draft read window.* inside its own getter = infinite
+  // recursion = the frozen login screen. documentElement.clientWidth/
+  // clientHeight are untouched by the overrides below and always reflect
+  // the PHYSICAL viewport (CSS pixels, scrollbar excluded).
+  const physicalW = (): number => {
+    const d = document.documentElement;
+    return Math.max(d.clientWidth, d.clientHeight);
+  };
   const isPortraitPhysical = (): boolean =>
     window.matchMedia("(orientation: portrait)").matches;
+  // Logical getters: in portrait the game runs in a ROTATED landscape
+  // frame (styles.css FORCE LANDSCAPE), so the game + touch hooks must see
+  // landscape dimensions. Getters base on documentElement — reading them
+  // can never recurse.
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     get(): number {
-      return isPortraitPhysical() ? window.innerHeight : window.innerWidth;
+      const d = document.documentElement;
+      return isPortraitPhysical() ? d.clientHeight : d.clientWidth;
     },
   });
   Object.defineProperty(window, "innerHeight", {
     configurable: true,
     get(): number {
-      return isPortraitPhysical() ? window.innerWidth : window.innerHeight;
+      const d = document.documentElement;
+      return isPortraitPhysical() ? d.clientWidth : d.clientHeight;
     },
   });
   // Normalised mobile hooks divide by these getters; to finish the R(-90°)
-  // mapping we must also SWAP + flip the point itself. Monkey-patch the
-  // prototype: clientX/clientY are read-only properties on PointerEvent,
-  // so wrap them per-event in a passive capture listener (no side effects
-  // on desktop — portrait check fails there).
-  window.addEventListener(
-    "pointerdown",
-    (e) => {
-      if (!isPortraitPhysical()) return;
-      const px = e.clientX;
-      const py = e.clientY;
-      const W = physicalW(); // physical short→long axis length
-      // logicalX = py, logicalY = W − px (rotate −90° about the frame).
-      Object.defineProperty(e, "clientX", { value: py, configurable: true });
-      Object.defineProperty(e, "clientY", { value: W - px, configurable: true });
-    },
-    { capture: true },
-  );
+  // mapping we must also SWAP + flip the point itself. clientX/clientY are
+  // read-only getters on PointerEvent, so shadow them per-event with own
+  // properties. ALL pointer phases are remapped (down/move/up/cancel) —
+  // remapping only pointerdown would mix coordinate systems mid-gesture
+  // (stick origin logical, drag deltas physical = wild jumps).
+  const rewritePoint = (e: PointerEvent): void => {
+    if (!isPortraitPhysical()) return;
+    const px = e.clientX;
+    const py = e.clientY;
+    const W = physicalW(); // physical long-axis length
+    // logicalX = py, logicalY = W − px (rotate −90° about the frame).
+    Object.defineProperty(e, "clientX", { value: py, configurable: true });
+    Object.defineProperty(e, "clientY", { value: W - px, configurable: true });
+  };
+  for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"] as const) {
+    window.addEventListener(type, rewritePoint, { capture: true, passive: true });
+  }
 }
 
 // Kaetram hub: wire the pages to the scene (minimap source, debug toggle,
