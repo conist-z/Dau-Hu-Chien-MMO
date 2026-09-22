@@ -1115,6 +1115,7 @@ if (MOBILE_UI) {
   toggle.setAttribute("role", "button");
   toggle.innerHTML = `<span>💬 Chat</span><span class="ct-badge" id="chat-badge"></span>`;
   chat.prepend(toggle);
+  toggle.style.touchAction = "none"; // chip is a drag handle + tap toggle
   const badge = toggle.querySelector(".ct-badge")!;
   let unread = 0;
   let chatOpen = false;
@@ -1131,14 +1132,106 @@ if (MOBILE_UI) {
     }
     renderBadge();
   };
-  toggle.addEventListener("pointerdown", (e) => {
+  // ---- POPUP DRAG + PER-USER POSITION MEMORY (user spec: the chat box is
+  // a popup — drag it ANYWHERE on screen and each user's placement is
+  // remembered across sessions: "nhớ player để đâu thì mấy phiên sau sẽ y
+  // vậy"). The key is the logged-in identity: a hash of web_token when
+  // signed in, else a stable random uid (guests keep their identity in
+  // localStorage). ----
+  const chatUid = (() => {
+    const tok = localStorage.getItem("web_token") ?? "";
+    if (tok) {
+      let h = 0;
+      for (let i = 0; i < tok.length; i++) h = (h * 31 + tok.charCodeAt(i)) | 0;
+      return `tok${(h >>> 0).toString(36)}`;
+    }
+    let uid = localStorage.getItem("chat_ui_uid");
+    if (!uid) {
+      uid = `u${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("chat_ui_uid", uid);
+    }
+    return uid;
+  })();
+  const CHAT_POS_KEY = `chat_pos_${chatUid}`;
+  const clampChatPos = (p: { left: number; top: number }): { left: number; top: number } => {
+    const r = chat.getBoundingClientRect();
+    const w = r.width || 300;
+    const h = Math.min(r.height || 160, window.innerHeight - 16);
+    return {
+      left: Math.min(Math.max(8, p.left), Math.max(8, window.innerWidth - w - 8)),
+      top: Math.min(Math.max(8, p.top), Math.max(8, window.innerHeight - h - 8)),
+    };
+  };
+  const applyChatPos = (p: { left: number; top: number }): void => {
+    const c = clampChatPos(p);
+    chat.style.left = `${c.left}px`;
+    chat.style.top = `${c.top}px`;
+    chat.style.right = "auto";
+    chat.style.bottom = "auto";
+  };
+  try {
+    const savedPos = JSON.parse(localStorage.getItem(CHAT_POS_KEY) ?? "null") as
+      { left: number; top: number } | null;
+    if (savedPos && Number.isFinite(savedPos.left) && Number.isFinite(savedPos.top)) {
+      applyChatPos(savedPos);
+    }
+  } catch { /* corrupted saved pos — keep the CSS default spot */ }
+  const saveChatPos = (): void => {
+    const r = chat.getBoundingClientRect();
+    localStorage.setItem(
+      CHAT_POS_KEY,
+      JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }),
+    );
+  };
+  // DRAG: pointerdown anywhere on the frame EXCEPT the log/input (they keep
+  // scroll + focus) starts a drag; the frame follows the finger 1:1; release
+  // persists. Drags never collapse the chat (movement guard below).
+  let chatDragId: number | null = null;
+  let chatDragOff = { x: 0, y: 0 };
+  let chatDragStart = { x: 0, y: 0 };
+  let chatDragMoved = false;
+  chat.addEventListener("pointerdown", (e) => {
+    if (chatDragId !== null) return;
+    const t = e.target as HTMLElement;
+    if (t.closest("#chat-log, input, button, textarea")) return;
+    chatDragId = e.pointerId;
+    const r = chat.getBoundingClientRect();
+    chatDragOff = { x: e.clientX - r.left, y: e.clientY - r.top };
+    chatDragStart = { x: e.clientX, y: e.clientY };
+    chatDragMoved = false;
+    try { chat.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+  });
+  chat.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== chatDragId) return;
+    if (!chatDragMoved) {
+      if (Math.hypot(e.clientX - chatDragStart.x, e.clientY - chatDragStart.y) <= 8) return;
+      chatDragMoved = true;
+      chat.classList.add("chat-dragging"); // kill text selection mid-drag
+    }
     e.preventDefault();
-    e.stopPropagation(); // not an outside tap
+    applyChatPos({ left: e.clientX - chatDragOff.x, top: e.clientY - chatDragOff.y });
+  });
+  const chatDragEnd = (e: PointerEvent): void => {
+    if (e.pointerId !== chatDragId) return;
+    chatDragId = null;
+    chat.classList.remove("chat-dragging");
+    if (chatDragMoved) saveChatPos();
+  };
+  chat.addEventListener("pointerup", chatDragEnd);
+  chat.addEventListener("pointercancel", chatDragEnd);
+  window.addEventListener("resize", () => {
+    // Keep the saved spot on-screen when the viewport changes (rotation,
+    // fullscreen) — re-clamp against the current rect.
+    const r = chat.getBoundingClientRect();
+    if (chat.style.left || chat.style.top) applyChatPos({ left: r.left, top: r.top });
+  });
+  // TAP vs DRAG on the toggle chip: a clean tap toggles the chat; a drag
+  // (≥8px, consumed by the frame drag above) just moves the popup.
+  toggle.addEventListener("pointerup", (e) => {
+    if (chatDragMoved) return;
+    e.preventDefault();
     setChatOpen(!chatOpen);
   });
-  // Clicks inside the EXPANDED chat (log scroll, input focus) are not
-  // outside taps either.
-  chat.addEventListener("pointerdown", (e) => e.stopPropagation());
   // Outside tap = collapse (REAL taps only: a drag that started outside —
   // e.g. swiping an item across the screen — must not collapse the chat
   // when the finger happens to lift outside the frame).

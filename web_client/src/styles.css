@@ -1454,6 +1454,19 @@ body.mobile-ui {
     bottom: auto;   /* detach from the bottom edge */
     width: min(78vw, 340px);
   }
+  /* POPUP DRAG STATE: while the frame is being dragged, kill text
+   * selection and lift it visually (popup feel). Position itself is set
+   * inline by main.ts's drag handler (left/top px, clamped to viewport). */
+  #hud-chat.chat-dragging {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grabbing;
+    filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.55));
+    z-index: 60;
+  }
+  #hud-chat { cursor: grab; } /* frame = drag affordance (log/input override) */
+  #hud-chat #chat-log,
+  #hud-chat input { cursor: auto; }
   #chat-log {
     max-height: 0;
     opacity: 0;
