@@ -48,6 +48,12 @@ MOB_KINDS: Dict[str, dict] = {
     "slime":    dict(hp=50, dmg=9,  speed=2.2, cooldown=1.8, weight=12),   # lvl48/HP694 tanky
     "bat":      dict(hp=20, dmg=6,  speed=2.8, cooldown=1.6, weight=8),    # lvl4/HP65 fast swarm
     "rat":      dict(hp=12, dmg=4,  speed=2.6, cooldown=2.0, weight=4),    # lvl1/HP20 pest
+    # ---- cave/forest packs (game/mob_profiles.py routes them per map) ----
+    # Stats scaled from Kaetram _all_mobs.json relative to the zombie row.
+    "skeleton2": dict(hp=56, dmg=14, speed=2.0, cooldown=2.6, weight=0),  # lvl30/HP375 tanky bruiser
+    "spectre":   dict(hp=27, dmg=9,  speed=1.8, cooldown=2.4, weight=0),  # lvl32/HP270 ghost, RANGED
+    "goblin":    dict(hp=9,  dmg=4,  speed=2.4, cooldown=2.0, weight=0),  # lvl7/HP90 weak nuisance
+    "hobgoblin": dict(hp=26, dmg=13, speed=2.2, cooldown=1.8, weight=0),  # lvl42/HP260 aggressive bruiser
 }
 MOB_SPAWN_WEIGHTS: List[Tuple[str, float]] = [
     (kind, float(cfg["weight"])) for kind, cfg in MOB_KINDS.items()
@@ -166,6 +172,26 @@ MOB_DROP_TABLES: Dict[str, tuple] = {
         ("rotten_flesh", 0.4, 1),
         ("coin", 0.2, 1),
     ),
+    "skeleton2": (
+        ("coin", 0.7, 2),          # richer grave-robber remains
+        ("coal", 0.5, 1),
+        ("stick", 0.3, 1),
+    ),
+    "spectre": (
+        ("coin", 0.55, 1),
+        ("coal", 0.3, 1),          # cave wisp residue
+        ("leaves", 0.2, 1),
+    ),
+    "goblin": (
+        ("stick", 0.45, 1),
+        ("coin", 0.35, 1),
+        ("apple", 0.25, 1),        # stolen snacks
+    ),
+    "hobgoblin": (
+        ("coin", 0.6, 1),
+        ("raw_meat", 0.4, 1),
+        ("coal", 0.2, 1),
+    ),
 }
 
 
@@ -226,6 +252,12 @@ class Zombie:
     # Unit-vector of the recovery drift, picked once per bite.
     recover_dx: float = 0.0
     recover_dy: float = 0.0
+    # Per-kind combat style extras (game/mob_profiles.MOB_BEHAVIORS):
+    # ambush = spider camouflage state, recover_until = skittish hit-and-run
+    # retreat window (monotonic).
+    ambush_armed: bool = False
+    ambush_until: float = 0.0
+    recover_until: float = 0.0
 
     def sync_float_from_int(self) -> None:
         self.x_f = float(self.x) + 0.5
@@ -495,6 +527,13 @@ def _spawn_position(state, collision, view_rects: Dict[int, tuple], rng: random.
     return rng.choice(candidates) if candidates else None
 
 
+def _in_bounds_float(x: float, y: float, w: int, h: int) -> bool:
+    """Strict in-map test for float positions (VOID GUARD): a mob centre may
+    never sit on/behind the outer wall band, so nothing can drift into the
+    black void around converted maps."""
+    return 0.5 <= x <= w - 0.5 and 0.5 <= y <= h - 0.5
+
+
 def _live_hunters(state) -> int:
     return sum(1 for z in _zombies(state) if getattr(z, "hunter", False))
 
@@ -504,7 +543,13 @@ def spawn_one(state, collision, view_rects: Dict[int, tuple], rng: random.Random
     if position is None:
         return None
     zombie = Zombie(_next_id(state), position[0], position[1])
-    zombie.kind = roll_mob_kind(rng)
+    # Kind roll is PER-MAP (game/mob_profiles.py): cave fields bats, forest
+    # fields goblins, bigmap keeps the mixed night roster.
+    from game.mob_profiles import roll_kind_for
+
+    zombie.kind = roll_kind_for(
+        getattr(getattr(collision, "map_data", None), "map_id", "bigmap"), rng
+    )
     stats = mob_stats(zombie.kind)
     zombie.hp = zombie.max_hp = stats["hp"]
     zombie.damage = stats["dmg"]
@@ -766,11 +811,19 @@ def web_spawn_one(state, collision, players: List[object], rng: random.Random) -
             walkable = collision.is_walkable(tx, ty)
         except Exception:
             walkable = True
+        # VOID GUARD: keep the spawn centre at least half a tile inside the
+        # map so nothing pops in the black band around converted maps.
+        if not _in_bounds_float(tx + 0.5, ty + 0.5, w, h):
+            continue
         if not walkable:
             continue
         z = Zombie(_next_web_id(state), tx, ty)
-        # Kind roll FIRST, then per-kind stats (hp/damage/speed/cooldown).
-        z.kind = roll_mob_kind(rng)
+        # Kind roll FIRST (per-map profile), then per-kind stats.
+        from game.mob_profiles import roll_kind_for
+
+        z.kind = roll_kind_for(
+            getattr(getattr(collision, "map_data", None), "map_id", "bigmap"), rng
+        )
         stats = mob_stats(z.kind)
         z.hp = z.max_hp = stats["hp"]
         z.damage = stats["dmg"]
@@ -843,14 +896,77 @@ def web_tick(
             _web_set_anim(z, "idle", now_mono)
             continue
         dist = _web_dist(z, target)
+        # Per-kind combat style (game/mob_profiles.MOB_BEHAVIORS).
+        from game.mob_profiles import behavior_of
+
+        beh = behavior_of(z.kind)
+        style = beh.get("style", "melee")
+        dx = target.x_f - z.x_f
+        dy = target.y_f - z.y_f
+        length = _math.hypot(dx, dy)
+
+        # ---- RANGED (spectre): fires from a distance, never closes in. ----
+        if style == "ranged":
+            rng_range = float(beh.get("ranged_range", 4.0))
+            since = now_mono - (z.last_bite or 0.0)
+            if dist <= rng_range:
+                z.facing = _web_facing(dx, dy)
+                if since >= z.web_cooldown:
+                    _web_set_anim(z, "atk", now_mono)
+                    z.last_bite = now_mono
+                    before = target.hp
+                    target.hp = max(0, target.hp - z.damage)
+                    if target.hp != before:
+                        target.last_damaged_at = now_mono
+                        target.regen_bank = 0.0
+                        result.changed = True
+                        result.damaged_player_ids.add(target.user_id)
+                        feed = getattr(state, "recent_damage", None)
+                        if feed is not None:
+                            feed.append((now_wall, target.user_id, z.damage, "zombie"))
+                            del feed[:-40]
+                        if target.hp <= 0:
+                            target.visible = False
+                            target.dead_until = now_wall + 5.0
+                            target.death_reason = "bị spectre bắn trúng"
+                            result.died_player_ids.add(target.user_id)
+                else:
+                    _web_set_anim(z, "idle", now_mono)
+                continue  # hold position — a ghost never trades punches
+            # Out of range: drift slowly closer (casters keep their distance
+            # once in range, so the chase speed stays the low MOB_KINDS one).
+            # _web_chase_step takes a UNIT vector (dx/length, dy/length) —
+            # the old call passed the raw vector + length as extra positionals,
+            # shifting every arg one slot and double-feeding `speed`
+            # (TypeError: got multiple values for 'speed' — the ranged
+            # caster's whole web tick crashed every 50 ms).
+            if length > 1e-6:
+                _web_chase_step(
+                    z, dx / length, dy / length, collision, step, now_mono,
+                    result, speed=z.web_speed,
+                )
+            continue
+
+        # ---- AMBUSH (spider): camouflaged until the prey is close, then a
+        # short fast pounce burst before settling into normal chase speed.
+        if style == "ambush":
+            trigger = float(beh.get("ambush_bonus_vision", 6.0)) * 0.5
+            if not getattr(z, "ambush_armed", False):
+                if dist <= trigger:
+                    z.ambush_armed = True
+                    z.ambush_until = now_mono + 2.0  # pounce window
+                    _web_set_anim(z, "atk", now_mono)
+                else:
+                    _web_set_anim(z, "idle", now_mono)  # waiting in its web
+                    continue
+        else:
+            z.ambush_armed = False
+
         # LEASH: beyond WEB_ZOMBIE_LEASH a zombie simply loses interest (no
         # steering, no bite) — every attack the player sees is within reach.
         if dist > WEB_ZOMBIE_LEASH:
             _web_set_anim(z, "idle", now_mono)
             continue
-        dx = target.x_f - z.x_f
-        dy = target.y_f - z.y_f
-        length = _math.hypot(dx, dy)
         if dist <= WEB_ZOMBIE_BITE_RANGE:
             # Attack rhythm: lunge (~0.36 s, pose plays out) -> short recovery
             # shuffle (small steps away/sideways) -> creep back toward the
@@ -860,7 +976,9 @@ def web_tick(
             since_bite = now_mono - (z.last_bite or 0.0)
             if since_bite < WEB_ZOMBIE_ATK_MS / 1000.0:
                 continue  # let the lunge pose finish before anything moves
-            if since_bite < WEB_ZOMBIE_RECOVER_S:
+            # SKITTISH gets a longer retreat window (hit-and-run rhythm).
+            recover_s = max(WEB_ZOMBIE_RECOVER_S, getattr(z, "recover_until", 0.0) - now_mono) if style == "skittish" else WEB_ZOMBIE_RECOVER_S
+            if since_bite < recover_s:
                 _web_recovery_drift(z, collision, step, now_mono, result)
                 continue
             if since_bite < z.web_cooldown:
@@ -870,7 +988,14 @@ def web_tick(
             _web_set_anim(z, "atk", now_mono)
             z.last_bite = now_mono  # rhythm clock ticks even if damage is blocked
             before = target.hp
-            target.hp = max(0, target.hp - z.damage)
+            # SWARM (bat): dive-bomb burst — each bite flings the bat a step
+            # PAST the target so it circles around for the next pass.
+            dealt = z.damage
+            if style == "swarm":
+                dealt = max(1, round(z.damage * 0.8))  # light pecks, fast
+            # MELEE damage_mult (skeleton2 / hobgoblin: heavy slow hitters).
+            dealt = max(1, round(dealt * float(beh.get("damage_mult", 1.0))))
+            target.hp = max(0, target.hp - dealt)
             if target.hp != before:
                 # Out-of-combat regen clock: any HP loss re-arms the 5 s
                 # wait (web pack — same rule as the Discord pack).
@@ -881,14 +1006,29 @@ def web_tick(
                 # Hitsplat feed: floating damage number on the victim.
                 feed = getattr(state, "recent_damage", None)
                 if feed is not None:
-                    feed.append((now_wall, target.user_id, z.damage, "zombie"))
+                    feed.append((now_wall, target.user_id, dealt, "zombie"))
                     del feed[:-40]
                 # Pick the recovery drift: mostly AWAY from the target with a
                 # random sideways component, so packs break apart instead of
                 # shuffling in lockstep.
                 rec_len = max(1e-6, length)
-                z.recover_dx = (-dx / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
-                z.recover_dy = (-dy / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
+                # SKITTISH (rat/goblin): hit-and-run — a LONG retreat drift
+                # straight away from the player after every successful bite.
+                if style == "skittish":
+                    z.recover_dx = -dx / rec_len
+                    z.recover_dy = -dy / rec_len
+                    z.recover_until = now_mono + 1.2  # longer retreat window
+                else:
+                    z.recover_until = 0.0
+                if style == "swarm":
+                    # Dive past the target: keep the velocity, flip the
+                    # component along the approach to overshoot.
+                    z.recover_dx = (dx / rec_len) * 0.4 + random.uniform(-0.8, 0.8)
+                    z.recover_dy = (dy / rec_len) * 0.4 + random.uniform(-0.8, 0.8)
+                    z.recover_until = 0.0
+                elif style != "skittish":
+                    z.recover_dx = (-dx / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
+                    z.recover_dy = (-dy / rec_len) * 0.7 + random.uniform(-0.6, 0.6)
                 rl = _math.hypot(z.recover_dx, z.recover_dy)
                 if rl > 1e-6:
                     z.recover_dx /= rl
@@ -905,37 +1045,67 @@ def web_tick(
         if not sees or length <= 1e-6:
             _web_set_anim(z, "idle", now_mono)
             continue
-        # Hunters are always fast; regular kinds use their MOB_KINDS speed.
+        # Hunters are always fast; ambush pounce bursts faster; regular kinds
+        # use their MOB_KINDS speed.
         speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else z.web_speed
+        if style == "ambush" and getattr(z, "ambush_armed", False) and now_mono < getattr(z, "ambush_until", 0.0):
+            speed = max(speed, z.web_speed * 1.8)  # pounce!
+        # SWARM (bat): erratic weaving — sinusoidal sideways offset while
+        # closing in so it flies in loops instead of a straight beeline.
         ux, uy = dx / length, dy / length
-        can_float = getattr(collision, "can_move_float", None)
-        if callable(can_float):
-            try:
-                nx_f, ny_f = can_float(z.x_f, z.y_f, ux * speed * step, uy * speed * step)
-            except Exception:
-                nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
-        else:
-            nx_f, ny_f = z.x_f, z.y_f
-            try:
-                tx_a = int(_math.floor(z.x_f + ux * speed * step))
-                ty_a = int(_math.floor(z.y_f))
-                if collision.is_walkable(tx_a, ty_a):
-                    nx_f = z.x_f + ux * speed * step
-                if collision.is_walkable(int(_math.floor(nx_f)), int(_math.floor(z.y_f + uy * speed * step))):
-                    ny_f = z.y_f + uy * speed * step
-            except Exception:
-                nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
-        if (nx_f, ny_f) != (z.x_f, z.y_f):
-            z.x_f, z.y_f = nx_f, ny_f
-            z.sync_int_from_float()
-            z.facing = _web_facing(ux, uy)
-            _web_set_anim(z, "walk", now_mono)
-            result.changed = True
-        else:
-            _web_set_anim(z, "idle", now_mono)
+        if style == "swarm":
+            import math as _m2
+            wob = _m2.sin(now_mono * 6.0 + hash(z.zombie_id) % 7)
+            ux, uy = ux - uy * wob * 0.6, uy + ux * wob * 0.6
+            wl = _m2.hypot(ux, uy) or 1.0
+            ux, uy = ux / wl, uy / wl
+        _web_chase_step(z, ux, uy, collision, step, now_mono, result, speed=speed)
     if result.changed:
         result.visible_changed = True
     return result
+
+
+def _web_chase_step(
+    z: Zombie, ux: float, uy: float, collision,
+    step: float, now_mono: float, result: "ZombieTurnResult",
+    speed: float,
+) -> None:
+    """One float chase step along a UNIT vector with collision + the void
+    guard (shared by the melee chase and the ranged caster drift)."""
+    import math as _math
+
+    can_float = getattr(collision, "can_move_float", None)
+    if callable(can_float):
+        try:
+            nx_f, ny_f = can_float(z.x_f, z.y_f, ux * speed * step, uy * speed * step)
+        except Exception:
+            nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
+    else:
+        nx_f, ny_f = z.x_f, z.y_f
+        try:
+            tx_a = int(_math.floor(z.x_f + ux * speed * step))
+            ty_a = int(_math.floor(z.y_f))
+            if collision.is_walkable(tx_a, ty_a):
+                nx_f = z.x_f + ux * speed * step
+            if collision.is_walkable(int(_math.floor(nx_f)), int(_math.floor(z.y_f + uy * speed * step))):
+                ny_f = z.y_f + uy * speed * step
+        except Exception:
+            nx_f, ny_f = z.x_f + ux * speed * step, z.y_f + uy * speed * step
+    # VOID GUARD: reject any step that leaves the map rect — collision
+    # alone let mobs hug the outer wall band and drift into the void.
+    mw = getattr(getattr(collision, "map_data", None), "width", 0) or 0
+    mh = getattr(getattr(collision, "map_data", None), "height", 0) or 0
+    if mw and mh and not _in_bounds_float(nx_f, ny_f, mw, mh):
+        _web_set_anim(z, "idle", now_mono)
+        return
+    if (nx_f, ny_f) != (z.x_f, z.y_f):
+        z.x_f, z.y_f = nx_f, ny_f
+        z.sync_int_from_float()
+        z.facing = _web_facing(ux, uy)
+        _web_set_anim(z, "walk", now_mono)
+        result.changed = True
+    else:
+        _web_set_anim(z, "idle", now_mono)
 
 
 def _web_recovery_drift(
@@ -976,6 +1146,12 @@ def _web_slide(
             nx_f, ny_f = z.x_f + dx, z.y_f + dy
     else:
         nx_f, ny_f = z.x_f + dx, z.y_f + dy
+    # VOID GUARD: the recovery/creep drift respects the map rect too.
+    mw = getattr(getattr(collision, "map_data", None), "width", 0) or 0
+    mh = getattr(getattr(collision, "map_data", None), "height", 0) or 0
+    if mw and mh and not _in_bounds_float(nx_f, ny_f, mw, mh):
+        _web_set_anim(z, "idle", now_mono)
+        return
     if (nx_f, ny_f) != (z.x_f, z.y_f):
         z.x_f, z.y_f = nx_f, ny_f
         z.sync_int_from_float()
