@@ -42,6 +42,9 @@ export class Net {
    * frame carries seq; the snapshot acks last_seq and the game scene replays
    * unacked inputs from its buffer. Reset per connection. */
   private inputSeq = 0;
+  /** Current server map epoch (welcome/snapshot). Echoed on every input
+   *  frame — see the map_epoch note in onMessage. */
+  private mapEpoch = 0;
   /** Delivery callback for each seq'd input, so the scene can buffer exact
    * inputs for replay (set by main.ts right after construction). */
   onSeqInput: ((seq: number, dx: number, dy: number, running: boolean) => void) | null = null;
@@ -301,6 +304,7 @@ export class Net {
         this.send({
           type: MSG_INPUT, seq, dx: 0, dy: 0, running: false,
           x: Math.round(pos.x * 1000) / 1000, y: Math.round(pos.y * 1000) / 1000,
+          map_epoch: this.mapEpoch,
         });
         if (this.onSeqInput) this.onSeqInput(seq, 0, 0, false);
       }
@@ -323,6 +327,7 @@ export class Net {
       ...(p.hasPos || pos
         ? { x: Math.round(px * 1000) / 1000, y: Math.round(py * 1000) / 1000 }
         : {}),
+      map_epoch: this.mapEpoch,
     });
     // Hand the exact input to the scene's replay buffer (same seq the
     // server will ack) — every moving slice is now logged, so the
@@ -446,12 +451,24 @@ export class Net {
         // left the ack pinned high, disabled the replay reconcile and
         // desynced the client permanently after every map switch.
         this.inputSeq = (frame as { input_seq?: number }).input_seq ?? 0;
+        // MAP EPOCH: remember the current epoch from welcome + snapshots;
+        // every input frame echoes it. After a map switch the server drops
+        // position reports until a frame with the NEW epoch arrives — so a
+        // stale bigmap report can never drag the fresh cave arrival body
+        // across the map (the "vào hang lại đáp lên đỉnh" bug).
+        const wep = (frame as { map_epoch?: number }).map_epoch;
+        if (typeof wep === "number") this.mapEpoch = wep;
         this.handlers.onWelcome(frame);
         break;
       }
-      case "snapshot":
+      case "snapshot": {
+        // Keep the epoch fresh mid-session (a portal switch bumps it; the
+        // next snapshot carries the new value even before a welcome lands).
+        const sep = (frame as { self?: { map_epoch?: number } }).self?.map_epoch;
+        if (typeof sep === "number") this.mapEpoch = sep;
         this.handlers.onSnapshot(frame);
         break;
+      }
       case "scenario_list":
         this.handlers.onScenarioList(frame.items);
         break;

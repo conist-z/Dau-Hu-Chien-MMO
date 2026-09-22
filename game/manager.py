@@ -139,11 +139,15 @@ class WebSession:
     last_diag: float = 0.0
     # MAP-SWITCH GRACE ("vào hang lại đáp lên đỉnh cave"): loop time of the
     # last map switch for this session. Until the client ACKS the new map
-    # (its first in-bounds post-welcome input frame), position reports are
+    # (an input frame carrying the CURRENT map_epoch), position reports are
     # IGNORED — the old map's in-flight frames (e.g. bigmap mouth 81,3) are
     # otherwise VALID coordinates inside the cave's bounds and converge
     # drags the fresh arrival body across the map to the stale spot.
     map_switch_at: float = 0.0
+    # Epoch counter bumped on every map switch. Echoed to the client in the
+    # welcome + snapshots (map_epoch) and returned on input frames — the
+    # exact ack signal that ends the grace (no zero-vector heuristics).
+    map_epoch: int = 0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -591,7 +595,7 @@ class GameManager:
     def web_input(self, channel_id: int, user_id: int,
                   dx: float, dy: float, running: bool = False,
                   report_x: object = None, report_y: object = None,
-                  input_seq: int = None) -> bool:
+                  input_seq: int = None, input_epoch: object = None) -> bool:
         """Store one input vector (called from the WS handler).
 
         Client-authoritative position: when the (web) client reports its
@@ -627,27 +631,33 @@ class GameManager:
         # (bigmap mouth 81,3 fits the 103x56 cave) — converge then drags the
         # fresh arrival body ACROSS the map to the stale spot. Until the
         # client acks the welcome (frames sent AFTER it processed the new
-        # map), every position report is dropped; dx/dy velocity still
-        # applies so real movement never stalls. The ack signal: the client
-        # zeroes its input on a map-switch welcome (shipped client), so the
-        # FIRST ZERO-VECTOR frame after the switch is the client speaking
-        # with the new map's authority — end the grace on it. Long-input
-        # safety: the grace also expires after 3 s regardless.
+        # MAP-SWITCH GRACE v2 — EPOCH-BASED (exact, no heuristics).
+        # v1 bug: the OLD map's idle HEARTBEAT (zero-vector frames every
+        # 50 ms) matched the "first zero-vector = client acked" heuristic,
+        # ending the grace instantly and letting the stale bigmap-mouth
+        # report (81,3) converge the fresh cave arrival body to the cave's
+        # TOP — the exact wrong-arrival the user kept reporting.
+        # Now: the teleport bumps a per-session map_epoch counter; the server
+        # ECHOES the epoch in every snapshot; the client sends it back on
+        # every input frame once it has processed that welcome. A report is
+        # only trusted when frame.epoch == sess.map_epoch — a frame from the
+        # old map can never fake the ack.
+        frame_epoch = input_epoch if isinstance(input_epoch, int) else None
+        if (
+            frame_epoch is not None
+            and frame_epoch == getattr(sess, "map_epoch", 0)
+            and getattr(sess, "map_switch_at", 0.0) > 0.0
+        ):
+            sess.map_switch_at = 0.0  # client confirmed the new map
         sess_map_switch = getattr(sess, "map_switch_at", 0.0)
         now_t = _loop_time()
         in_grace = (
             sess_map_switch > 0.0
             and (now_t - sess_map_switch) < 3.0
         )
-        if in_grace and (rx is not None and ry is not None):
-            first_post_switch_frame = (
-                float(dx) == 0.0 and float(dy) == 0.0
-            )
-            if first_post_switch_frame:
-                sess.map_switch_at = 0.0  # client is on the new map — re-arm
-                in_grace = False
-            else:
-                rx = ry = None
+        if in_grace:
+            # Stale-map frame (wrong or missing epoch): drop the position.
+            rx = ry = None
         # MAP-BOUNDS GUARD (belt+braces): out-of-bounds reports are never
         # trusted even outside the grace window.
         if rx is not None and ry is not None and rt is not None:
@@ -2652,6 +2662,7 @@ class GameManager:
         dst_sess = dst_rt.web_sessions.get(user_id)
         if dst_sess is not None:
             dst_sess.map_switch_at = _loop_time()
+            dst_sess.map_epoch += 1  # client must echo THIS epoch to ack
         # WEB CLIENT MAP SWITCH: walking through a portal must re-send the
         # world payload, exactly like the /khutraodoi chat command does via
         # WebHub._maybe_teleport_welcome. The web session migrated to

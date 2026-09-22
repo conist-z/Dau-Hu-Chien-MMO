@@ -707,6 +707,10 @@ class WebHub:
             # (a different class) — pass the seq through or last_seq stays -1
             # and the client's rewind+replay reconciliation never arms.
             input_seq=raw_seq if isinstance(raw_seq, int) else None,
+            # MAP EPOCH echo: the client returns the welcome's map_epoch on
+            # every input frame — the server uses it to end the map-switch
+            # grace exactly (stale-map frames carry the OLD epoch).
+            input_epoch=frame.get("map_epoch"),
         )
 
     async def _handle_inventory_op(self, sess: WebSession, frame: dict) -> None:

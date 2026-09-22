@@ -439,6 +439,10 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
     return {
         "type": "welcome",
         "input_seq": max(0, int(getattr(_sess, "input_seq", 0) or 0)),
+        # MAP EPOCH: bumped per map switch on the session. The client echoes
+        # it on input frames; the server trusts positions only from frames
+        # carrying the CURRENT epoch (ends the map-switch grace exactly).
+        "map_epoch": int(getattr(_sess, "map_epoch", 0) or 0),
         # Paperdoll manifest: frame grid + animation rows for the player
         # sheets (assets/players). Static data — read once per welcome.
         "players_manifest": _players_manifest_payload(),
@@ -755,6 +759,13 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
                 getattr(_cs, "input_seq", -1)
                 if (_cs := _web_session_of(rt, user_id)) is not None
                 else -1
+            ),
+            # MAP EPOCH (map-switch grace ack): mirrors the welcome's value;
+            # the client echoes it on input frames even mid-session.
+            "map_epoch": (
+                int(getattr(_cs, "map_epoch", 0) or 0)
+                if (_cs := _web_session_of(rt, user_id)) is not None
+                else 0
             ),
             # Station proximity for the craft button gate (server truth).
             "near_station": near_station,

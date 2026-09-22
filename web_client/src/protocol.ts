@@ -16,6 +16,10 @@ export interface WelcomePayload {
    *  welcome (portal step / /khutraodoi) keeps the session running, so the
    *  client resumes numbering here instead of restarting at 0. */
   input_seq?: number;
+  /** MAP EPOCH (map-switch grace ack): bumped per map switch. Echoed on
+   *  every input frame; the server trusts positions only from frames
+   *  carrying the CURRENT epoch. */
+  map_epoch?: number;
   map: {
     id: string;
     name: string;
@@ -190,6 +194,10 @@ export interface SnapshotPayload {
     // input with seq > last_seq. Absent on pre-seq servers — the client
     // keeps prediction-only movement with no correction in that case.
     last_seq?: number;
+    // MAP EPOCH (map-switch grace ack): the client mirrors this onto every
+    // input frame; the server ends the position-report grace exactly when
+    // the epoch matches its current one.
+    map_epoch?: number;
   };
   // Present only when the bag changed since our last ack.
   inventory?: InventoryPayload;
