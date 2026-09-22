@@ -399,6 +399,15 @@ const net = new Net({
     void (window as unknown as { __lockLandscape?: () => Promise<void> })
       .__lockLandscape?.();
     scene.buildWorld(frame, (name) => net.fetchAsset(name));
+    // Map-switch input hygiene (both halves): scene.buildWorld clears its
+    // own prediction mirror on a different-map welcome; here we zero the
+    // NET-layer pending vector + the mobile stick mirror, or the next 16 ms
+    // commit timer re-sent the OLD walk direction to the NEW map (the
+    // "vào hang còn lệch chút chút" residue).
+    net.resetInput();
+    mobileInputState.dx = 0;
+    mobileInputState.dy = 0;
+    mobileInputState.running = false;
     beginLoadTracking(frame);
     hud.hideGate();
     hud.hideLobby();

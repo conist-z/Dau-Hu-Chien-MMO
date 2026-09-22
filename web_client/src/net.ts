@@ -237,6 +237,17 @@ export class Net {
     this.send({ type: "map_preview", map_id: mapId });
   }
 
+  /** MAP-SWITCH INPUT RESET: a portal welcome arriving mid-walk must not
+   *  let the stale held vector keep flowing to the NEW map's server body
+   *  (the residual "vào hang còn lệch chút chút": scene cleared its own
+   *  mirror but pendingInput kept re-sending the old direction until the
+   *  next key event). Zero it + the next flush is an idle heartbeat. */
+  resetInput(): void {
+    const p = this.pendingInput;
+    p.dx = 0; p.dy = 0; p.running = false; p.dirty = false;
+    p.px = 0; p.py = 0; p.hasPos = false;
+  }
+
   requestGuestJoin(guestId: string): void {
     this.send({ type: "guest_login", guest_id: guestId });
   }
