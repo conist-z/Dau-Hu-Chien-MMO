@@ -229,6 +229,16 @@ export class WorldScene extends Phaser.Scene {
   private remoteDolls = new Map<number, PaperdollBody>();
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
+  /** Previous prediction frame's input vector — feeds the direction-reversal
+   *  guard below. */
+  private prevInputVec = { dx: 0, dy: 0, running: false };
+  /** Time (performance.now ms) of the last 1-tile leap downward (Up→Down
+   *  reversal) — feeds the same guard. */
+  private lastRevDashAt = 0;
+  /** Last snapshot where the server body moved while the input was the NEW
+   *  direction — proves the reversal reached the server's motion, allowing
+   *  the hard reverse-leap snap (see applySnapshot). */
+  private static readonly REV_DASH_SUPPRESS_MS = 350;
   private selfX = 0; // predicted float position, TILE units
   private selfY = 0;
   private collision: number[][] = []; // collision[y][x] = 1 blocks
@@ -384,51 +394,40 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // ---- mobile camera (mobile_controls.ts) -------------------------------
-  /** Camera zoom requested from the touch layer (pinch). The camera is
-   *  follow-locked (startFollow), so a drag "pan" is expressed as an OFFSET
-   *  from the followed player instead of touching scroll directly (scroll
-   *  fights the follow every frame). */
-  private mobileZoom = 2.0;
-  private mobilePan = { x: 0, y: 0 };
-  private static readonly MOBILE_ZOOM_MIN = 1.2;
+  // The camera is FOLLOW-ONLY (no pan — the pan layer was the desync/jump
+  // bug factory) and ZOOM-IN-ONLY: 2.8 IS the default — the widest the
+  // camera ever gets (user: "zoom xa ra khoảng 40% nữa và không cho zoom
+  // xa ra thêm nữa"). Pinch can only pull the view closer, up to 4.0.
+  private static readonly MOBILE_ZOOM_DEFAULT = 2.8;
   private static readonly MOBILE_ZOOM_MAX = 4.0;
+  private mobileZoom = WorldScene.MOBILE_ZOOM_DEFAULT;
 
-  /** Absolute zoom from a pinch gesture (factor 1.0 = unchanged). */
+  /** Incremental zoom from a pinch gesture (factor relative to the gesture
+   *  start; 1.0 = unchanged). Only zoom-IN moves the value — the default
+   *  is already the widest allowed, so factor < 1 is a no-op. */
   applyPinchZoom(factor: number): void {
-    const base = 2.0; // the scene's authored zoom (buildWorld setZoom)
+    const start = this.pinchStartZoom ?? this.mobileZoom;
+    if (this.pinchStartZoom === null) {
+      this.pinchStartZoom = this.mobileZoom;
+    }
+    this.setMobileZoom(start * factor);
+  }
+  /** Zoom value at the start of the active pinch gesture (null = idle). */
+  private pinchStartZoom: number | null = null;
+
+  /** Commit a pinch gesture (mobile_controls calls this on release). */
+  commitPinchZoom(): void {
+    this.pinchStartZoom = null;
+  }
+
+  /** Apply the mobile zoom immediately (the base 2.8 authored zoom — the
+   *  old buildWorld setZoom(2.0) — happens once before the first welcome). */
+  private setMobileZoom(z: number): void {
     this.mobileZoom = Math.min(
       WorldScene.MOBILE_ZOOM_MAX,
-      Math.max(WorldScene.MOBILE_ZOOM_MIN, base * factor),
+      Math.max(WorldScene.MOBILE_ZOOM_DEFAULT, z),
     );
     this.cameras.main.setZoom(this.mobileZoom);
-  }
-
-  /** Drag-look: pan the view by screen px while still following the player
-   *  (an offset from the follow point, decays back when the player moves). */
-  applyLookPan(dxPx: number, dyPx: number): void {
-    const cam = this.cameras.main;
-    this.mobilePan.x -= dxPx / cam.zoom;
-    this.mobilePan.y -= dyPx / cam.zoom;
-    const MAX = 220; // world px — far enough to peek, close enough to return
-    this.mobilePan.x = Math.max(-MAX, Math.min(MAX, this.mobilePan.x));
-    this.mobilePan.y = Math.max(-MAX, Math.min(MAX, this.mobilePan.y));
-    this.applyMobilePan();
-  }
-
-  /** Push the current pan offset into the camera (called every frame so it
-   *  survives the follow lerp re-centering). */
-  private applyMobilePan(): void {
-    const cam = this.cameras.main;
-    const fx = this.selfMarker?.x ?? cam.midPoint.x;
-    const fy = this.selfMarker?.y ?? cam.midPoint.y;
-    cam.centerOn(fx + this.mobilePan.x, fy + this.mobilePan.y);
-  }
-
-  /** Reset the look pan (e.g. on movement input — the player walking means
-   *  they want the camera back on themselves). */
-  resetLookPan(): void {
-    this.mobilePan.x = 0;
-    this.mobilePan.y = 0;
   }
 
 
@@ -739,12 +738,15 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
-    // Zoom 2.0 for EVERY map: actor sprites (paperdoll 64px, mobs, drops)
-    // are authored in 32px world space — zooming 16px maps to 4.0 doubled
-    // every actor on screen (doll = 4 tiles next to 2-tile trees, blocking
-    // box 0.6 tiles → "nhân vật lệch khỏi box chặn"). At 2.0 a 16px tile
-    // shows at 32 screen px and ALL proportions match the classic maps.
-    this.cameras.main.setZoom(2.0);
+    // Mobile default zoom 2.8 (user: "zoom xa ra ~40% nữa và KHÔNG cho
+    // zoom xa hơn nữa" — 2.8 is the FLOOR; pinch may only zoom in to 4.0).
+    // Desktop keeps the authored 2.0. Actor sprites (paperdoll 64px, mobs,
+    // drops) are authored in 32px world space — zooming 16px maps by another
+    // 2× would double every actor on screen; on mobile the extra pull-back
+    // buys map visibility at the cost the user explicitly asked for.
+    this.cameras.main.setZoom(
+      document.body.classList.contains("mobile-ui") ? this.mobileZoom : 2.0,
+    );
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
@@ -758,6 +760,10 @@ export class WorldScene extends Phaser.Scene {
     // Per-map tile size: ekonia maps ship 16px tiles while the classic maps
     // are 32px. Every grid->world conversion below must use THIS value.
     this.tilePx = welcome.map.tile_width || BASE_TILE;
+    // Paperdoll bodies are authored against 32px tiles — rescale for 16px
+    // Ekonia maps (cave/forest) so the body matches the hover-square size.
+    this.selfDoll?.setTileScale(this.tilePx);
+    for (const rp of this.players.values()) rp.doll?.setTileScale(this.tilePx);
     // Sub-tile masks: sparse {y:{x:mask}} -> flat "x,y" map (server parity).
     this.tileMasks.clear();
     const tm = welcome.map.tile_masks;
@@ -824,9 +830,41 @@ export class WorldScene extends Phaser.Scene {
 
   /** Called 20 Hz from main.ts: store the current input vector. */
   setLocalInput(dx: number, dy: number, running: boolean): void {
+    this.prevInputVec.dx = this.inputVec.dx;
+    this.prevInputVec.dy = this.inputVec.dy;
+    this.prevInputVec.running = this.inputVec.running;
     this.inputVec.dx = dx;
     this.inputVec.dy = dy;
     this.inputVec.running = running;
+    // DIRECTION-REVERSAL GUARD (user 23/09: "chạy lên rồi chạy xuống liền
+    // kề nhau — cảm giác bị dịch chuyển 1 khoảng thay vì quay mặt lại"):
+    // a 180° flip with the previous axis still held arrives at the server
+    // as ~1 tick (≤50 ms) of the OLD direction. That stale half-step
+    // integrates into a 1-tile sliver ABOVE us; the snapshot replay then
+    // re-integrates it and the avatar LEAPS that tile instantly. Mirror the
+    // server's own leash: drop ≤1-tile slivers against the held direction.
+    // The body may still be ≤1 tile above us (the stale half-step we just
+    // dropped) — applying the NEW axis latches us onto the live server
+    // command immediately (see applySnapshot), instead of teleporting back.
+    if (
+      this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx)
+    ) {
+      const d = Math.hypot(this.selfX - this.selfServerPos.x, 0);
+      const behind = (this.selfServerPos.x - this.selfX) * dx > 0.02;
+      if (d > 0.02 && d <= 1.2 && behind) {
+        this.selfX += (this.selfServerPos.x - this.selfX) * 0.6;
+      }
+    }
+    if (
+      this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy)
+    ) {
+      const d = Math.hypot(0, this.selfY - this.selfServerPos.y);
+      const behind = (this.selfServerPos.y - this.selfY) * dy > 0.02;
+      if (d > 0.02 && d <= 1.2 && behind) {
+        this.selfY += (this.selfServerPos.y - this.selfY) * 0.6;
+        this.lastRevDashAt = performance.now();
+      }
+    }
     // Keep the 8-way facing label in sync with the raw input (used by
     // getSelfDir for actions); rendering blends the vector separately.
     if (dx !== 0 || dy !== 0) {
@@ -1448,6 +1486,7 @@ export class WorldScene extends Phaser.Scene {
   private spawnSelfDoll(): void {
     if (!this.playersManifest || this.selfDoll) return;
     this.selfDoll = new PaperdollBody(this, this.playersManifest);
+    this.selfDoll.setTileScale(this.tilePx);
     this.selfDoll.spawn(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, 7);
     this.hideSelfHand(); // Kaetram body carries its own weapon layer
     if (this.selfHeld) this.selfDoll.setWeapon(weapon_sheet_for(this.selfHeld));
@@ -1457,6 +1496,7 @@ export class WorldScene extends Phaser.Scene {
   private spawnRemoteDoll(id: number, rp: RemotePlayer): void {
     if (!this.playersManifest || this.remoteDolls.has(id)) return;
     const doll = new PaperdollBody(this, this.playersManifest);
+    doll.setTileScale(this.tilePx);
     doll.spawn(rp.container.x, rp.container.y + 16, 7);
     this.remoteDolls.set(id, doll);
     rp.doll = doll;
@@ -1831,21 +1871,6 @@ export class WorldScene extends Phaser.Scene {
     // --- client-side prediction: move SELF instantly every frame ---
     // Server speed: walk 4 tiles/s, run 6 tiles/s (config.WEB_*_SPEED).
     this.stepSelf();
-    // Mobile look-pan: walking recenters the camera (the offset decays away),
-    // and while an offset is active it must be re-applied EVERY frame — the
-    // follow lerp re-centers on the player and would instantly undo the pan.
-    if (this.mobilePan.x !== 0 || this.mobilePan.y !== 0) {
-      if (this.inputVec.dx !== 0 || this.inputVec.dy !== 0) {
-        const decay = Math.max(0, 1 - this.frameDtSec * 4);
-        this.mobilePan.x *= decay;
-        this.mobilePan.y *= decay;
-        if (Math.abs(this.mobilePan.x) < 1 && Math.abs(this.mobilePan.y) < 1) {
-          this.mobilePan.x = 0;
-          this.mobilePan.y = 0;
-        }
-      }
-      this.applyMobilePan();
-    }
     // Ekonia FadeOccluderLayer parity: smooth per-pixel canopy fade that
     // follows the player every frame (cheap — small window, typed loop).
     this.updateOccluderFade();
@@ -3848,6 +3873,19 @@ export class WorldScene extends Phaser.Scene {
           this.selfX = this.selfServerPos.x;
           this.selfY = this.selfServerPos.y;
           this.inputLog = [];
+        } else if (
+          this.lastRevDashAt > 0 &&
+          performance.now() - this.lastRevDashAt < WorldScene.REV_DASH_SUPPRESS_MS
+        ) {
+          // Fresh Up→Down reversal: reject any snap that LEAPS DOWNWARD more
+          // than 0.8 tile (the stale-half-step replay launch). Downward
+          // snaps are still allowed once the server body itself has moved
+          // on the new axis — the reverse command is live there.
+          const rev = this.selfServerPos.y - this.selfY;
+          const revMoving = (this.selfServerPos.y - this.lastSrvY) * rev > 0;
+          if (rev > 0.8 && !revMoving) {
+            this.selfServerPos.y = this.selfY;
+          }
         } else if (jump > WorldScene.RECONCILE_DRIFT) {
           // ASYMMETRIC RECONCILE (client-authoritative latency parity):
           // the server body structurally TRAILS the prediction by

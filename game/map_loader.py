@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,9 @@ def _unwrap_godot(text: str) -> dict:
     if not m:
         raise ValueError("Not a recognisable Godot/Tiled wrapper")
     return json.loads(m.group(1))
+
+
+log = logging.getLogger(__name__)
 
 
 def _read_raw(assets_dir: Path, map_id: str):
@@ -326,6 +330,55 @@ def _normalize_layer_name(name: str) -> str:
     # NFKD does NOT decompose "đ" — fold it manually so layer names like
     # "bàn(không đi xuyên được)" match ASCII checks data-driven.
     return folded.replace("đ", "d").replace("Đ", "d").lower()
+
+
+def _cell_composite_alpha(
+    layers: List[Tuple[str, List[List[int]]]], width: int, height: int
+) -> Optional[List[List[int]]]:
+    """Per-cell ABOVE-GROUND art alpha from the baked sheet: 1 when any
+    NON-GROUND layer's tile at the cell has an opaque pixel (>= 16), else 0.
+    Ground/floor layers are EXCLUDED — a cell with only floor art under a
+    leaked wide-prop poly is the "invisible wall" ("box chặn tường siêu
+    dày"): the player sees open floor. Cells the wall art visually overlaps
+    carry that overlap INSIDE the walls layer's own slices, so real wall
+    faces never read as ground-only. Returns None when the baked sheet
+    cannot be opened (caller skips the carve — safe square fallback).
+    """
+    sheet_path = Path(__file__).resolve().parents[1] / "assets" / "maps" / "ekonia" / "tiles" / "ekonia_baked.png"
+    if not sheet_path.exists():
+        return None
+    try:
+        from PIL import Image
+
+        sheet = Image.open(sheet_path).convert("RGBA")
+        alpha_by_gid: Dict[int, int] = {}
+        out = [[0] * width for _ in range(height)]
+        cols = 64
+        for _name, grid in layers:
+            _nl = _normalize_layer_name(_name)
+            if "ground" in _nl or "floor" in _nl or "san" in _nl:
+                continue  # floor art is not a blocker
+            for gy, row in enumerate(grid):
+                if gy >= height:
+                    break
+                for gx, gid in enumerate(row):
+                    if not gid or gx >= width or out[gy][gx]:
+                        continue
+                    flag = alpha_by_gid.get(gid)
+                    if flag is None:
+                        local = gid - 1
+                        sx = (local % cols) * 16
+                        sy = (local // cols) * 16
+                        try:
+                            patch = sheet.crop((sx, sy, sx + 16, sy + 16))
+                            flag = 1 if patch.getchannel("A").getextrema()[1] >= 16 else 0
+                        except Exception:
+                            flag = 1  # unreadable gid: assume drawn (safe)
+                        alpha_by_gid[gid] = flag
+                    out[gy][gx] = flag
+        return out
+    except Exception:
+        return None
 
 
 def _walkable_overrides(
@@ -749,6 +802,29 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     # them into the canopy set (the web client renders them OVER actors).
     above_cells = [c for c in above_cells if tuple(c) not in poly_set]
     above_cells.extend(ysort_poly_cells)
+    # INVISIBLE-BLOCKER CARVE ("box chặn tường siêu dày"): Ekonia cave-wall
+    # props ship WIDE physics polys (CaveProps polys up to 32px = 2 cells)
+    # whose art is PAINTED UNDER the wall ring — the neighboring rim cells
+    # end up SOLID with NO opaque pixel anywhere (ground only). Blocking
+    # those reads as a wall 1-2 tiles before any rock: the player stops on
+    # open floor. Carve every statically-blocked cell that (a) has NO art
+    # pixel (every layer's tile at this cell is fully transparent OR absent)
+    # and (b) is not needed as a wall behind wall art. The composite alpha
+    # of the cell's tiles is the truth the player SEES — if nothing is drawn
+    # there, nothing can block there.
+    ekonia = Path(map_id).parent.as_posix() == "ekonia"
+    if ekonia:
+        _comp_alpha = _cell_composite_alpha(tile_layers, width, height)
+        _carved = 0
+        for _cy in range(height):
+            for _cx in range(width):
+                if not collision[_cy][_cx]:
+                    continue
+                if _comp_alpha is not None and _comp_alpha[_cy][_cx] == 0:
+                    collision[_cy][_cx] = 0
+                    _carved += 1
+        if _carved:
+            print(f"  [cave] carved {_carved} invisible-blocker cells (no art)")
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)
@@ -791,8 +867,12 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
 
         full = (1 << (MASK_RES * MASK_RES)) - 1
         md_stub = type("_MD", (), {"width": width, "height": height, "tilesets": tilesets})()
-        _extras = dict(poly_exact_masks)
-        _extras.update(ekonia_wall_masks)  # wall alpha refine (poly wins)
+        # Poly/albedo masks WIN where present (composited silhouette of ALL
+        # sprites at the cell — better than one gid's piece); the wall piece
+        # alpha fills the GAP (poly cells whose albedo is missing = the
+        # "tường/đá box dày quá mức" cells).
+        _extras = dict(ekonia_wall_masks)
+        _extras.update(poly_exact_masks)
         tile_masks = build_map_masks(
             md_stub, blocking_gids, extra_masks=_extras or None
         )
@@ -837,6 +917,54 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
         spawn = _centered_walkable(
             collision, _art_mask(tile_layers, width, height)
         )
+    # Portal trigger tiles ("cửa hang", "miệng hang", doors...) must be
+    # IMPASSABLE walls, not walkable floor: the teleport fires on box-touch,
+    # and a walkable trigger let the player's box slide through/over the
+    # gate art. After carve/mask refinement, force every portal tile solid
+    # and strip any sub-tile mask so nothing lets the box pass through.
+    try:
+        from game.portals import Portals
+        portal_cfg = Portals.load(assets_dir / "portals.json")
+        mp = portal_cfg.for_map(map_id)
+        if mp is not None and mp.trigger_tiles:
+            n_forced = 0
+            for (px, py) in mp.trigger_tiles:
+                if 0 <= px < width and 0 <= py < height:
+                    if not collision[py][px]:
+                        collision[py][px] = 1
+                        n_forced += 1
+                    if tile_masks is not None:
+                        tile_masks.clear_tile(px, py)
+            if n_forced:
+                log.info("[portals] %s: forced %d trigger tile(s) solid", map_id, n_forced)
+        # ARRIVAL CARVE (inverse of the trigger force): tiles other maps'
+        # links ARRIVE on (their ``target``) must be WALKABLE — Ekonia gate
+        # art (the triangle arrows of "cửa hang(từ big map vào)") carries a
+        # physics poly in <map>.solids.json, which made the arrival tile
+        # solid: free_arrival_tile found nothing walkable and fell back to
+        # the map spawn ("tele sai vị trí"). The author's portals.json
+        # target IS the intended landing spot — honor it over the poly.
+        n_freed = 0
+        for other in portal_cfg.maps.values():
+            for link in other.destinations.values():
+                if link.map_id != map_id or link.target_is_layer:
+                    continue
+                for (ax, ay) in link.target:
+                    # A tile that is ALSO this map's own trigger (dual-role
+                    # gate: arrive on row 35, walk one more step into row 36
+                    # to leave) keeps its forced solidity — freeing it would
+                    # let the box pass through the gate art again.
+                    if mp.trigger_tiles and (ax, ay) in mp.trigger_tiles:
+                        continue
+                    if 0 <= ax < width and 0 <= ay < height and collision[ay][ax]:
+                        collision[ay][ax] = 0
+                        n_freed += 1
+                    if tile_masks is not None:
+                        tile_masks.clear_tile(ax, ay)
+        if n_freed:
+            log.info("[portals] %s: freed %d arrival tile(s) walkable", map_id, n_freed)
+    except FileNotFoundError:
+        pass
     image_path = assets_dir / f"{map_id}.png"
     if not image_path.exists():
         image_path = None

@@ -32,7 +32,7 @@ export class PaperdollBody {
   private weaponStem: string | null = null;
   // Visual-only upscale from the manifest (2 = body spans 2 tiles tall).
   // Pure rendering: collision/positions stay in 1-tile server space.
-  private readonly scale: number;
+  private scale: number;
 
   constructor(scene: Phaser.Scene, manifest: PlayersManifest | null | undefined) {
     this.scene = scene;
@@ -43,6 +43,21 @@ export class PaperdollBody {
 
   get ready(): boolean {
     return !!this.manifest.base.file && this.scene.textures.exists("pd-base");
+  }
+
+  /** Rescale the doll for the current map's tile size. The manifest scale
+   *  (2) was tuned for 32px maps (bigmap); a 16px Ekonia map (cave/forest)
+   *  keeps the 32px-wide body twice as wide as its tile — halve the scale
+   *  there so the body spans ONE tile like the hover square does. Pure
+   *  rendering: collision/positions stay untouched. */
+  setTileScale(tilePx: number): void {
+    const basePx = 32; // manifest frames are authored against 32px tiles
+    const s = Math.max(1, Math.min(4, this.manifest.scale ?? 1));
+    const target = tilePx >= basePx ? s : Math.max(1, s * (tilePx / basePx));
+    if (target === this.scale) return;
+    this.scale = target;
+    this.base?.setScale(target);
+    this.weapon?.setScale(target);
   }
 
   /** Create the two sprites at (x, y) — world px, feet anchor. */

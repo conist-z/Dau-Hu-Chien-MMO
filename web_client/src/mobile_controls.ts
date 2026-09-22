@@ -1,18 +1,22 @@
 // Mobile controls: HOME-ANCHORED FLOATING KNOB joystick (Kenney CC0 art)
-// + action buttons + a full-screen LOOK surface for the camera:
+// + action buttons. MULTI-TOUCH FIRST-CLASS:
 //   • the knob rests at a FIXED home spot bottom-left from the start (always
 //     visible, slightly translucent); touch it (or the zone around it) and
 //     drag any direction — the knob follows the finger analog-style; release
-//     → it springs BACK TO ITS HOME (not wherever the finger was) and idles
-//     as a translucent ghost. Push past 2× range = run (nub lights purple).
-//   • one finger drag (elsewhere) → pan the camera (re-centers while walking)
-//   • two finger pinch → zoom (drives the Phaser camera zoom directly)
-//   • quick tap        → the SAME "primary" action as a desktop left click
-//                        (chop / break / attack / MINE at that tile)
-//   • long press       → the SAME "secondary" action as a right click
-//                        (PLACE the held block / eat / station interact)
-//   • 🎒 button        → inventory panel (drag items there like on desktop)
-// The knob feeds the exact same input-vector hook as the keyboard
+//     → it springs BACK TO ITS HOME and idles as a translucent ghost. Push
+//     past the walk radius = run (nub lights purple).
+//   • THE KNOB OWNS ITS POINTER (setPointerCapture): while the move finger is
+//     down, EVERY other touch is a world action (tap = chop/attack, hold =
+//     place) — moving and acting AT THE SAME TIME works.
+//   • pointercancel is handled like pointerup: Android fires it (no matching
+//     pointerup) on edge-swipes / palm / gesture arbitration — missing it
+//     stranded the stick ON with a dead pointer id (the "joystick drifts by
+//     itself / ẻo ẻo" bug).
+//   • two-finger pinch → zoom (zoom-IN only: the default is already the
+//     widest the camera ever gets).
+//   • CAMERA PAN: GONE. Every touch outside the stick is a world action; the
+//     camera is follow-only (the pan layer was the desync/jump bug factory).
+// The knob feeds the same input-vector hook as the keyboard
 // (onMove → setLocalInput + net.setInput), so prediction/seq'd inputs/server
 // path are IDENTICAL to desktop. Everything lives in a DOM overlay
 // (#mobile-controls), display:none on fine-pointer / wide screens — desktop
@@ -20,7 +24,7 @@
 
 export interface MobileHooks {
   /** Analog movement vector, magnitude 0..1, screen-space (x right, y down).
-   *  Magnitude > ~0.95 (rim) maps to run — mirrors the Shift behaviour. */
+   *  Magnitude ≥ 1 (rim) maps to run — mirrors the Shift behaviour. */
   onMove: (dx: number, dy: number, running: boolean) => void;
   /** Attack (F equivalent). */
   onAttack: () => void;
@@ -30,31 +34,22 @@ export interface MobileHooks {
   onTapWorld: (sx: number, sy: number) => void;
   /** Long press on the world: secondary action at that point (0..1). */
   onLongPressWorld: (sx: number, sy: number) => void;
-  /** Pinch zoom: absolute scale vs the gesture start (1.0 = no change). */
+  /** Pinch zoom: incremental scale vs the gesture start (1.0 = no change). */
   onZoomPinch: (factor: number) => void;
-  /** Single-finger drag on the look area: camera pan in screen px. */
-  onDragLook?: (dx: number, dy: number) => void;
+  /** The pinch gesture ended (fingers lifted) — commit the zoom value. */
+  onZoomEnd?: () => void;
 }
 
 /** Floating knob sizing (CSS px; the knob follows the finger). */
 const KNOB_SIZE = 76; // knob diameter on screen (128px art scaled down)
 const WALK_RADIUS = 60; // drag distance that maxes the WALK vector
-const RUN_RADIUS = WALK_RADIUS * 2; // beyond this = RUN (Shift equivalent)
-
-/** ms a finger must stay (and stay still) to count as a long press. */
-const LONG_PRESS_MS = 450;
-/** px of movement that cancels a pending tap/long-press (it's a drag).
- *  Generous for touch: fingers wobble ±6px on a "still" press, and a slop
- *  too tight made long-press-place almost impossible on phones (the reported
- *  "đặt block chưa ổn"). Desktop mouse clicks never drift — the old value. */
-const TAP_SLOP_PX = 14;
 /** px of touch wobble still counted as a stationary long press. */
 const LONG_PRESS_SLOP_PX = 22;
 
 export class MobileControls {
   private hooks: MobileHooks;
 
-  // ---- dynamic knob state (one active pointer at a time) ----
+  // ---- dynamic knob state (the move pointer, owned via capture) ----
   private stickPointer: number | null = null;
   private stickOrigin = { x: 0, y: 0 };
   private stickEl: HTMLElement | null = null;
@@ -80,12 +75,15 @@ export class MobileControls {
     return window.innerHeight - Math.max(96, Math.round(window.innerHeight * 0.24));
   }
 
-  // look-area state (multi-touch: tracked per pointer id)
-  private lookTouches = new Map<number, { x: number; y: number; startX: number; startY: number }>();
+  // ---- world-action pointer state (taps / long press / pinch) ----
+  // Per-pointer tracking so the move finger NEVER interferes: while the
+  // stick is captured, world touches arrive here as separate pointer ids.
+  private worldTouches = new Map<number, { x: number; y: number; startX: number; startY: number }>();
   private pinchStartDist = 0;
   private pinchStartFactor = 1;
   private longPressTimer: number | null = null;
   private longPressFired = false;
+  private worldPointerListener: ((e: PointerEvent) => void) | null = null;
 
   constructor(hooks: MobileHooks) {
     this.hooks = hooks;
@@ -101,9 +99,8 @@ export class MobileControls {
     // icons. NO ring/base around the knob (user spec). The knob RESTS at a
     // fixed home spot from mount (never display:none — it idles translucent).
     root.innerHTML = `
-      <div id="mc-look" aria-hidden="true"></div>
-      <div id="mc-stick-zone" aria-hidden="true"></div>
       <img id="mc-knob" src="/ui/mobile/stick_nub.png" alt="" draggable="false" />
+      <div id="mc-stick-zone" aria-hidden="true"></div>
       <div id="mc-actions">
         <button class="mc-btn mc-act" id="mc-inv" type="button" aria-label="Túi đồ">
           <img class="mc-act-bg" src="/ui/mobile/btn_hexagon.png" alt="" draggable="false" />
@@ -126,20 +123,23 @@ export class MobileControls {
     // players SEE the joystick from the first frame in-game.
     this.parkKnob();
 
-    // --- dynamic D-pad: pointerdown in the zone spawns the pad under the
-    // finger; move = analog vector + arm lighting; up/cancel releases. ---
+    // --- dynamic knob: pointerdown in the zone grabs the stick and CAPTURES
+    // the pointer; move = analog vector; up/CANCEL releases. With capture,
+    // every move event of this pointer flows to the zone regardless of where
+    // the finger travels, and all OTHER pointers remain free for taps. ---
     const zone = document.getElementById("mc-stick-zone")!;
-    zone.addEventListener("pointerdown", (e) => {
+    const stickDown = (e: PointerEvent): void => {
       e.preventDefault();
+      e.stopPropagation();
       if (this.stickPointer !== null) return; // one stick at a time
       this.stickPointer = e.pointerId;
-      // Capture keeps pointermove flowing when the finger slides off the
-      // zone (onto the canvas). Synthetic events (tests/automation) have no
-      // active pointer — capture failures must not break the stick.
+      // Capture is the whole multi-touch story: (a) the move finger keeps
+      // reporting even when it slides over the canvas / out of the zone;
+      // (b) other pointers stay untouched → tap-to-attack works WHILE moving.
       try {
         zone.setPointerCapture(e.pointerId);
       } catch {
-        /* synthetic pointer — moves will still fire while over the zone */
+        /* synthetic pointer (tests/automation) — best effort */
       }
       this.stickOrigin = { x: e.clientX, y: e.clientY };
       if (this.stickEl) {
@@ -149,11 +149,7 @@ export class MobileControls {
         if (this.knobEl) this.knobEl.style.transform = "translate(0px, 0px)";
       }
       this.updateNub(e.clientX, e.clientY);
-    });
-    zone.addEventListener("pointermove", (e) => {
-      if (e.pointerId !== this.stickPointer) return;
-      this.updateNub(e.clientX, e.clientY);
-    });
+    };
     const stickLift = (e: PointerEvent): void => {
       if (e.pointerId !== this.stickPointer) return;
       this.stickPointer = null;
@@ -163,6 +159,16 @@ export class MobileControls {
       if (this.knobEl) this.knobEl.src = "/ui/mobile/stick_nub.png";
       this.hooks.onMove(0, 0, false);
     };
+    zone.addEventListener("pointerdown", stickDown);
+    zone.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== this.stickPointer) return;
+      e.preventDefault();
+      this.updateNub(e.clientX, e.clientY);
+    });
+    // pointercancel is NOT optional: Android delivers it without a matching
+    // pointerup (edge gesture, palm, incoming call, browser gesture
+    // arbitration). Treating it as a lift prevents the stick from being
+    // stranded ON with a dead pointer id (infinite walking / drift).
     zone.addEventListener("pointerup", stickLift);
     zone.addEventListener("pointercancel", stickLift);
     zone.addEventListener("lostpointercapture", stickLift);
@@ -188,11 +194,13 @@ export class MobileControls {
     bindAction("mc-atk", () => this.hooks.onAttack());
     bindAction("mc-inv", () => this.hooks.onToggleInventory());
 
-    // --- LOOK surface: covers the WHOLE screen so any free spot is usable;
-    // stick zone + buttons sit above it and capture their own touches. ---
-    const look = document.getElementById("mc-look")!;
+    // --- WORLD ACTIONS: taps / long-press / pinch anywhere on the game
+    // surface. One document-level capture listener (NOT a full-screen DOM
+    // sheet — that layer was what blocked taps at the screen edges and
+    // fought the hub/inventory). The stick zone and buttons sit above the
+    // canvas and stopPropagation, so they never double-fire. ---
     const dist = (): number => {
-      const pts = [...this.lookTouches.values()];
+      const pts = [...this.worldTouches.values()];
       return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     };
     const clearLongPress = (): void => {
@@ -201,80 +209,90 @@ export class MobileControls {
         this.longPressTimer = null;
       }
     };
-    look.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      this.longPressFired = false;
-      this.lookTouches.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
-      try {
-        look.setPointerCapture(e.pointerId);
-      } catch {
-        /* synthetic pointer (tests/automation) — moves still flow */
-      }
-      if (this.lookTouches.size === 1) {
-        // Single finger: arm a long press (secondary action) unless it
-        // becomes a drag (moved too far) or a second finger lands.
-        clearLongPress();
-        this.longPressTimer = window.setTimeout(() => {
-          const t = this.lookTouches.get(e.pointerId);
-          if (!t || this.lookTouches.size !== 1) return;
-          const moved = Math.hypot(t.x - t.startX, t.y - t.startY);
-          // Separate (wider) slop for the long press: a wobbling finger must
-          // still count as "holding still", only a real drag cancels it.
-          if (moved > LONG_PRESS_SLOP_PX) return;
-          this.longPressFired = true;
-          this.hooks.onLongPressWorld(t.x / window.innerWidth, t.y / window.innerHeight);
-        }, LONG_PRESS_MS);
-      } else {
-        clearLongPress(); // two fingers = pinch, never a long press
-        if (this.lookTouches.size === 2) {
-          this.pinchStartDist = dist();
-          this.pinchStartFactor = 1;
+    const onWorldPointer = (e: PointerEvent): void => {
+      const t = e.target as Element | null;
+      // ONLY the game canvas counts as "the world" (allowlist, not a
+      // blacklist of UI ids): any DOM UI (hub reel, inventory, chat, gate)
+      // handles itself and never spawns a world action. The stick zone and
+      // the knob live OUTSIDE #game-root, so they are excluded here too;
+      // the knob itself is pointer-events:none (target passes through to
+      // the canvas — fine, the zone owns that pointer anyway).
+      if (!(t && t.closest("#game-root"))) return;
+      if (e.type === "pointerdown") {
+        // The move finger NEVER seeds a world action (it is captured by the
+        // zone anyway, but guard the synthetic-capture fallback too).
+        if (e.pointerId === this.stickPointer) return;
+        this.longPressFired = false;
+        this.worldTouches.set(e.pointerId, {
+          x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY,
+        });
+        if (this.worldTouches.size === 1) {
+          // Single finger: arm a long press (secondary action) unless it
+          // becomes a drag or a second finger lands.
+          clearLongPress();
+          const pid = e.pointerId;
+          this.longPressTimer = window.setTimeout(() => {
+            const tt = this.worldTouches.get(pid);
+            if (!tt || this.worldTouches.size !== 1) return;
+            const moved = Math.hypot(tt.x - tt.startX, tt.y - tt.startY);
+            // Separate (wider) slop for the long press: a wobbling finger
+            // must still count as "holding still"; only a real drag cancels.
+            if (moved > LONG_PRESS_SLOP_PX) return;
+            this.longPressFired = true;
+            this.hooks.onLongPressWorld(tt.x / window.innerWidth, tt.y / window.innerHeight);
+          }, 450);
+        } else {
+          clearLongPress(); // two fingers = pinch, never a long press
+          if (this.worldTouches.size === 2) {
+            this.pinchStartDist = dist();
+            this.pinchStartFactor = 1;
+          }
         }
+        return;
       }
-    });
-    look.addEventListener("pointermove", (e) => {
-      const prev = this.lookTouches.get(e.pointerId);
-      if (!prev) return;
-      const dx = e.clientX - prev.x;
-      const dy = e.clientY - prev.y;
-      this.lookTouches.set(e.pointerId, { ...prev, x: e.clientX, y: e.clientY });
-      if (this.lookTouches.size === 1) {
-        // Slid past the tap slop: it's a drag — kill the pending long press.
-        const moved = Math.hypot(
-          e.clientX - prev.startX,
-          e.clientY - prev.startY,
-        );
-        if (moved > TAP_SLOP_PX) clearLongPress();
-        this.hooks.onDragLook?.(dx, dy);
-      } else if (this.lookTouches.size === 2 && this.pinchStartDist > 0) {
-        this.hooks.onZoomPinch(this.pinchStartFactor * (dist() / this.pinchStartDist));
+      if (e.type === "pointermove") {
+        const prev = this.worldTouches.get(e.pointerId);
+        if (!prev) return;
+        this.worldTouches.set(e.pointerId, { ...prev, x: e.clientX, y: e.clientY });
+        if (this.worldTouches.size === 1) {
+          // Slid past the tap slop: it's a drag — kill the pending long
+          // press. (Drags no longer pan anything: the camera follows.)
+          const moved = Math.hypot(e.clientX - prev.startX, e.clientY - prev.startY);
+          if (moved > 14) clearLongPress();
+        } else if (this.worldTouches.size === 2 && this.pinchStartDist > 0) {
+          // Feed incremental pinch scale: each move reports the cumulative
+          // ratio vs gesture start; main.ts multiplies into absolute zoom.
+          this.hooks.onZoomPinch((dist() / this.pinchStartDist) * this.pinchStartFactor);
+        }
+        return;
       }
-    });
-    const lookLift = (e: PointerEvent): void => {
-      const t = this.lookTouches.get(e.pointerId);
+      // pointerup / pointercancel
+      const tt = this.worldTouches.get(e.pointerId);
       clearLongPress();
-      if (!t) return;
-      this.lookTouches.delete(e.pointerId);
-      if (this.lookTouches.size < 2) this.pinchStartDist = 0;
+      if (!tt) return;
+      this.worldTouches.delete(e.pointerId);
+      if (this.worldTouches.size < 2) {
+        if (this.pinchStartDist > 0) this.hooks.onZoomEnd?.();
+        this.pinchStartDist = 0;
+      }
       // Quick tap (single finger, barely moved, no long press fired) = the
       // desktop LEFT CLICK at that point — chop/break/attack under the tile.
       if (
         !this.longPressFired &&
-        this.lookTouches.size === 0 &&
-        Math.hypot(t.x - t.startX, t.y - t.startY) <= TAP_SLOP_PX
+        e.type === "pointerup" &&
+        this.worldTouches.size === 0 &&
+        Math.hypot(tt.x - tt.startX, tt.y - tt.startY) <= 14
       ) {
-        this.hooks.onTapWorld(t.x / window.innerWidth, t.y / window.innerHeight);
+        this.hooks.onTapWorld(tt.x / window.innerWidth, tt.y / window.innerHeight);
       }
     };
-    look.addEventListener("pointerup", lookLift);
-    look.addEventListener("pointercancel", lookLift);
-    // ANDROID long-press poison: holding on the page fires the browser's
-    // touch text-selection / context menu, which (a) opens the right-click
-    // menu over the game and (b) CANCELS the pointer — the place-block long
-    // press died before its 450ms timer. Kill both: contextmenu on the look
-    // surface + CSS -webkit-touch-callout/selection (in styles.css).
-    look.addEventListener("contextmenu", (e) => e.preventDefault());
-    look.addEventListener("touchstart", () => { /* CSS handles the rest */ }, { passive: true });
+    this.worldPointerListener = onWorldPointer;
+    // capture=true: see the events BEFORE Phaser's input manager can act on
+    // them; Phaser still receives them (we never stopPropagation world taps).
+    document.addEventListener("pointerdown", onWorldPointer, true);
+    document.addEventListener("pointermove", onWorldPointer, true);
+    document.addEventListener("pointerup", onWorldPointer, true);
+    document.addEventListener("pointercancel", onWorldPointer, true);
   }
 
   /** Return the knob to its home spot (bottom-left) as an idle ghost. */
@@ -287,15 +305,15 @@ export class MobileControls {
   }
 
   /** Recompute the knob offset + emit the analog move vector. Drag model:
-   *  0..WALK_RADIUS = walk speed ramp (0..1), WALK_RADIUS..RUN_RADIUS =
-   *  RUN (Shift equivalent — full walk vector + running flag). The knob
-   *  follows the finger up to RUN_RADIUS, then clamps at the rim. At run
-   *  the knob lights purple. */
+   *  0..WALK_RADIUS = walk speed ramp (0..1), beyond = RUN (Shift
+   *  equivalent — full walk vector + running flag). The knob follows the
+   *  finger up to the run radius, then clamps at the rim; at run the knob
+   *  lights purple. */
   private updateNub(x: number, y: number): void {
     let dx = x - this.stickOrigin.x;
     let dy = y - this.stickOrigin.y;
     const len = Math.hypot(dx, dy);
-    const clamped = Math.min(len, RUN_RADIUS);
+    const clamped = Math.min(len, WALK_RADIUS * 2);
     if (len > 0) {
       dx = (dx / len) * clamped;
       dy = (dy / len) * clamped;
@@ -303,9 +321,9 @@ export class MobileControls {
     if (this.knobEl) {
       this.knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
     }
-    // Walk vector: 0..1 across WALK_RADIUS. Past WALK_RADIUS the player is
-    // running: vector stays at 1 and the running flag turns on (exactly the
-    // keyboard Shift behaviour — run never multiplies the vector, only the
+    // Walk vector: 0..1 across WALK_RADIUS. Past it the player is running:
+    // vector stays at 1 and the running flag turns on (exactly the keyboard
+    // Shift behaviour — run never multiplies the vector, only the
     // server-side speed).
     const running = len >= WALK_RADIUS;
     const mag = Math.min(1, len / WALK_RADIUS);
@@ -330,12 +348,20 @@ export class MobileControls {
       this.knobEl.style.transform = "translate(0px, 0px)";
       this.knobEl.src = "/ui/mobile/stick_nub.png";
     }
+    this.worldTouches.clear();
     this.hooks.onMove(0, 0, false);
   }
 
   /** Drop the whole DOM (kept symmetrical with mount). */
   destroy(): void {
     window.removeEventListener("resize", this.onResize);
+    if (this.worldPointerListener) {
+      document.removeEventListener("pointerdown", this.worldPointerListener, true);
+      document.removeEventListener("pointermove", this.worldPointerListener, true);
+      document.removeEventListener("pointerup", this.worldPointerListener, true);
+      document.removeEventListener("pointercancel", this.worldPointerListener, true);
+      this.worldPointerListener = null;
+    }
     document.getElementById("mobile-controls")?.remove();
     this.stickEl = null;
     this.knobEl = null;
