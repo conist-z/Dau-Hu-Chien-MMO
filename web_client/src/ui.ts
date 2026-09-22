@@ -2659,6 +2659,11 @@ export class Hud {
     let sStartY = 0, sLastY = 0, sLastT = 0, sStartT = 0, sMoved = false;
     let sVel = 0;            // px/s, + = scrolling toward the bottom
     let sMomentum = 0;       // animation-frame id
+    /** True once the drag passed the 4px dead-zone (real scroll intent). */
+    let sDragArmed = false;
+    /** performance.now() of the last REAL scroll — clicks within 140ms are
+     *  swallowed (wobble scroll must never open a menu). */
+    let sLastRealScrollAt = 0;
     // OPEN GRACE: clicks are ignored for 300ms after the reel opens — the
     // finger that opened it often rests over the first button and a quick
     // second tap pressed it unintentionally ("vừa nhấn vào là bấm icon").
@@ -2676,21 +2681,35 @@ export class Hud {
       // văng ra ngoài"). Capture keeps the whole gesture owned by the bar.
       try { bar.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
       sId = e.pointerId; sStartY = sLastY = e.clientY;
-      sLastT = sStartT = performance.now(); sMoved = false; sVel = 0;
+      sLastT = sStartT = performance.now();
+      sMoved = false; sVel = 0; sDragArmed = false;
     });
     bar.addEventListener("pointermove", (e) => {
       if (e.pointerId !== sId) return;
       const now = performance.now();
+      const totalDy = e.clientY - sStartY;
+      // DEAD-ZONE (user: "giật giật, chưa bấm đã nhảy"): fingers wobble
+      // ±3px on a "still" press — every wobble used to scroll the strip a
+      // few px instantly (the jumpy feel). Scroll only after the finger
+      // clearly committed to a drag (4px); within the zone it's a tap.
+      if (!sDragArmed) {
+        if (Math.abs(totalDy) <= 4) return;
+        sDragArmed = true;
+        sLastY = e.clientY - (totalDy - Math.sign(totalDy) * 4);
+        sLastT = now;
+        return;
+      }
       const dy = e.clientY - sLastY;
       if (dy !== 0) bar.scrollTop -= dy; // drag up = scroll down (natural)
       const dt = Math.max(1, now - sLastT);
       sVel = 0.8 * (-dy / dt) * 1000 + 0.2 * sVel; // smoothed velocity
       sLastY = e.clientY; sLastT = now;
-      if (Math.abs(e.clientY - sStartY) > 8) sMoved = true;
+      if (Math.abs(totalDy) > 8) sMoved = true;
     });
     const endBarDrag = (e: PointerEvent): void => {
       if (e.pointerId !== sId) return;
       sId = null;
+      if (sDragArmed) sLastRealScrollAt = performance.now();
       if (sMoved && performance.now() - sStartT < 600) {
         bar.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true });
       }
@@ -2718,6 +2737,17 @@ export class Hud {
       // OPEN-GRACE GUARD: ignore button clicks in the first 300ms after
       // the reel opened (accidental press from the opening finger).
       if (reelOpenedAt && performance.now() - reelOpenedAt < 300) {
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+      // SCROLL-COOLDOWN GUARD: a click within 140ms of a real scroll (or a
+      // still-running momentum glide) is a wobble press, not an intent —
+      // swallow it ("chưa bấm đã nhảy").
+      if (
+        sMomentum ||
+        (sLastRealScrollAt && performance.now() - sLastRealScrollAt < 140)
+      ) {
         e.stopPropagation();
         e.preventDefault();
         return;

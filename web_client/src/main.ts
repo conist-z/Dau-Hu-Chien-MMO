@@ -826,6 +826,13 @@ hud.onSlotSelect((slot) => {
 
 const input = new KeyboardInput({
   onVector: (dx, dy, running) => {
+    // MULTI-TOUCH GUARD: while the mobile stick holds the pointer, the
+    // keyboard vector is suppressed — otherwise a WASD key held before (or
+    // during) a stick drag re-asserts its vector over the stick's through
+    // the 20 Hz flush, and the player runs BOTH directions interleaved (a
+    // classic "lia cam đi tùm lum / giật giật" source on phones with
+    // phantom key states).
+    if (mobileStickActive) return;
     // Zero-lag: prediction runs every frame locally; the network copy is
     // just the authoritative echo (20 Hz throttle in Net).
     scene.setLocalInput(dx, dy, running);
@@ -957,15 +964,44 @@ const input = new KeyboardInput({
 // Roblox-style dynamic joystick: feeds the SAME pipeline as WASD (vector
 // goes through the onVector hook, so prediction/seq'd inputs/server path are
 // identical). Tap = left click (chop/break/attack), long-press = right click
-// (place/eat/station), drag = camera pan, pinch = zoom (mobile_controls.ts).
+// (place/eat/station), pinch = zoom-IN only (mobile_controls.ts).
+// MULTI-TOUCH: the stick owns its pointer — tap/hold with a second finger
+// acts on the world WHILE moving. Keyboard movement is frozen while the
+// stick is held (no phantom vector mixing).
+let mobileStickActive = false;
+const mobileInputState = { dx: 0, dy: 0, running: false };
+// The stick has no key auto-repeat: while the vector is non-zero this 60 Hz
+// timer re-commits setInput (Net still throttles the wire to ~20 Hz) so the
+// server's activity liveness never starves mid-drag — a single onMove call
+// used to be the only commit, and a slow network tick could end the drag
+// early ("chạy được một nhịp rồi đứng").
+let mobileCommitTimer: number | null = null;
+const stopMobileCommit = (): void => {
+  if (mobileCommitTimer !== null) {
+    window.clearInterval(mobileCommitTimer);
+    mobileCommitTimer = null;
+  }
+};
 const mobile = new MobileControls({
   onMove: (dx, dy, running) => {
     // Analog vector (magnitude 0..1, screen-space) — identical contract to
     // the keyboard's normalized onVector. Reuse the SAME body as the
     // KeyboardInput onVector hook by routing through setLocalInput + setInput.
+    mobileStickActive = dx !== 0 || dy !== 0;
+    mobileInputState.dx = dx;
+    mobileInputState.dy = dy;
+    mobileInputState.running = running;
     scene.setLocalInput(dx, dy, running);
     const sp = scene.getSelfPos();
     net.setInput(dx, dy, running, sp);
+    if (mobileStickActive && mobileCommitTimer === null) {
+      mobileCommitTimer = window.setInterval(() => {
+        const s2 = scene.getSelfPos();
+        net.setInput(mobileInputState.dx, mobileInputState.dy, mobileInputState.running, s2);
+      }, 16);
+    } else if (!mobileStickActive) {
+      stopMobileCommit();
+    }
   },
   onAttack: () => {
     net.action("attack");
@@ -1032,7 +1068,7 @@ const mobile = new MobileControls({
     scene.optimisticPlace(target.x, target.y);
   },
   onZoomPinch: (factor) => scene.applyPinchZoom(factor),
-  onDragLook: (dx, dy) => scene.applyLookPan(dx, dy),
+  onZoomEnd: () => scene.commitPinchZoom(),
 });
 mobile.mount();
 
@@ -1043,6 +1079,34 @@ mobile.mount();
 // open) — the player never silently misses chat on a phone.
 // MOBILE_UI (not matchMedia): the desktop ?mobile=1 / Shift+F9 preview
 // gets the exact same chat chip as a real phone (parity rule).
+
+/** The target of the most recent pointerdown (set by onRealOutsideTap;
+ *  callbacks read it to exclude gear/strip hits). */
+let lastOutsideTarget: Element | null = null;
+/** REAL outside-tap detector: fires `cb` when a pointerdown OUTSIDE `el`
+ *  completes as a TAP (finger moved ≤12px, released within 500ms). A drag
+ *  that started elsewhere — swiping an item across the screen, a world
+ *  drag — must NOT close panels ("đang làm cái này mà dính ra ngoài màn
+ *  hình là nhảy tùm lum"): the old immediate-pointerdown close fired on
+ *  every touch anywhere, so gestures slammed panels shut mid-use. */
+function onRealOutsideTap(el: HTMLElement, cb: () => void): void {
+  const start = new Map<number, { x: number; y: number; t: number }>();
+  window.addEventListener("pointerdown", (e) => {
+    lastOutsideTarget = e.target as Element | null;
+    if (el.contains(e.target as Node)) return;
+    start.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+  });
+  window.addEventListener("pointerup", (e) => {
+    const s = start.get(e.pointerId);
+    start.delete(e.pointerId);
+    if (!s) return;
+    if (performance.now() - s.t > 500) return;
+    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 12) return;
+    cb();
+  });
+  window.addEventListener("pointercancel", (e) => start.delete(e.pointerId));
+}
+
 if (MOBILE_UI) {
   const chat = document.getElementById("hud-chat")!;
   const log = document.getElementById("chat-log")!;
@@ -1075,14 +1139,11 @@ if (MOBILE_UI) {
   // Clicks inside the EXPANDED chat (log scroll, input focus) are not
   // outside taps either.
   chat.addEventListener("pointerdown", (e) => e.stopPropagation());
-  // Outside tap = collapse. Bubble-phase on window: taps INSIDE the chat
-  // bubble up from #hud-chat (whose pointerdown handlers don't stop
-  // propagation for non-toggle children), so the contains() check is the
-  // authoritative guard — one listener, one code path.
-  window.addEventListener("pointerdown", (e) => {
-    if (!chatOpen) return;
-    if (chat.contains(e.target as Node)) return;
-    setChatOpen(false);
+  // Outside tap = collapse (REAL taps only: a drag that started outside —
+  // e.g. swiping an item across the screen — must not collapse the chat
+  // when the finger happens to lift outside the frame).
+  onRealOutsideTap(chat, () => {
+    if (chatOpen) setChatOpen(false);
   });
   // New chat line while collapsed → bump the badge (chatLine/chatPlayerLine
   // append to #chat-log; watch it with a MutationObserver — zero coupling
@@ -1119,10 +1180,20 @@ if (MOBILE_UI) {
     });
     // Taps inside the open strip are hub business, not outside taps.
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());
-    window.addEventListener("pointerdown", (e) => {
+    // Outside tap rolls the reel back in — REAL taps only (movement guard
+    // inside the helper): drags ending outside never close it.
+    onRealOutsideTap(bar, () => {
       if (!document.body.classList.contains("hub-open")) return;
-      const t = e.target as Node;
+      const t = lastOutsideTarget as Node | null;
+      if (!t) return;
       if (gear.contains(t) || bar.contains(t)) return;
+      setHubOpen(false);
+    });
+    // Picking any hub button rolls the strip back in (after the click —
+    // pointerdown stopPropagation above means the click still fires here;
+    // ui.ts's wobble/scroll guards run first and stop guarded clicks).
+    bar.addEventListener("click", (e) => {
+      if (!(e.target as HTMLElement).closest("div[id$=-button]")) return;
       setHubOpen(false);
     });
     // Picking any hub button rolls the strip back in (after the click —

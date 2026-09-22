@@ -1400,27 +1400,33 @@ body.mobile-ui {
     user-select: none;
     -webkit-user-select: none;
     cursor: pointer;
+    /* Translucent like the idle joystick ghost (user: "trong và mờ như
+     * cái joystick") — the art's own soft edge shows the world through;
+     * pressing snaps to near-solid for tactile feedback. */
+    opacity: 0.55;
+    transition: opacity 0.15s ease-out;
   }
+  .mc-act:active { opacity: 0.92; }
   .mc-act img {
     image-rendering: pixelated;
     user-select: none;
     -webkit-user-select: none;
   }
-  #mc-inv .mc-act-bg { width: 64px; height: 70px; }
-  #mc-atk .mc-act-bg { width: 76px; height: 76px; }
+  #mc-inv .mc-act-bg { width: 60px; height: 66px; }
+  #mc-atk .mc-act-bg { width: 68px; height: 68px; }
   .mc-act-icon {
     position: absolute;
     inset: 0;
     margin: auto;
     pointer-events: none;
   }
-  #mc-inv .mc-act-icon { width: 26px; height: 26px; }
-  #mc-atk .mc-act-icon { width: 34px; height: 34px; }
+  #mc-inv .mc-act-icon { width: 24px; height: 24px; }
+  #mc-atk .mc-act-icon { width: 30px; height: 30px; }
 
   /* Small screens (phones portrait): shrink a notch so the HUD stays visible. */
   @media (max-width: 480px) {
-    #mc-inv .mc-act-bg { width: 54px; height: 59px; }
-    #mc-atk .mc-act-bg { width: 64px; height: 64px; }
+    #mc-inv .mc-act-bg { width: 52px; height: 57px; }
+    #mc-atk .mc-act-bg { width: 58px; height: 58px; }
   }
   /* Phones portrait: the 52px/slot hotbar would be buried under the knob
    * home + look surface. Lift it above the joystick area (the zone tops out
