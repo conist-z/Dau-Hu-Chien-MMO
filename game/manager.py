@@ -137,6 +137,13 @@ class WebSession:
     last_converge_move: float = 0.0
     # Throttle stamp for the [WEB-MOVE] diagnostic line (loop time).
     last_diag: float = 0.0
+    # MAP-SWITCH GRACE ("vào hang lại đáp lên đỉnh cave"): loop time of the
+    # last map switch for this session. Until the client ACKS the new map
+    # (its first in-bounds post-welcome input frame), position reports are
+    # IGNORED — the old map's in-flight frames (e.g. bigmap mouth 81,3) are
+    # otherwise VALID coordinates inside the cave's bounds and converge
+    # drags the fresh arrival body across the map to the stale spot.
+    map_switch_at: float = 0.0
 
 
 def _web_direction(dx: float, dy: float) -> str:
@@ -613,6 +620,39 @@ class GameManager:
             ry = float(report_y) if report_y is not None else None
         except (TypeError, ValueError):
             rx = ry = None
+        # MAP-SWITCH GRACE ("vào hang lại đáp lên đỉnh cave"): after a portal
+        # teleport the OLD map's in-flight input frames keep arriving for a
+        # few flushes (the client hasn't processed the welcome yet). Those
+        # stale reports may be VALID coordinates inside the new map's bounds
+        # (bigmap mouth 81,3 fits the 103x56 cave) — converge then drags the
+        # fresh arrival body ACROSS the map to the stale spot. Until the
+        # client acks the welcome (frames sent AFTER it processed the new
+        # map), every position report is dropped; dx/dy velocity still
+        # applies so real movement never stalls. The ack signal: the client
+        # zeroes its input on a map-switch welcome (shipped client), so the
+        # FIRST ZERO-VECTOR frame after the switch is the client speaking
+        # with the new map's authority — end the grace on it. Long-input
+        # safety: the grace also expires after 3 s regardless.
+        sess_map_switch = getattr(sess, "map_switch_at", 0.0)
+        now_t = _loop_time()
+        in_grace = (
+            sess_map_switch > 0.0
+            and (now_t - sess_map_switch) < 3.0
+        )
+        if in_grace and (rx is not None and ry is not None):
+            first_post_switch_frame = (
+                float(dx) == 0.0 and float(dy) == 0.0
+            )
+            if first_post_switch_frame:
+                sess.map_switch_at = 0.0  # client is on the new map — re-arm
+                in_grace = False
+            else:
+                rx = ry = None
+        # MAP-BOUNDS GUARD (belt+braces): out-of-bounds reports are never
+        # trusted even outside the grace window.
+        if rx is not None and ry is not None and rt is not None:
+            if not (0.0 <= rx < rt.map_data.width and 0.0 <= ry < rt.map_data.height):
+                rx = ry = None
         if rx is not None and ry is not None:
             sess.report_x, sess.report_y = rx, ry
             sess.report_at = _loop_time()
@@ -2606,6 +2646,12 @@ class GameManager:
             dst_rt, candidates, occupied, portal_cfg=self.portals,
         )
         move_player_between_runtimes(src_rt, dst_rt, user_id, tile)
+        # MAP-SWITCH GRACE arm: ignore position reports until the client's
+        # first post-welcome input frame re-arms the converge (see
+        # WebSession.map_switch_at + web_input).
+        dst_sess = dst_rt.web_sessions.get(user_id)
+        if dst_sess is not None:
+            dst_sess.map_switch_at = _loop_time()
         # WEB CLIENT MAP SWITCH: walking through a portal must re-send the
         # world payload, exactly like the /khutraodoi chat command does via
         # WebHub._maybe_teleport_welcome. The web session migrated to

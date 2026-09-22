@@ -45,19 +45,13 @@ export class PaperdollBody {
     return !!this.manifest.base.file && this.scene.textures.exists("pd-base");
   }
 
-  /** Rescale the doll for the current map's tile size. The manifest scale
-   *  (2) was tuned for 32px maps (bigmap); a 16px Ekonia map (cave/forest)
-   *  keeps the 32px-wide body twice as wide as its tile — halve the scale
-   *  there so the body spans ONE tile like the hover square does. Pure
-   *  rendering: collision/positions stay untouched. */
-  setTileScale(tilePx: number): void {
-    const basePx = 32; // manifest frames are authored against 32px tiles
-    const s = Math.max(1, Math.min(4, this.manifest.scale ?? 1));
-    const target = tilePx >= basePx ? s : Math.max(1, s * (tilePx / basePx));
-    if (target === this.scale) return;
-    this.scale = target;
-    this.base?.setScale(target);
-    this.weapon?.setScale(target);
+  /** Kept as a no-op hook: the manifest scale (2) is the CORRECT size on
+   *  every map — the earlier 16px-shrink made the character tiny in the
+   *  cave (user: "vẫn không to lên"). Ekonia's own renderer draws the 32px
+   *  paperdoll at the same fixed scale over 16px tiles (the body is meant
+   *  to span ~2 tiles — matches the game's zoom 2.0 presentation). */
+  setTileScale(_tilePx: number): void {
+    // intentionally unchanged — scale stays the manifest's.
   }
 
   /** Create the two sprites at (x, y) — world px, feet anchor. */
