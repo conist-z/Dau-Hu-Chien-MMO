@@ -216,6 +216,9 @@ export interface SnapshotPayload {
   // Tiles of felled nodes: [x, y, anchor_x, anchor_y] — walkable in prediction
   // (only sent together with `resources`, see above).
   res_felled?: [number, number, number, number][];
+  // Meteor shower events (game/meteors.py, night bigmap only):
+  // [id, tx, ty, dir("left"|"right"), impact_in_seconds].
+  meteors?: [number, number, number, string, number][];
 }
 
 export interface PlayerPayload {

@@ -14,6 +14,7 @@ from config import HOTBAR_SLOTS
 from game.crafting import RECIPE_REGISTRY, nearest_station
 from game.drops import drops_payload
 from game.manager import ScenarioRuntime
+from game.meteors import snapshot_payload as meteor_snapshot
 from game.zombies import iter_web_zombies
 from rendering.daynight import ingame_seconds
 
@@ -780,6 +781,10 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         # Progressive block damage (cracks) — server-driven self-repair means
         # damage drains even while nobody mines, so this rides EVERY snapshot.
         "block_damage": _block_damage_payload(rt),
+        # Meteor shower events (night bigmap): active [id, tx, ty, dir,
+        # impact_in_s] rows. Empty most of the time — a 3-element list is
+        # invisible on the wire at 20 Hz.
+        "meteors": _meteors_payload(rt),
     }
     # PERF (world-delta model — how MMOs ship static world state): the
     # resource tile list (~5 KB) used to ride along on EVERY 20 Hz snapshot
@@ -798,6 +803,16 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
         snap["res_felled"] = _resource_felled_payload(rt)
         rt._res_resent = False
     return snap
+
+
+def _meteors_payload(rt) -> List[list]:
+    """Active meteor events for the 20 Hz snapshot (game/meteors.py)."""
+    import time as _t
+
+    state = getattr(rt, "meteors", None)
+    if state is None:
+        return []
+    return meteor_snapshot(state, _t.monotonic())
 
 
 def _resource_tiles_payload(rt) -> List[list]:

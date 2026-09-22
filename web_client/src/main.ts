@@ -9,6 +9,7 @@ import { Net } from "./net";
 import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
+import { meteorFx } from "./meteors";
 // Day/night tint: kept as its own DOM canvas BUT throttled to 8 Hz + dpr 1 +
 // duplicate-frame skip (daynight.ts) — the per-rAF full-window repaint was
 // the PC-only lag. Same visual as before.
@@ -450,6 +451,10 @@ const net = new Net({
       keep.forEach((k) => seenDamageKeys.add(k));
     }
     scene.applySnapshot(frame);
+    // Meteor shower events (night bigmap): the FX lane syncs its warning
+    // rings / falls / impacts with the server timeline from these rows.
+    meteorFx.attach(scene as unknown as Phaser.Scene);
+    meteorFx.sync(frame.meteors);
     hud.setClock(frame.clock);
     hud.setWeather(frame.weather);
     // Admin /clouds N: >0 = force the cloud-shadow overlay on top of any

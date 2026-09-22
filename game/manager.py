@@ -52,6 +52,12 @@ from game.state import ActionResult, GameState, Player
 from game.resources import NODE_DEFS, ResourceGrid, apply_chop
 from game.terrain import TerrainGrid
 from game.terrain_rules import apply_scoop
+from game.meteors import (
+    MeteorState,
+    is_meteor_map,
+    snapshot_payload as meteor_snapshot,
+    tick_meteors,
+)
 from game.weather import WeatherState
 from game.zombies import (
     advance_visible_zombies,
@@ -298,6 +304,10 @@ class ScenarioRuntime:
     # Web sessions mirror here on select_slot; Discord players stay at slot 0
     # (their hotbar projection's first stack).
     held_slots: Dict[int, int] = field(default_factory=dict)
+    # Meteor shower scheduler (game/meteors.py): night-only bigmap events.
+    # Runtime-only state — a restart clears the warning list, which is fine
+    # (an 8s telegraph lost to a reboot is invisible in practice).
+    meteors: "MeteorState" = field(default_factory=lambda: MeteorState())
 
 
 class GameManager:
@@ -1134,6 +1144,37 @@ class GameManager:
                 )
                 if collections:
                     await self._grant_drop_collections(rt, collections)
+
+            # --- meteor shower scheduler (game/meteors.py) ---------------
+            # Night-only on the bigmap: rolls the 20%-halving beat, expires
+            # landed meteors. Web players only — the Discord turn pack has
+            # no animation lane for this. map_id/now_s are re-derived here
+            # (the zombie else-branch scope above is not always entered).
+            if sessions and is_meteor_map(rt.map_data.map_id):
+                from game.meteors import tick_meteors as _met_tick
+                from game.mob_profiles import active_at as _met_active
+
+                _met_map = rt.map_data.map_id
+                _met_clock = _ingame_s()
+
+                def _pick_meteor_target() -> tuple:
+                    import random as _r2
+
+                    for _ in range(40):
+                        tx = _r2.randrange(2, max(3, rt.map_data.width - 2))
+                        ty = _r2.randrange(2, max(3, rt.map_data.height - 2))
+                        try:
+                            if rt.collision.is_walkable(tx, ty):
+                                return (tx, ty)
+                        except Exception:
+                            return (tx, ty)
+                    return (None, None)
+
+                _met_tick(
+                    rt.meteors, _time, _met_clock,
+                    _met_active(_met_map, _met_clock),
+                    _pick_meteor_target, rng=self.zombie_rng,
+                )
         if moved_any:
             self._touch_web_activity(rt)
         if zombie_touched:

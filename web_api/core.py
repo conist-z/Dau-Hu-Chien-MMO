@@ -1010,7 +1010,7 @@ class WebHub:
         if cmd == "help":
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
+                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /meteor [rand] (admin — gọi thiên thạch)",
             })
         elif cmd == "cuahang":
             # FAST TRAVEL: teleport straight to the arrival spot in front of
@@ -1085,6 +1085,10 @@ class WebHub:
             await self._cmd_give(sess, args)
         elif cmd == "spawnmob":
             await self._cmd_spawnmob(sess, args)
+        elif cmd == "meteor":
+            # /meteor       -> hits the caller's tile exactly
+            # /meteor rand  -> hits a tile 6-12 tiles away from the caller
+            await self._cmd_meteor(sess, near_random=(args and args[0].lower() == "rand"))
         else:
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Lệnh không rõ: /{cmd}",
@@ -1385,6 +1389,56 @@ class WebHub:
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH,
             "message": f"Đã gọi {spawned}/{qty} quái ({kind}). Đi đêm hoặc /time 22:00 để chúng hoạt động.",
+        })
+
+    async def _cmd_meteor(self, sess: WebSession, near_random: bool = False) -> None:
+        """Admin /meteor: summon a meteor NOW (bypasses the night gate).
+
+        /meteor       -> strikes the caller's exact tile.
+        /meteor rand  -> strikes a walkable tile 6-12 tiles away ("random
+                         outside the standing spot").
+        The 8 s warning telegraph still plays so everyone nearby can react.
+        """
+        if not await self._is_web_admin(sess):
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Chỉ admin mới được gọi thiên thạch.",
+            })
+            return
+        rt = self.manager.get_runtime(sess.channel_id)
+        if rt is None:
+            return
+        async with rt.lock:
+            import time as _time
+            player = rt.state.get_player(sess.user_id)
+            if player is None:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH, "message": "Bạn chưa vào map.",
+                })
+                return
+            from game.meteors import summon as meteor_summon
+
+            px = getattr(player, "x_f", None)
+            py = getattr(player, "y_f", None)
+            if px is None or py is None:
+                px, py = float(player.x) + 0.5, float(player.y) + 0.5
+            tx, ty = int(px), int(py)
+            # rand path clamps into the map bounds; invalid tiles are fine —
+            # the meteor lands visually there regardless (no collision check
+            # on PURPOSE: admins may target roofs/walls for fun).
+            w = rt.map_data.width
+            h = rt.map_data.height
+            m = meteor_summon(
+                rt.meteors, _time.monotonic(), tx, ty,
+                near_random=near_random, rng=self.manager.zombie_rng,
+            )
+            m.tx = max(0, min(w - 1, m.tx))
+            m.ty = max(0, min(h - 1, m.ty))
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH,
+            "message": (
+                f"☄️ Thiên thạch rơi ({m.tx},{m.ty}) sau 8 giây!"
+                + (" (random)" if near_random else "")
+            ),
         })
 
     async def _is_web_admin(self, sess: WebSession) -> bool:

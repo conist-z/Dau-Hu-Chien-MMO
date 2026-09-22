@@ -1216,7 +1216,10 @@ export class WorldScene extends Phaser.Scene {
         if (hasTex) {
           go = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
         } else {
-          const r = this.add.rectangle(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, 30, 30, 0x6b5a3e);
+          // Placeholder matches the map's tile: 30px on 32px maps, 30px
+          // (2x2 cells) on 16px maps — same world size everywhere.
+          const ph = this.tilePx >= 32 ? 30 : this.tilePx * 2 - 2;
+          const r = this.add.rectangle(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, ph, ph, 0x6b5a3e);
           r.setStrokeStyle(2, 0x8a7550);
           go = r;
         }
@@ -2432,10 +2435,15 @@ export class WorldScene extends Phaser.Scene {
     this.ensureHoverSquare();
     const sq = this.hoverSquare;
     if (!sq) return; // ensureHoverSquare guarantees construction; belt+braces
-    // The square must MATCH the tile cell: it was created 30x30 (hard-coded)
-    // while maps run 16/32/48px tiles — a wrong-size box reads as offset
-    // even when centred. Resize to the tile every frame (cheap).
-    sq.setSize(this.tilePx - 2, this.tilePx - 2);
+    // SIZE PARITY ACROSS MAPS: the box matches the tile cell (tilePx - 2).
+    // On 32px maps that is ~30px; on Ekonia's 16px tiles it shrank to 14px
+    // — half the on-screen size of the bigmap box at the same zoom, which
+    // read as "ô đặt block siêu nhỏ". Match the BIGMAP look: the box spans
+    // 2x2 tile cells (32px) on 16px maps, 1 cell on 32px maps — the same
+    // world-space size everywhere. Placement still lands on the CENTER
+    // cell; the oversized outline is the aiming aid, not the footprint.
+    const boxPx = this.tilePx >= 32 ? this.tilePx - 2 : this.tilePx * 2 - 2;
+    sq.setSize(boxPx, boxPx);
     // MOBILE AIM LOCK: while a touch aim target is armed it OWNS the cursor
     // square (locked green = "tap again to act"). Otherwise the cursor
     // follows the live mouse tile as before (desktop unchanged).
