@@ -1006,8 +1006,22 @@ class WebHub:
         if cmd == "help":
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
+                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin)",
             })
+        elif cmd == "cuahang":
+            # FAST TRAVEL: teleport straight to the arrival spot in front of
+            # the destination's gate ("đi bộ mệt vl"). Same plumbing as a
+            # portal step — the web_map_change_hook path is NOT needed here
+            # because _maybe_teleport_welcome below re-sends the world.
+            dest = (args[0] if args else "hang")
+            rt, message = await self.manager.web_travel_portal(
+                sess.channel_id, sess.user_id, dest,
+            )
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": message,
+            })
+            if rt is not None:
+                await self._maybe_teleport_welcome(sess, rt)
         elif cmd == "khutraodoi":
             action = (args[0].lower() if args else "in")
             if action not in ("in", "out"):

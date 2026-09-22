@@ -2025,6 +2025,70 @@ class GameManager:
             rt.state.web_zombies.clear()
         return rt
 
+    async def web_travel_portal(self, channel_id: int, user_id: int,
+                                dest_map_id: str) -> tuple:
+        """Fast-travel chat command ("/cuahang <map>"): teleport straight to
+        the arrival spot BEFORE the destination's gate — no walking across
+        the whole overworld. Uses the SAME plumbing as a portal step
+        (move_player_between_runtimes + free_arrival_tile on the link's
+        target tiles), so the landing rules stay identical: the player
+        appears just outside the gate, never on it, and walking one step
+        into the gate still teleports normally.
+
+        dest_map_id accepts short aliases: "hang"/"cave" -> ekonia/cave_area1,
+        "rung"/"forest" -> ekonia/forest, "ban do"/"bigmap" -> bigmap.
+        Returns ``(rt, message)`` like web_travel_trade.
+        """
+        aliases = {
+            "hang": "ekonia/cave_area1", "cave": "ekonia/cave_area1",
+            "rung": "ekonia/forest", "forest": "ekonia/forest",
+            "ban do": "bigmap", "bigmap": "bigmap", "map": "bigmap",
+        }
+        target_id = aliases.get(dest_map_id.strip().lower(), dest_map_id.strip())
+        from game.travel import free_arrival_tile, move_player_between_runtimes
+        main_rt = self.runtimes.get(channel_id)
+        if main_rt is None:
+            return None, "Chưa có map trong kênh này."
+        cur_rt = self.runtime_of(channel_id, user_id) or main_rt
+        player = cur_rt.state.get_player(user_id)
+        if player is None:
+            return None, "Bạn chưa tham gia map."
+        if target_id not in ("bigmap", "ekonia/cave_area1", "ekonia/forest"):
+            return None, f"Không biết map '{target_id}'. Dùng: hang | rung | ban do"
+        if cur_rt.map_data.map_id == target_id:
+            return cur_rt, "Bạn đang ở map đó rồi."
+        # Destination runtime: main world or a side runtime (same rule as
+        # _teleport_through_link).
+        if main_rt.map_data.map_id == target_id:
+            dst_rt = main_rt
+        else:
+            dst_rt = self.get_or_create_side_runtime(main_rt, target_id)
+        # Arrival = the portal link's target tiles on the DESTINATION map
+        # (the same spot a normal gate teleport would land on). Any link
+        # whose DESTINATION is target_id carries the canonical gate-front
+        # tiles in its target.
+        candidates = None
+        for src_id, mp in self.portals.maps.items():
+            for link in mp.destinations.values():
+                if link.map_id == target_id and not link.target_is_layer:
+                    candidates = list(link.target)
+                    break
+            if candidates:
+                break
+        if not candidates:
+            return None, "Map đó chưa có cửa dịch chuyển."
+        occupied = {(p.x, p.y) for p in dst_rt.state.get_visible_players()}
+        async with cur_rt.lock:
+            async with dst_rt.lock:
+                tile = free_arrival_tile(
+                    dst_rt, candidates, occupied, portal_cfg=self.portals,
+                )
+                move_player_between_runtimes(cur_rt, dst_rt, user_id, tile)
+        self.touch_session(channel_id, user_id)
+        self._notify_travel_change(cur_rt, user_id)
+        self._notify_travel_change(dst_rt, user_id)
+        return dst_rt, f"Đã dịch chuyển tới trước cửa {target_id}."
+
     async def web_travel_trade(self, channel_id: int, user_id: int,
                                action: str) -> tuple:
         """Web mirror of the Discord /khutraodoi command (game-layer only —

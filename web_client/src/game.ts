@@ -601,6 +601,22 @@ export class WorldScene extends Phaser.Scene {
     this.driftIdleMs = 0;
     this.selfX = welcome.self.x;
     this.selfY = welcome.self.y;
+    // MAP-SWITCH INPUT RESET: a welcome for a DIFFERENT map mid-walk (portal
+    // fire / /cuahang) invalidates every held prediction — the old runtime's
+    // inputLog and the stale held vector made the next snapshot reconcile
+    // against a dead authority ("đến cổng xong game đơ"): reset the replay
+    // buffer, clear the held vector, and drop any in-flight aim. The physical
+    // key can stay held — the OS key repeat / input timer re-arms it against
+    // the NEW map within one flush.
+    if (this.welcome && this.welcome.map.id !== welcome.map.id) {
+      this.inputLog.length = 0;
+      this.inputVec.dx = 0;
+      this.inputVec.dy = 0;
+      this.inputVec.running = false;
+      this.prevInputVec.dx = 0;
+      this.prevInputVec.dy = 0;
+      this.mobileAimTile = null;
+    }
     this.pendingFetch = (id: string) => fetchAsset(`blocks/${id}.png`);
     // MAP SWITCH (walking through a portal / /khutraodoi): the previous map's
     // baked canvas must go BEFORE the new one is baked. bakeMapIfReady bails
