@@ -816,15 +816,44 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
     if ekonia:
         _comp_alpha = _cell_composite_alpha(tile_layers, width, height)
         _carved = 0
+        # EDGE RING ("quái spawn ra ngoài void"): the carve below opens
+        # every no-art cell — including the map's outer rim, which on the
+        # cave/forest conversions is the black VOID outside the drawn area.
+        # Walkable void let mobs (and the float movement sweep) reach cells
+        # with literally nothing drawn. The rim (2 cells) stays solid.
+        _EDGE = 2
         for _cy in range(height):
             for _cx in range(width):
                 if not collision[_cy][_cx]:
                     continue
+                if (
+                    _cx < _EDGE or _cy < _EDGE
+                    or _cx >= width - _EDGE or _cy >= height - _EDGE
+                ):
+                    continue  # rim is never carved
                 if _comp_alpha is not None and _comp_alpha[_cy][_cx] == 0:
                     collision[_cy][_cx] = 0
                     _carved += 1
         if _carved:
             print(f"  [cave] carved {_carved} invisible-blocker cells (no art)")
+        # VOID SEAL: any cell with NO art anywhere on the outer ring is
+        # unconditionally solid — conversions leave the sheet edge without
+        # wall coverage, and walkable void was reachable from inside.
+        _sealed = 0
+        for _cy in range(height):
+            for _cx in range(width):
+                on_rim = (
+                    _cx < _EDGE or _cy < _EDGE
+                    or _cx >= width - _EDGE or _cy >= height - _EDGE
+                )
+                if not on_rim:
+                    continue
+                if _comp_alpha is not None and _comp_alpha[_cy][_cx] == 0:
+                    if not collision[_cy][_cx]:
+                        _sealed += 1
+                    collision[_cy][_cx] = 1
+        if _sealed:
+            print(f"  [cave] sealed {_sealed} void rim cells (no art)")
     # Staircase layers carve walkable paths through the mountain walls so the
     # climb works in BOTH directions (up and down the same rungs).
     stair_overrides = _walkable_overrides(tile_layers, width, height)

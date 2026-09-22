@@ -489,6 +489,30 @@ def _count_near_players(state) -> int:
     )
 
 
+def _build_art_ok_set(map_data) -> Optional[set]:
+    """Set of (x, y) cells that carry ART (any non-ground tile layer with a
+    gid whose sheet piece is not fully transparent). Cells outside the set
+    are void — nothing is drawn there, so nothing may spawn there.
+
+    Cheap structural test first (a gid at the cell), falling back to the
+    alpha map only when the loader already computed one (cave maps: it did).
+    Returns None when the map has no tile layers at all (never block spawn)."""
+    md = map_data
+    if not getattr(md, "tile_layers", None):
+        return None
+    # Cells with ANY tile gid on ANY layer are candidates; the loader's
+    # collision grid already excluded fully-opaque walls, and fully
+    # transparent pieces were carved away where needed. A gid presence test
+    # is the right granularity here: ground-only cells keep mobs visible.
+    ok: set = set()
+    for _name, grid in md.tile_layers:
+        for gy, row in enumerate(grid):
+            for gx, gid in enumerate(row):
+                if gid:
+                    ok.add((gx, gy))
+    return ok
+
+
 def _spawn_position(state, collision, view_rects: Dict[int, tuple], rng: random.Random):
     """Random walkable tile near (but not on) a player: inside the crowd area
     (<= ZOMBIE_AREA_RADIUS of someone), outside every viewport, not too close
@@ -501,11 +525,19 @@ def _spawn_position(state, collision, view_rects: Dict[int, tuple], rng: random.
     occupied = _occupied(state)
     width = collision.map_data.width
     height = collision.map_data.height
+    # VOID GUARD ("quái spawn ra ngoài void"): walkable alone is not enough
+    # on the carved Ekonia maps — the invisible-blocker carve opens no-art
+    # cells (and the outer rim is void). A spawn tile must also carry ART:
+    # at least one non-ground layer with an opaque pixel at the cell. We use
+    # the same truth the renderer draws; cells with nothing drawn are void.
+    _art_ok = _build_art_ok_set(collision.map_data)
     candidates: List[Tuple[int, int]] = []
 
     for y in range(height):
         for x in range(width):
             if (x, y) in occupied or not collision.is_walkable(x, y):
+                continue
+            if _art_ok is not None and (x, y) not in _art_ok:
                 continue
             if _in_any_view_xy(x, y, view_rects):
                 continue
@@ -517,11 +549,13 @@ def _spawn_position(state, collision, view_rects: Dict[int, tuple], rng: random.
             candidates.append((x, y))
 
     # Fall back to anywhere legal off-screen; tiny maps may not have the ideal
-    # ring. Still random, still never inside a viewport.
+    # ring. Still random, still never inside a viewport — and still never on
+    # a no-art void cell (the art filter above applies here too).
     if not candidates:
         candidates = [
             (x, y) for y in range(height) for x in range(width)
             if (x, y) not in occupied and collision.is_walkable(x, y)
+            and (_art_ok is None or (x, y) in _art_ok)
             and not _in_any_view_xy(x, y, view_rects)
         ]
     return rng.choice(candidates) if candidates else None
