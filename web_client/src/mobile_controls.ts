@@ -34,10 +34,9 @@ export interface MobileHooks {
   onTapWorld: (sx: number, sy: number) => void;
   /** Long press on the world: secondary action at that point (0..1). */
   onLongPressWorld: (sx: number, sy: number) => void;
-  /** Pinch zoom: incremental scale vs the gesture start (1.0 = no change). */
-  onZoomPinch: (factor: number) => void;
-  /** The pinch gesture ended (fingers lifted) — commit the zoom value. */
-  onZoomEnd?: () => void;
+  /** Two-finger pinch. Camera zoom is REMOVED (user rule) — the hook is
+   *  kept only so pinch gestures are absorbed instead of leaking. */
+  onZoomPinch?: (factor: number) => void;
 }
 
 /** Floating knob sizing (CSS px; the knob follows the finger). */
@@ -210,6 +209,12 @@ export class MobileControls {
       }
     };
     const onWorldPointer = (e: PointerEvent): void => {
+      // PC MOUSE GUARD (user: "ô vuông arrow của PC bị ảnh hưởng rồi — fix
+      // ngay"): this layer exists for TOUCH only. Desktop clicks must flow
+      // through the original canvas handler (blue hover square follows the
+      // cursor, click acts immediately) — a mouse tap landing here armed the
+      // mobile green aim lock on PC too.
+      if (e.pointerType === "mouse") return;
       const t = e.target as Element | null;
       // ONLY the game canvas counts as "the world" (allowlist, not a
       // blacklist of UI ids): any DOM UI (hub reel, inventory, chat, gate)
@@ -260,9 +265,8 @@ export class MobileControls {
           const moved = Math.hypot(e.clientX - prev.startX, e.clientY - prev.startY);
           if (moved > 14) clearLongPress();
         } else if (this.worldTouches.size === 2 && this.pinchStartDist > 0) {
-          // Feed incremental pinch scale: each move reports the cumulative
-          // ratio vs gesture start; main.ts multiplies into absolute zoom.
-          this.hooks.onZoomPinch((dist() / this.pinchStartDist) * this.pinchStartFactor);
+          // Zoom removed: swallow the gesture so nothing else acts on it.
+          this.hooks.onZoomPinch?.((dist() / this.pinchStartDist) * this.pinchStartFactor);
         }
         return;
       }
@@ -272,7 +276,6 @@ export class MobileControls {
       if (!tt) return;
       this.worldTouches.delete(e.pointerId);
       if (this.worldTouches.size < 2) {
-        if (this.pinchStartDist > 0) this.hooks.onZoomEnd?.();
         this.pinchStartDist = 0;
       }
       // Quick tap (single finger, barely moved, no long press fired) = the

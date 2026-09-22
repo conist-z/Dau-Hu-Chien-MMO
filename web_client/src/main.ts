@@ -1067,10 +1067,25 @@ const mobile = new MobileControls({
     scene.combatSwing();
     scene.optimisticPlace(target.x, target.y);
   },
-  onZoomPinch: (factor) => scene.applyPinchZoom(factor),
-  onZoomEnd: () => scene.commitPinchZoom(),
+  onZoomPinch: (_factor) => { /* zoom removed — camera stays at authored 2.0 */ },
 });
 mobile.mount();
+
+// HIDE the atk/inv buttons while an inventory/craft window is open (user:
+// "khi đang craft thì ẩn 2 cái button inv và atk đi để đỡ vướng") — the
+// buttons overlap the right side of the side-by-side inv+craft row.
+// ClassObserver on #inv-panel: .hidden off → buttons hide, on → back.
+if (MOBILE_UI) {
+  const invPanelEl = document.getElementById("inv-panel");
+  const mcActions = document.getElementById("mc-actions");
+  if (invPanelEl && mcActions) {
+    const syncMcHidden = (): void => {
+      mcActions.classList.toggle("mc-hidden", !invPanelEl.classList.contains("hidden"));
+    };
+    new MutationObserver(syncMcHidden).observe(invPanelEl, { attributeFilter: ["class"] });
+    syncMcHidden();
+  }
+}
 
 // ---- MOBILE CHAT CHIP + TRAY OUTSIDE-TAP (mobile-ui mode only) ----
 // Chat moves to the TOP-left on phones (CSS above) as a collapsed chip:
@@ -1225,12 +1240,69 @@ if (MOBILE_UI) {
     const r = chat.getBoundingClientRect();
     if (chat.style.left || chat.style.top) applyChatPos({ left: r.left, top: r.top });
   });
-  // TAP vs DRAG on the toggle chip: a clean tap toggles the chat; a drag
-  // (≥8px, consumed by the frame drag above) just moves the popup.
-  toggle.addEventListener("pointerup", (e) => {
-    if (chatDragMoved) return;
+  // TAP vs DRAG on the toggle chip — the chip OWNS its pointer (capture):
+  // a clean tap toggles the chat, a drag from the chip MOVES the whole
+  // popup (the chip is the handle). Without the capture, the frame's
+  // setPointerCapture retargeted pointerup to the frame and the toggle
+  // NEVER fired (the "box chat sau khi kéo ko dùng đc nữa" bug).
+  let tglId: number | null = null;
+  let tglStart = { x: 0, y: 0 };
+  let tglDragging = false;
+  const toggleTapTimes: number[] = []; // triple-tap = reset position
+  toggle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // not an outside tap; the frame drag must not start
+    if (tglId !== null) return;
+    tglId = e.pointerId;
+    tglStart = { x: e.clientX, y: e.clientY };
+    tglDragging = false;
+    try { toggle.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+  });
+  toggle.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== tglId) return;
+    if (!tglDragging) {
+      if (Math.hypot(e.clientX - tglStart.x, e.clientY - tglStart.y) <= 8) return;
+      tglDragging = true;
+      chat.classList.add("chat-dragging");
+      const r = chat.getBoundingClientRect();
+      chatDragOff = { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    e.preventDefault();
+    applyChatPos({ left: e.clientX - chatDragOff.x, top: e.clientY - chatDragOff.y });
+  });
+  const toggleEnd = (e: PointerEvent): void => {
+    if (e.pointerId !== tglId) return;
+    tglId = null;
+    chat.classList.remove("chat-dragging");
+    if (tglDragging) {
+      saveChatPos();
+      return;
+    }
+    // TRIPLE-TAP KILL SWITCH: three clean taps within 700ms drop the saved
+    // position and snap the chat back to its CSS default spot — the user
+    // is never trapped by a stale/broken saved position.
+    const now = performance.now();
+    while (toggleTapTimes.length && now - toggleTapTimes[0] > 700) toggleTapTimes.shift();
+    toggleTapTimes.push(now);
+    if (toggleTapTimes.length >= 3) {
+      toggleTapTimes.length = 0;
+      chat.style.left = "";
+      chat.style.top = "";
+      chat.style.right = "";
+      chat.style.bottom = "";
+      localStorage.removeItem(CHAT_POS_KEY);
+      chat.classList.add("chat-reset-flash");
+      window.setTimeout(() => chat.classList.remove("chat-reset-flash"), 600);
+      return;
+    }
     e.preventDefault();
     setChatOpen(!chatOpen);
+  };
+  toggle.addEventListener("pointerup", toggleEnd);
+  toggle.addEventListener("pointercancel", (e) => {
+    if (e.pointerId !== tglId) return;
+    tglId = null;
+    chat.classList.remove("chat-dragging");
   });
   // Outside tap = collapse (REAL taps only: a drag that started outside —
   // e.g. swiping an item across the screen — must not collapse the chat

@@ -48,6 +48,12 @@
         <!-- Bottom-center: hotbar (always visible) -->
         <div id="hud-hotbar"></div>
         <!-- Bottom-right: chat box + commands -->
+        <!-- MOBILE ROLL BUTTON lives OUTSIDE #hud-chat: the mobile chat is
+             now a draggable popup (user per-user position memory) and the
+             gear moving with it was a bug ("di chuyển box chat thì nút cài
+             đặt cũng di theo"). Fixed to the bottom-right corner for every
+             mode; JS wiring in main.ts is untouched (getElementById). -->
+        <button id="hub-roll-btn" type="button" aria-label="Menu"></button>
         <div id="hud-chat">
           <div id="chat-log"></div>
           <form id="chat-form">
@@ -58,10 +64,6 @@
                whatever height the log grows to (user spec: sát mép trên
                khung chat, lề phải màn hình). -->
           <div id="hud-hub">
-          <!-- MOBILE ROLL BUTTON: the settings GEAR that the strip rolls
-               out of (mobile only; wired in main.ts outside-tap handler).
-               Sprites are the Kaetram hud_buttons settings row. -->
-          <button id="hub-roll-btn" type="button" aria-label="Menu"></button>
           <!-- Kaetram ORIGINAL UI (ported verbatim from game.astro): the
                button bar + every page container, exact ids/classes so the
                compiled kaetram_ui.css (their own scss) styles it 1:1.

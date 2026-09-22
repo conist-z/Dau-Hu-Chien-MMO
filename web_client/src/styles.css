@@ -301,9 +301,12 @@ body.mobile-ui.hub-open #hud-hub #buttons.shown {
 #buttons-tray,
 #settings-anchor { display: none; }
 #hub-roll-btn { display: none; }
+/* FIXED to the viewport corner (was absolute inside #hud-chat): the chat
+ * is a draggable popup now and the gear must NOT travel with it. Fixed
+ * works identically on desktop (hidden) — only mobile-ui shows it. */
 body.mobile-ui #hub-roll-btn {
   display: block;
-  position: absolute;
+  position: fixed;
   right: calc(10px + env(safe-area-inset-right, 0px));
   bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   width: 50px;
@@ -529,6 +532,30 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
 }
 @media (max-height: 340px) {
   #inv-panel { --panel-scale: 0.62; }
+}
+/* MOBILE CRAFT TAB — SIDE BY SIDE (user 23/09: "bản mobile cứ để panel
+ * inv sang bên phải craft"): on touch/wide-narrow screens the craft tab
+ * shows CRAFT left + BAG right in one row (flex wrap) instead of stacking
+ * the bag BELOW the craft sheet where short landscape phones clipped it
+ * out of view. --panel-scale keeps the combined row within the width.
+ * The detail popup flows relative in the row as well. */
+@media (pointer: coarse), (max-width: 700px) {
+  body.mobile-ui #inv-panel {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  body.mobile-ui #inv-panel .inv-tabs { flex: 1 1 100%; }
+  body.mobile-ui #inv-panel #inv-items-craft,
+  body.mobile-ui #inv-panel #craft-detail { position: relative; }
+}
+/* HIDE the mobile atk/inv buttons while a panel window is open (user:
+ * "khi đang craft thì ẩn 2 cái button inv và atk để đỡ vướng") — main.ts
+ * toggles .mc-hidden from a #inv-panel class observer. */
+body.mobile-ui #mc-actions.mc-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease-out;
 }
 #inv-panel.anim-show { animation: panel-pop-in 0.16s ease-out; }
 /* SCALE-ANCHOR FIX: `scale` shrinks around transform-origin (12px 8px,
@@ -1464,9 +1491,14 @@ body.mobile-ui {
     filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.55));
     z-index: 60;
   }
-  #hud-chat { cursor: grab; } /* frame = drag affordance (log/input override) */
-  #hud-chat #chat-log,
-  #hud-chat input { cursor: auto; }
+  /* KILL SWITCH: when a drag goes wrong (or a saved position is stale),
+   * a triple-tap on the chip teleports the chat back to its default spot
+   * and wipes the saved one — the user is never trapped with an unusable
+   * box. */
+  #hud-chat.chat-reset-flash {
+    outline: 2px solid rgba(111, 224, 140, 0.9);
+    outline-offset: 2px;
+  }
   #chat-log {
     max-height: 0;
     opacity: 0;

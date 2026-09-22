@@ -232,13 +232,6 @@ export class WorldScene extends Phaser.Scene {
   /** Previous prediction frame's input vector — feeds the direction-reversal
    *  guard below. */
   private prevInputVec = { dx: 0, dy: 0, running: false };
-  /** Time (performance.now ms) of the last 1-tile leap downward (Up→Down
-   *  reversal) — feeds the same guard. */
-  private lastRevDashAt = 0;
-  /** Last snapshot where the server body moved while the input was the NEW
-   *  direction — proves the reversal reached the server's motion, allowing
-   *  the hard reverse-leap snap (see applySnapshot). */
-  private static readonly REV_DASH_SUPPRESS_MS = 350;
   private selfX = 0; // predicted float position, TILE units
   private selfY = 0;
   private collision: number[][] = []; // collision[y][x] = 1 blocks
@@ -394,41 +387,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // ---- mobile camera (mobile_controls.ts) -------------------------------
-  // The camera is FOLLOW-ONLY (no pan — the pan layer was the desync/jump
-  // bug factory) and ZOOM-IN-ONLY: 2.8 IS the default — the widest the
-  // camera ever gets (user: "zoom xa ra khoảng 40% nữa và không cho zoom
-  // xa ra thêm nữa"). Pinch can only pull the view closer, up to 4.0.
-  private static readonly MOBILE_ZOOM_DEFAULT = 2.8;
-  private static readonly MOBILE_ZOOM_MAX = 4.0;
-  private mobileZoom = WorldScene.MOBILE_ZOOM_DEFAULT;
-
-  /** Incremental zoom from a pinch gesture (factor relative to the gesture
-   *  start; 1.0 = unchanged). Only zoom-IN moves the value — the default
-   *  is already the widest allowed, so factor < 1 is a no-op. */
-  applyPinchZoom(factor: number): void {
-    const start = this.pinchStartZoom ?? this.mobileZoom;
-    if (this.pinchStartZoom === null) {
-      this.pinchStartZoom = this.mobileZoom;
-    }
-    this.setMobileZoom(start * factor);
-  }
-  /** Zoom value at the start of the active pinch gesture (null = idle). */
-  private pinchStartZoom: number | null = null;
-
-  /** Commit a pinch gesture (mobile_controls calls this on release). */
-  commitPinchZoom(): void {
-    this.pinchStartZoom = null;
-  }
-
-  /** Apply the mobile zoom immediately (the base 2.8 authored zoom — the
-   *  old buildWorld setZoom(2.0) — happens once before the first welcome). */
-  private setMobileZoom(z: number): void {
-    this.mobileZoom = Math.min(
-      WorldScene.MOBILE_ZOOM_MAX,
-      Math.max(WorldScene.MOBILE_ZOOM_DEFAULT, z),
-    );
-    this.cameras.main.setZoom(this.mobileZoom);
-  }
+  // ZOOM REMOVED (user 23/09: "bỏ hẳn tính năng thay đổi camera zoom — để
+  // cam mặc định luôn luôn"). The camera is follow-only at the authored
+  // 2.0 zoom for EVERY mode; no pinch, no pan, no offsets — nothing that
+  // can desync the view from the prediction.
 
 
   /** Data-URL portrait of the base paperdoll (idle SOUTH frame) for the
@@ -738,15 +700,11 @@ export class WorldScene extends Phaser.Scene {
     // --- physics-less world: positions are authoritative from the server ---
     this.cameras.main.setBounds(0, 0, map.width * map.tile_width, map.height * map.tile_height);
     this.cameras.main.setBackgroundColor("#20303c");
-    // Mobile default zoom 2.8 (user: "zoom xa ra ~40% nữa và KHÔNG cho
-    // zoom xa hơn nữa" — 2.8 is the FLOOR; pinch may only zoom in to 4.0).
-    // Desktop keeps the authored 2.0. Actor sprites (paperdoll 64px, mobs,
-    // drops) are authored in 32px world space — zooming 16px maps by another
-    // 2× would double every actor on screen; on mobile the extra pull-back
-    // buys map visibility at the cost the user explicitly asked for.
-    this.cameras.main.setZoom(
-      document.body.classList.contains("mobile-ui") ? this.mobileZoom : 2.0,
-    );
+    // Zoom 2.0 for EVERY map and EVERY mode (mobile zoom removed per user:
+    // the camera is always exactly this). Actor sprites (paperdoll 64px,
+    // mobs, drops) are authored in 32px world space — at 2.0 a 16px tile
+    // shows at 32 screen px and ALL proportions match the classic maps.
+    this.cameras.main.setZoom(2.0);
 
     this.spawnSelf(welcome);
     for (const p of welcome.players) this.upsertPlayer(p);
@@ -852,7 +810,8 @@ export class WorldScene extends Phaser.Scene {
       const d = Math.hypot(this.selfX - this.selfServerPos.x, 0);
       const behind = (this.selfServerPos.x - this.selfX) * dx > 0.02;
       if (d > 0.02 && d <= 1.2 && behind) {
-        this.selfX += (this.selfServerPos.x - this.selfX) * 0.6;
+        // FULL latch, same rationale as the vertical branch above.
+        this.selfX = this.selfServerPos.x;
       }
     }
     if (
@@ -861,8 +820,12 @@ export class WorldScene extends Phaser.Scene {
       const d = Math.hypot(0, this.selfY - this.selfServerPos.y);
       const behind = (this.selfServerPos.y - this.selfY) * dy > 0.02;
       if (d > 0.02 && d <= 1.2 && behind) {
-        this.selfY += (this.selfServerPos.y - this.selfY) * 0.6;
-        this.lastRevDashAt = performance.now();
+        // FULL latch (was 0.6 partial — the leftover residue kept replaying
+        // and snapped later, the "spam lên xuống xong quay ra chỗ khác là
+        // bị dịch chuyển" report): we KNOW the residual is the stale
+        // half-step (behind + ≤1.2 tiles), so drop it completely and stand
+        // exactly on the server's live command position.
+        this.selfY = this.selfServerPos.y;
       }
     }
     // Keep the 8-way facing label in sync with the raw input (used by
@@ -3873,19 +3836,6 @@ export class WorldScene extends Phaser.Scene {
           this.selfX = this.selfServerPos.x;
           this.selfY = this.selfServerPos.y;
           this.inputLog = [];
-        } else if (
-          this.lastRevDashAt > 0 &&
-          performance.now() - this.lastRevDashAt < WorldScene.REV_DASH_SUPPRESS_MS
-        ) {
-          // Fresh Up→Down reversal: reject any snap that LEAPS DOWNWARD more
-          // than 0.8 tile (the stale-half-step replay launch). Downward
-          // snaps are still allowed once the server body itself has moved
-          // on the new axis — the reverse command is live there.
-          const rev = this.selfServerPos.y - this.selfY;
-          const revMoving = (this.selfServerPos.y - this.lastSrvY) * rev > 0;
-          if (rev > 0.8 && !revMoving) {
-            this.selfServerPos.y = this.selfY;
-          }
         } else if (jump > WorldScene.RECONCILE_DRIFT) {
           // ASYMMETRIC RECONCILE (client-authoritative latency parity):
           // the server body structurally TRAILS the prediction by
