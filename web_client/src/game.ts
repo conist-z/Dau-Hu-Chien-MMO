@@ -1210,11 +1210,17 @@ export class WorldScene extends Phaser.Scene {
       const texKey = `block-${id}`;
       const hasTex = this.blockTextures.has(id) && this.textures.exists(texKey);
       let go = this.blockSprites.get(tileKey);
+      // Block FACE art is authored at 32px (assets/blocks/*.png). On a 16px
+      // map (Ekonia cave) a full-size sprite covers a 2x2 tile area — the
+      // "đặt block trong cave trông kì" bug. Display-scale it to ONE tile
+      // cell of THIS map (bigmap 32px maps keep the authored size).
+      const blockScale = this.tilePx / 32;
       if (!go) {
         // New block: sprite (or placeholder rectangle until the face
         // texture arrives — see onBlockTexture).
         if (hasTex) {
-          go = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
+          go = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey)
+            .setScale(blockScale);
         } else {
           // Placeholder matches the map's tile: 30px on 32px maps, 30px
           // (2x2 cells) on 16px maps — same world size everywhere.
@@ -1227,7 +1233,8 @@ export class WorldScene extends Phaser.Scene {
         this.blockSprites.set(tileKey, go);
       } else if (hasTex && go instanceof Phaser.GameObjects.Rectangle) {
         // Texture arrived: upgrade the placeholder in place (no churn).
-        const img = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
+        const img = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey)
+          .setScale(blockScale);
         this.blockLayer.add(img);
         this.blockSprites.set(tileKey, img);
         go.destroy();

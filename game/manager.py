@@ -2175,6 +2175,11 @@ class GameManager:
                     dst_rt, candidates, occupied, portal_cfg=self.portals,
                 )
                 move_player_between_runtimes(cur_rt, dst_rt, user_id, tile)
+        # MAP-SWITCH GRACE arm (same as _teleport_through_link): without the
+        # epoch bump the OLD map's in-flight reports converge the fresh
+        # arrival body elsewhere — the "dịch chuyển lúc được lúc không" bug
+        # on fast travel.
+        self._arm_map_switch_grace(dst_rt, user_id)
         self.touch_session(channel_id, user_id)
         self._notify_travel_change(cur_rt, user_id)
         self._notify_travel_change(dst_rt, user_id)
@@ -2226,6 +2231,7 @@ class GameManager:
             )
             async with cur_rt.lock:
                 move_player_between_runtimes(cur_rt, lobby_rt, user_id, tile)
+            self._arm_map_switch_grace(lobby_rt, user_id)
             self.touch_session(channel_id, user_id)
             self._notify_travel_change(cur_rt, user_id)
             self._notify_travel_change(lobby_rt, user_id)
@@ -2246,6 +2252,7 @@ class GameManager:
             tile = tuple(main_rt.map_data.spawn)
         async with cur_rt.lock:
             move_player_between_runtimes(cur_rt, main_rt, user_id, tile)
+        self._arm_map_switch_grace(main_rt, user_id)
         player = main_rt.state.get_player(user_id)
         if player is not None:
             player.direction = direction
@@ -2721,6 +2728,17 @@ class GameManager:
         # Both worlds changed: refresh the mover now and everyone else shortly.
         self._notify_travel_change(src_rt, user_id)
         self._notify_travel_change(dst_rt, user_id)
+
+    def _arm_map_switch_grace(self, rt: ScenarioRuntime, user_id: int) -> None:
+        """Arm the map-switch grace + bump the map epoch for a chat-command
+        travel (/cuahang, /khutraodoi). Portal steps arm it inside
+        _teleport_through_link; this keeps every teleport path equally
+        protected: position reports are ignored until the client echoes the
+        NEW epoch, so stale-map frames can never drag the arrival body."""
+        sess = rt.web_sessions.get(user_id)
+        if sess is not None:
+            sess.map_switch_at = _loop_time()
+            sess.map_epoch += 1
 
     def _notify_travel_change(self, rt: ScenarioRuntime, moved_uid: int) -> None:
         """Refresh the mover's screen+hub; list changes hit other hubs via the

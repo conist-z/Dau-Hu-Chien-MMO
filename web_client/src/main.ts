@@ -10,6 +10,7 @@ import type { InventoryPayload, WelcomePayload } from "./protocol";
 import { Hud } from "./ui";
 import { weatherFx } from "./weather";
 import { meteorFx } from "./meteors";
+import { previewPanel } from "./preview_panel";
 // Day/night tint: kept as its own DOM canvas BUT throttled to 8 Hz + dpr 1 +
 // duplicate-frame skip (daynight.ts) — the per-rAF full-window repaint was
 // the PC-only lag. Same visual as before.
@@ -346,6 +347,7 @@ function applyInventory(inv: InventoryPayload, version?: number): void {
 // never block the overlay. When every needed asset is ALREADY cached (map
 // revisited in the same session) the count is 0 -> no overlay, no flash.
 let loadSafetyTimer: number | null = null;
+let mapLoadSafetyTimer: number | null = null;
 
 function beginLoadTracking(frame: WelcomePayload): void {
   const mapKeys = frame.map.tilesets
@@ -390,6 +392,17 @@ const net = new Net({
   },
   onWelcome: (frame) => {
     everWelcomed = true;
+    // PORTAL SWITCH FEEDBACK: a welcome for a DIFFERENT map means the map
+    // body is about to bake on the main thread (heavy even when all assets
+    // are cached). Show the loading sheet NOW so the frozen frames read as
+    // a load, not a hang; the first snapshot of the new map hides it.
+    const mapChanged = welcome !== null && frame.map.id !== welcome.map.id;
+    if (mapChanged) {
+      hud.showMapLoading(frame.map.name || frame.map.id);
+      // Safety net: never trap the player behind the sheet.
+      if (mapLoadSafetyTimer !== null) window.clearTimeout(mapLoadSafetyTimer);
+      mapLoadSafetyTimer = window.setTimeout(() => hud.hideMapLoading(), 10000);
+    }
     welcome = frame;
     // In-game now: reveal the touch controls (hidden during gate/lobby).
     (window as unknown as { __setMobileControls?: (on: boolean) => void })
@@ -435,6 +448,13 @@ const net = new Net({
   },
   onSnapshot: (frame) => {
     lastSnapshotAt = performance.now();
+    // First snapshot of the NEW map after a portal switch: world rebuilt +
+    // streaming — drop the "Đang vào…" sheet (guarded by claim count).
+    if (mapLoadSafetyTimer !== null && welcome && frame.map_id === welcome.map.id) {
+      hud.hideMapLoading();
+      window.clearTimeout(mapLoadSafetyTimer);
+      mapLoadSafetyTimer = null;
+    }
     // Incoming-damage hitsplats: float the number over the VICTIM (dedupe
     // by unix timestamp — the feed window overlaps across snapshots).
     for (const [ts, uid, dmg] of frame.damage_feed ?? []) {
@@ -511,6 +531,9 @@ const net = new Net({
     const savedExists = haveSaved && items.some(
       (i) => String(i.channel_id) === haveSaved,
     );
+    // PREVIEW MODE never auto-joins the demo server — the preview stack
+    // already put us in the solo bigmap runtime.
+    if (previewMode) return;
     if (!savedExists) {
       const demo = items.find((i) => i.map_name === "Demo by conist")
         ?? (items.length === 1 ? items[0] : undefined);
@@ -536,7 +559,10 @@ const net = new Net({
     // inventory_delta's craft_result fragment (setCraftResult). Never clear
     // it here: the output must STAY in the result slot until collected.
   },
-  onPush: (message) => hud.toast(message),
+  onPush: (message) => {
+    hud.toast(message);
+    previewPanel.feed(message);
+  },
   onChat: (_uid, name, color, text) => {
     hud.chatPlayerLine(name, color, text);
   },
@@ -1632,3 +1658,23 @@ nxChatForm.addEventListener("submit", (ev) => {
 });
 
 void boot();
+
+// ----- PREVIEW HARNESS (?preview=1) -----
+// Local preview stack (scripts/_preview_stack.py): auto-guest + auto-join the
+// bigmap, then hand the remote-control panel the socket. Production servers
+// ignore preview_cmd frames; the panel itself only builds with the flag.
+const previewMode = new URLSearchParams(location.search).has("preview");
+
+if (previewMode) {
+  previewPanel.attach({ send: (f) => net.sendRaw(f) });
+  net.onPreviewState = (s) => previewPanel.onState(s);
+  // The socket is still dialing at module scope — retry the guest join until
+  // the wire is live (200ms beats; harmless if the gate's own flow races us,
+  // the stack dedupes by re-creating the preview runtime).
+  const startPreview = window.setInterval(() => {
+    if (!net.isConnected) return;
+    window.clearInterval(startPreview);
+    net.requestGuestJoin("preview");
+    net.previewMap("ekonia/overworld");
+  }, 200);
+}

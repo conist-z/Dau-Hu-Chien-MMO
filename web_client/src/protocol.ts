@@ -291,6 +291,7 @@ export type ServerFrame =
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
   | { type: "push"; message: string }
+  | { type: "preview_state"; map: string; clock: string; night: boolean; weather: string; zombies: number; meteors: number; felled_tonight: number; auto_meteor: boolean; [k: string]: unknown }
   | { type: "chat"; uid: number; name: string; color: string; text: string }
   | { type: "swing"; uid: number; tx: number | null; ty: number | null }
   | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }

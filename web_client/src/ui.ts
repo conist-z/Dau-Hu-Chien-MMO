@@ -52,12 +52,16 @@ const WEATHER_FRAMES: Record<string, number[]> = {
 // Legacy aliases + web-only keys fall back to the closest pixel set / emoji.
 const WEATHER_ICON_FALLBACK: Record<string, string> = {
   sun: "☀️", sunny: "☀️", clouds: "☁️", fog: "🌫️",
+  // Cave maps are weather-immune (server pins key "cave"): show the cave
+  // marker, never "❓" (user: weather icon must always resolve).
+  cave: "🕳️",
 };
 const WEATHER_NAMES: Record<string, string> = {
   sun_clouds: "Nắng Dịu", sun: "Nắng", sunny: "Nắng Vàng", clouds: "Mây",
   cloudy: "Nhiều Mây", heavy_clouds: "Trời Âm U", rain: "Mây Thưa",
   heavy_rain: "Mưa Tầm Tã", storm: "Giông Bão", snow: "Tuyết Rơi",
   cold: "Giá Lạnh", wind: "Gió Nhẹ", fog: "Sương mù",
+  cave: "Trong Hang",
 };
 // Day/night phase pixel icons copied from the Discord hub renderer
 // (assets/gui/daynight/*.png -> public/ui/hud/daynight/).
@@ -1784,12 +1788,37 @@ export class Hud {
     this.updateLoadingUI(this.loadingDone + " / " + this.loadingTotal);
   }
 
+  /** Show the "Đang tải bản đồ…" sheet: portal switches bake the new map on
+   * the main thread (hundreds of ms even cached) — this gives INSTANT visual
+   * feedback instead of a frozen frame (user: "load rất lâu mới vào map").
+   * Hidden by hideMapLoading() once the new world's first snapshot lands. */
+  showMapLoading(mapName: string): void {
+    this.mapLoadingN += 1;
+    const el = document.getElementById("loading-overlay");
+    if (!el) return;
+    el.classList.remove("hidden");
+    const status = document.getElementById("loading-status");
+    const fill = document.getElementById("loading-fill");
+    if (fill) fill.style.width = "100%";
+    if (status) status.textContent = `Đang vào ${mapName}…`;
+  }
+
+  /** Drop one map-loading claim; hide the overlay at zero. */
+  hideMapLoading(): void {
+    if (this.mapLoadingN > 0) this.mapLoadingN -= 1;
+    if (this.mapLoadingN === 0 && this.loadingTotal === 0) {
+      document.getElementById("loading-overlay")?.classList.add("hidden");
+    }
+  }
+
+  private mapLoadingN = 0;
+
   /** True while the blocking-asset overlay is visible. The reconnect
    *  watchdogs in main.ts defer to this: the heavy FIRST bake on PC blocks
    *  the main thread for seconds, snapshots stall, and a naive age check
    *  would kill the in-flight join (the "3/0 triple load" regression). */
   get isLoading(): boolean {
-    return this.loadingTotal > 0;
+    return this.loadingTotal > 0 || this.mapLoadingN > 0;
   }
 
   hideLoading(): void {

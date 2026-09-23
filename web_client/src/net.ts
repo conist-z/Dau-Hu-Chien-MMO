@@ -36,6 +36,9 @@ export interface NetHandlers {
 
 export class Net {
   private ws: WebSocket | null = null;
+  /** Extra dev hook (preview panel status) — assigned from main.ts when
+   *  ?preview=1; optional so normal clients never touch it. */
+  onPreviewState?: (state: Record<string, unknown>) => void;
   private token = "";
   private joined = false;
   /** Monotonic input sequence (input-sequence reconciliation): every input
@@ -413,6 +416,12 @@ export class Net {
     }
   }
 
+  /** Escape hatch for dev tooling (preview panel): send a raw frame the
+   *  production server ignores (preview_cmd) — no typed handler needed. */
+  sendRaw(obj: Record<string, unknown>): void {
+    this.send(obj);
+  }
+
   private startPing(): void {
     if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
     // First ping IMMEDIATELY (reconciliation needs RTT during the join
@@ -487,6 +496,9 @@ export class Net {
         break;
       case "push":
         this.handlers.onPush(frame.message);
+        break;
+      case "preview_state":
+        this.onPreviewState?.(frame as unknown as Record<string, unknown>);
         break;
       case "chat":
         this.handlers.onChat?.(frame.uid, frame.name, frame.color, frame.text);
