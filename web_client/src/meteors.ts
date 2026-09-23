@@ -82,12 +82,16 @@ export class MeteorFx {
 
   private start(id: number, tx: number, ty: number, dir: "left" | "right", impactAt: number): void {
     const scene = this.scene!;
-    // Bounds/tile come from the scene (WorldScene fields, typed loosely here
-    // to keep this module decoupled from the game class).
-    const s = scene as unknown as { map?: { width: number; height: number }; tilePx?: number };
-    const w = s.map?.width ?? 0, h = s.map?.height ?? 0;
-    if (tx < 0 || ty < 0 || tx >= w || ty >= h) return;
-    void s.tilePx;
+    // Bounds/tile come from the scene (WorldScene keeps them in `welcome.map`
+    // + `tilePx`, typed loosely here to keep this module decoupled).
+    const s = scene as unknown as {
+      welcome?: { map: { width: number; height: number } };
+    };
+    const w = s.welcome?.map.width ?? 0;
+    const h = s.welcome?.map.height ?? 0;
+    // Only reject out-of-bounds tiles when the bounds are actually known —
+    // an unknown map size must never swallow the whole event.
+    if (w > 0 && h > 0 && (tx < 0 || ty < 0 || tx >= w || ty >= h)) return;
 
     const ring = scene.add.graphics().setDepth(950);
     const m: ActiveMeteor = { id, tx, ty, dir, impactAt, phase: "warning", sprite: null, trail: [], boom: null, boomStart: 0, ring };
