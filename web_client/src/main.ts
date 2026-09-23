@@ -1674,7 +1674,7 @@ if (previewMode) {
   const startPreview = window.setInterval(() => {
     if (!net.isConnected) return;
     window.clearInterval(startPreview);
-    net.requestGuestJoin("preview");
+    net.requestGuestJoin("9000000000000000042");
     net.previewMap("ekonia/overworld");
   }, 200);
 }
