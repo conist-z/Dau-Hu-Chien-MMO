@@ -31,6 +31,7 @@ export class MeteorFx {
   private active = new Map<number, ActiveMeteor>();
   private texturesReady = false;
   private shakeDir = { x: 0, y: 0, mag: 0 };
+  private shakeDirty = false;
   private updateBound = this.update.bind(this);
 
   attach(scene: Phaser.Scene): void {
@@ -179,11 +180,25 @@ export class MeteorFx {
       }
     }
 
-    // camera shake decay (the jolt itself is Phaser's cam.shake at impact;
-    // this magnitude only gates our overlay, kept for parity with the demo)
+    // camera shake decay — MANUAL integer jitter (never Phaser cam.shake:
+    // its subpixel offsets cracked the pixel art and exposed the raw map).
+    // Max ±2 screen px, exponential decay, hard 0 cutoff.
     if (this.shakeDir.mag > 0.02) {
-      this.shakeDir.mag *= Math.pow(0.90, 16.7 / 16);
+      this.shakeDir.mag *= Math.pow(0.82, 16.7 / 16);
       if (this.shakeDir.mag < 0.02) this.shakeDir.mag = 0;
+      const cam = scene.cameras.main;
+      const t = Math.min(2, Math.round(this.shakeDir.mag / 6));
+      if (t > 0) {
+        cam.setFollowOffset(
+          -this.shakeDir.x * t + (Math.random() - 0.5),
+          -this.shakeDir.y * t + (Math.random() - 0.5),
+        );
+      } else {
+        cam.setFollowOffset(0, 0);
+      }
+    } else if (this.shakeDirty) {
+      scene.cameras.main.setFollowOffset(0, 0);
+      this.shakeDirty = false;
     }
   }
 
@@ -191,15 +206,17 @@ export class MeteorFx {
     const scene = this.scene!;
     m.boom = scene.add.image(cx, cy, "met-boom0").setDepth(970);
     // Directional shake for SELF only: the vector from impact to the camera.
+    // Phaser's shake `intensity` is a FRACTION of viewport size, not px —
+    // the old px/400 number (mag 22 -> 0.055+) made the whole screen fly.
+    // Cap at 0.004 (~5px on a 1280 viewport) and scale down with distance.
     const cam = scene.cameras.main;
     const selfX = cam.midPoint.x, selfY = cam.midPoint.y;
     const dx = selfX - cx, dy = selfY - cy;
     const dist = Math.hypot(dx, dy);
     if (dist < SHAKE_RADIUS_PX && dist > 0.001) {
-      const mag = SHAKE_MAX_PX * (1 - dist / SHAKE_RADIUS_PX);
+      const mag = SHAKE_MAX_PX * (1 - dist / SHAKE_RADIUS_PX); // px, for our decay lane
       this.shakeDir = { x: dx / dist, y: dy / dist, mag };
-      // First violent jolt: Phaser's shake (short, fixed) + our decay overlay.
-      cam.shake(180, mag / 400);
+      this.shakeDirty = true;
       cam.flash(120, 255, 240, 200, false);
     }
   }

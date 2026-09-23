@@ -118,6 +118,13 @@ cd "D:\dự án mini build bot discord mmo event"
 .venv\Scripts\python scripts/diag_commands.py        # verify registered commands (HTTP, no bot restart)
 ```
 
+### Preview harness (xem cơ chế ngay trên tab Preview — đọc `docs/preview_harness.md`)
+Sau mỗi tính năng web client/server: build client (nếu đổi), chạy
+`.venv\Scripts\python scripts/_preview_stack.py` (port 8898), mở
+`http://127.0.0.1:8898/?preview=1` trong tab Preview → game thật + panel
+🧪 điều khiển (giờ/đêm, ☄️, thời tiết, quái, đổi map). Thêm cơ chế mới =
+thêm 1 handler `_cmd_*` + 1 nút panel.
+
 ### FAST deploy (default for small changes — seconds, not minutes)
 ```powershell
 # Python only (e.g. web_api/core.py, game/rules.py):
