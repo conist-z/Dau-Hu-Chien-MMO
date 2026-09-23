@@ -741,6 +741,17 @@ const net = new Net({
       // Back at the gate: the touch layer must yield to it again.
       (window as unknown as { __setMobileControls?: (on: boolean) => void })
         .__setMobileControls?.(false);
+      // PREVIEW AUTO-RECOVERY: the reconnect backoff gives up at attempt 4
+      // (~15s), which strands the preview gate forever when the browser
+      // dropped the WS while the tab was hidden. A single clean reload
+      // restarts the whole boot (guest join + previewMap) — safe because
+      // the preview stack rebuilds the runtime from scratch anyway.
+      if (previewMode && !sessionStorage.getItem("preview_recovered")) {
+        sessionStorage.setItem("preview_recovered", "1");
+        window.setTimeout(() => location.reload(), 1500);
+      }
+    } else {
+      sessionStorage.removeItem("preview_recovered");
     }
   },
 });
