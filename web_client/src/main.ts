@@ -559,8 +559,11 @@ const net = new Net({
     // inventory_delta's craft_result fragment (setCraftResult). Never clear
     // it here: the output must STAY in the result slot until collected.
   },
-  onPush: (message) => {
-    hud.toast(message);
+  onPush: (message, kind) => {
+    // Danger pushes (meteors / world events) get the loud banner, not a
+    // chat-style toast — must read as DANGER at a glance.
+    if (kind === "danger") hud.dangerAlert(message);
+    else hud.toast(message);
     previewPanel.feed(message);
   },
   onChat: (_uid, name, color, text) => {

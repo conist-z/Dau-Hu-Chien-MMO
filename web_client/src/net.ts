@@ -16,7 +16,7 @@ export interface NetHandlers {
   /** Craft-panel state sync (server material grid + parked result). */
   onCraftState?: (matGrid: [string, number][], result: { id: string; qty: number } | null) => void;
   onCraftResult: (ok: boolean, reason: string, itemId: string | null, qty: number) => void;
-  onPush: (message: string) => void;
+  onPush: (message: string, kind?: string) => void;
   /** Cross-player chat line (server broadcast, colored name). */
   onChat?: (uid: number, name: string, color: string, text: string) => void;
   /** Another player swung (attack/chop/break) — play their arm arc. */
@@ -495,7 +495,7 @@ export class Net {
         this.handlers.onCraftResult(frame.ok, frame.reason, frame.item_id, frame.qty);
         break;
       case "push":
-        this.handlers.onPush(frame.message);
+        this.handlers.onPush(frame.message, frame.kind);
         break;
       case "preview_state":
         this.onPreviewState?.(frame as unknown as Record<string, unknown>);

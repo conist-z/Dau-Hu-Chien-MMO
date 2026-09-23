@@ -508,6 +508,44 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 
+/* Danger alert (meteor / world-event warnings): pixel hazard banner.
+   Hard blink on the border (steps, no soft fade) + shake-in on arrival —
+   reads as DANGER, not a chat line. Click or 6s to dismiss. */
+.danger-alert {
+  position: fixed;
+  top: 96px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 2500;
+  max-width: min(560px, 86vw);
+  background: #2a0808;
+  color: #ffe0e0;
+  border: 3px solid #ff3c3c;
+  border-radius: 0;
+  padding: 10px 22px;
+  font: bold 15px/1.4 monospace;
+  text-align: center;
+  text-shadow: 0 0 6px rgba(255, 60, 60, 0.9);
+  box-shadow:
+    0 0 0 3px #1a0404,
+    0 0 18px rgba(255, 60, 60, 0.55),
+    inset 0 0 12px rgba(255, 60, 60, 0.25);
+  cursor: pointer;
+  image-rendering: pixelated;
+  animation:
+    danger-in 0.35s steps(5) both,
+    danger-blink 0.5s steps(2) infinite;
+}
+@keyframes danger-in {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-14px); }
+  40% { transform: translateX(-51%) translateY(2px); }
+  70% { transform: translateX(-49%) translateY(-2px); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes danger-blink {
+  0%, 100% { border-color: #ff3c3c; box-shadow: 0 0 0 3px #1a0404, 0 0 18px rgba(255,60,60,0.55), inset 0 0 12px rgba(255,60,60,0.25); }
+  50% { border-color: #ffd75e; box-shadow: 0 0 0 3px #1a1204, 0 0 22px rgba(255,215,94,0.65), inset 0 0 12px rgba(255,215,94,0.3); }
+}
+
 /* Inventory + craft panels — pixel asset panels (ui_panel_demo handoff).
    Geometry comes from pixel_ui.ts (absolute integer coords × one shared
    integer scale); CSS only styles layers, never re-spaces slots. */

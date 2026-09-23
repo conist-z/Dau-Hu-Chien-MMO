@@ -2643,6 +2643,21 @@ export class Hud {
     window.setTimeout(() => div.remove(), 3500);
   }
 
+  /** DANGER ALERT (meteors / world events): a full-width top banner with a
+   *  hard-blinking hazard border + shake-in. Far louder than a toast —
+   *  auto-dismisses after 6s or on click. */
+  dangerAlert(message: string): void {
+    document.getElementById("hud-danger")?.remove();
+    const div = document.createElement("div");
+    div.id = "hud-danger";
+    div.className = "danger-alert";
+    div.textContent = message;
+    const dismiss = () => div.remove();
+    div.addEventListener("click", dismiss);
+    document.body.appendChild(div);
+    window.setTimeout(dismiss, 6000);
+  }
+
   onSlotSelect(cb: (slot: number) => void): void {
     this.onSelectSlot = cb;
   }

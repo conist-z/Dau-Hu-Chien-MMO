@@ -290,7 +290,7 @@ export type ServerFrame =
   | { type: "inventory_delta"; inventory: InventoryPayload; inv_version?: number; mat_grid?: [string, number][]; craft_result?: { id: string; qty: number } | null }
   | { type: "craft_result"; ok: boolean; reason: string; item_id: string | null; qty: number }
   | { type: "asset_data"; name: string; b64: string | null }
-  | { type: "push"; message: string }
+  | { type: "push"; message: string; kind?: string }
   | { type: "preview_state"; map: string; clock: string; night: boolean; weather: string; zombies: number; meteors: number; felled_tonight: number; auto_meteor: boolean; [k: string]: unknown }
   | { type: "chat"; uid: number; name: string; color: string; text: string }
   | { type: "swing"; uid: number; tx: number | null; ty: number | null }

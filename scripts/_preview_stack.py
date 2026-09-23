@@ -149,7 +149,10 @@ class PreviewStack(LocalStack):
         m.tx = max(0, min(w - 1, m.tx))
         m.ty = max(0, min(h - 1, m.ty))
         where = "tại chỗ bạn đứng" if value != "rand" else f"({m.tx},{m.ty}) gần bạn"
-        await self._send(cid, {"type": "push", "message": f"[preview] ☄️ Thiên thạch rơi {where} — 8s nữa!"})
+        await self._send(cid, {
+            "type": "push", "kind": "danger",
+            "message": f"[preview] ☄️ CẢNH BÁO: Thiên thạch rơi {where} — 8s nữa!",
+        })
 
     async def _cmd_weather(self, cid: int, uid: int, rt, value) -> None:
         if value in (None, "", "normal", "auto"):

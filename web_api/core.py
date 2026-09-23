@@ -1435,8 +1435,9 @@ class WebHub:
             m.ty = max(0, min(h - 1, m.ty))
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH,
+            "kind": "danger",  # client renders the hazard banner, not a toast
             "message": (
-                f"☄️ Thiên thạch rơi ({m.tx},{m.ty}) sau 8 giây!"
+                f"☄️ CẢNH BÁO: Thiên thạch sắp rơi ({m.tx},{m.ty}) sau 8 giây!"
                 + (" (random)" if near_random else "")
             ),
         })
