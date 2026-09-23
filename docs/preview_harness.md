@@ -8,6 +8,11 @@
 ## Khởi động (mỗi session, ~30 giây)
 
 ```bash
+# 0. NẾU CHƯA CÓ STACK ĐANG CHẠY — dùng keeper (tự hồi sinh khi chết):
+.venv/Scripts/python scripts/preview_keepalive.py > .preview_keepalive.log 2>&1 &
+#    keeper loop restart _preview_stack.py trong ~2s mỗi lần nó crash/đ bị kill
+#    (Freebuff restart giết background process = nguyên nhân "preview mất").
+
 # 1. Build client nếu src đổi (dist đã commit thì bỏ qua)
 cd web_client && npm run build && cd ..
 rm -rf web_client/relay/dist && cp -r web_client/dist web_client/relay/dist
@@ -15,11 +20,15 @@ rm -rf web_client/relay/dist && cp -r web_client/dist web_client/relay/dist
 echo '{ "client_id": "965153822861307914", "redirect_uri": "https://web-production-19398.up.railway.app/" }' \
   > web_client/relay/dist/app-config.json
 
-# 2. Chạy stack (port 8898, nền)
+# 2. (nếu chưa chạy keeper ở bước 0) chạy stack thẳng:
 .venv/Scripts/python scripts/_preview_stack.py > .preview_stack.log 2>&1 &
 
 # 3. Mở tab Preview của Freebuff
-#    register_preview -> url = http://127.0.0.1:8898/?preview=1
+#    register_preview -> url = http://127.0.0.1:8898/?preview=1, pid = PID
+#    của process LISTENING :8898 (netstat -ano | grep :8898).
+#    Nếu preview "mất" sau khi Freebuff/agent restart: STACK CÓ THỂ VẪN SỐNG
+#    (keeper giữ nó) — chỉ cần register_preview LẠI với cùng URL + pid mới,
+#    KHÔNG rebuild, KHÔNG đợi; mất ~10s.
 ```
 
 `?preview=1` là bắt buộc: client auto guest-login + vào bigmap solo + hiện
@@ -85,5 +94,8 @@ scripts/_preview_stack.py (PreviewStack extends LocalStack) │ preview_state
   bo tròn số nguyên (max ±2px), decay exponential, reset về (0,0) khi xong.
 - **Tab ẩn → rAF throttle**: demo/preview có thể đóng băng khi tab không
   focus; stack vẫn chạy (loop Python độc lập), chỉ client render chậm lại.
+- **Preview "mất" sau restart**: Freebuff giết background process nhưng
+  registration tab Preview trỏ vào port chết → dùng `preview_keepalive.py`
+  (keeper tự restart stack trong 2s) + `register_preview` lại cùng URL.
 - **Unicode console (cp1252)**: print tiếng Việt trong stack script bị
   `UnicodeEncodeError` → encode ascii/replace cho dòng print banner.
