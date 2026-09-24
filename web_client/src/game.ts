@@ -78,35 +78,35 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // right row; LEFT mirrors right (zombieFlipX already handles W/NW/SW).
   // Frame counts match the sheet rows the packer wrote (padded to >=3).
   bunny: {
-    texKey: "mob-bunny", size: 32, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bunny", size: 26, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   deer: {
-    texKey: "mob-deer", size: 44, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer", size: 46, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   deer2: {
-    texKey: "mob-deer2", size: 44, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer2", size: 50, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   bird: {
-    texKey: "mob-bird", size: 24, cellW: 16, cellH: 16, singleFacing: true,
-    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    texKey: "mob-bird", size: 22, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 2], up: [1, 2], down: [1, 2] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   boar: {
-    texKey: "mob-boar", size: 40, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-boar", size: 42, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   bear: {
-    texKey: "mob-bear", size: 50, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bear", size: 58, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   fox: {
-    texKey: "mob-fox", size: 36, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-fox", size: 38, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
   wolf: {
-    texKey: "mob-wolf", size: 42, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-wolf", size: 44, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
 };
@@ -757,6 +757,15 @@ export class WorldScene extends Phaser.Scene {
         fetchAsset(`mobs/${kind}.png`);
       }
     }
+    // PER-MAP TILE SIZE **BEFORE ANY BUILD** (user 25/09 — "ra bigmap cây cối
+    // lệch tùm lum"): bakeMapIfReady/updateResourceLayer position every
+    // resource sprite at x*tilePx. tilePx was assigned BELOW (line ~786), so
+    // the first build after a tile-size CHANGE (cave 16px -> bigmap 32px)
+    // built the whole layer with the STALE tile — trees at half/big-double
+    // positions — and the sig guard then saw an unchanged resource list and
+    // never rebuilt. Assign tilePx up front; the later assignment is kept as
+    // a harmless re-write of the same value.
+    this.tilePx = welcome.map.tile_width || BASE_TILE;
     this.buildBlocks(welcome.blocks);
     this.bakeMapIfReady();
     // Cave ambience (darkness + glowing mushrooms) — independent canvases,
