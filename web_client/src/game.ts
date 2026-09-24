@@ -3240,6 +3240,19 @@ export class WorldScene extends Phaser.Scene {
     if (!map) return null;
     const cacheKey = `res-${gid}`;
     if (this.textures.exists(cacheKey)) return cacheKey;
+    // Meteor-ore pseudo-tiles (NEGATIVE gids, spawned at meteor craters):
+    // no Tiled tileset crop exists for them — they draw the bundled
+    // ui/node/meteor_ore.png sprite fetched through the asset lane.
+    if (gid < 0) {
+      if (gid === -77) {
+        if (!this.textures.exists("node-meteor-ore")) {
+          this.assetFetch?.("node/meteor_ore.png");
+          return null; // retry on the next layer refresh once bytes arrive
+        }
+        return "node-meteor-ore";
+      }
+      return null;
+    }
     const tw = map.tile_width;
     const th = map.tile_height;
     const ts = this.tilesetForGid(map, gid);
@@ -3405,6 +3418,17 @@ export class WorldScene extends Phaser.Scene {
     if (!MOB_SHEETS[kind] || this.mobTextureReady.has(kind)) return;
     if (!this.textures.exists(MOB_SHEETS[kind].texKey)) return;
     this.mobTextureReady.add(kind);
+  }
+
+  /** Bundled node sprite arrived (meteor-ore crater rock): register the
+   *  texture and rebuild the resource layer so pseudo-tile draws (negative
+   *  gids) pick it up. Mirrors onMobTexture but for plain images. */
+  onNodeTexture(_nodeId: string): void {
+    if (!this.textures) return;
+    // The texture was already registered by applyTexture under
+    // "node-<id>"; textureForGid maps gid -77 -> "node-meteor-ore".
+    this.resourceSig = "";
+    if (this.welcome) this.updateResourceLayer(this.welcome.resources);
   }
 
   /** Sync the zombie layer from one snapshot payload (20 Hz). */

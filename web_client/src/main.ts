@@ -247,7 +247,9 @@ function applyTexture(name: string, b64: string): void {
     ? `block-${name.slice("blocks/".length).replace(/\.png$/i, "")}`
     : name.startsWith("mobs/")
       ? `mob-${name.slice("mobs/".length).replace(/\.png$/i, "")}`
-      : bareTileset.replace(/\.png$/i, "");
+      : name.startsWith("node/")
+        ? `node-${name.slice("node/".length).replace(/\.png$/i, "").replace(/\//g, "-")}`
+        : bareTileset.replace(/\.png$/i, "");
   if (assetTextures.has(key) || !game.textures) return;
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -311,6 +313,12 @@ function applyTexture(name: string, b64: string): void {
         game.textures.addImage(`icon-${itemId}`, img);
         scene.onIconTexture(itemId);
       }
+      return;
+    }
+    if (name.startsWith("node/")) {
+      // Bundled node sprite (meteor-ore crater rock): register as      // node-meteor-ore and rebuild the resource layer so pending
+      // pseudo-tile draws pick the texture up.
+      scene.onNodeTexture(name.slice("node/".length).replace(/\.png$/i, ""));
       return;
     }
     // Tileset image arrived (blocking asset) — tick the loading overlay.
@@ -559,11 +567,11 @@ const net = new Net({
     // inventory_delta's craft_result fragment (setCraftResult). Never clear
     // it here: the output must STAY in the result slot until collected.
   },
-  onPush: (message, kind) => {
-    // Danger pushes (meteors / world events) get the loud banner, not a
-    // chat-style toast — must read as DANGER at a glance.
-    if (kind === "danger") hud.dangerAlert(message);
-    else hud.toast(message);
+  onPush: (message, _kind) => {
+    // NOTE: the danger banner (kind === "danger") is DISABLED per user
+    // request — pushes always show as the plain toast. Re-enable by
+    // routing to hud.dangerAlert when the user picks a final style.
+    hud.toast(message);
     previewPanel.feed(message);
   },
   onChat: (_uid, name, color, text) => {
