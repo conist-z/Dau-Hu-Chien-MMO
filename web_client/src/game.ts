@@ -27,6 +27,9 @@ interface MobSheetInfo {
   cellW: number;            // sheet frame width (px, from Kaetram sprites.json)
   cellH: number;            // sheet frame height (px)
   rows: Record<"atk" | "walk" | "idle", Record<"right" | "up" | "down", [number, number]>>; // [row, frameCount]
+  /** Minifolks wildlife: ONE facing per sheet — never pick up/down rows,
+   * flipX only for leftward facing. */
+  singleFacing?: boolean;
 }
 const MOB_SHEETS: Record<string, MobSheetInfo> = {
   zombie: {
@@ -69,6 +72,42 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   hobgoblin: {
     texKey: "mob-hobgoblin", size: 48, cellW: 32, cellH: 32,
     rows: { atk: { right: [0, 3], up: [3, 3], down: [6, 3] }, walk: { right: [1, 3], up: [4, 4], down: [7, 4] }, idle: { right: [2, 2], up: [5, 2], down: [8, 2] } },
+  },
+  // ---- daytime wildlife (Minifolks Forest Animals, scripts/pack_animal_sheets.py)
+  // 4-row layout (atk/walk/idle/dead) with ONE facing: up/down reuse the
+  // right row; LEFT mirrors right (zombieFlipX already handles W/NW/SW).
+  // Frame counts match the sheet rows the packer wrote (padded to >=3).
+  bunny: {
+    texKey: "mob-bunny", size: 32, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  deer: {
+    texKey: "mob-deer", size: 44, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  deer2: {
+    texKey: "mob-deer2", size: 44, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  bird: {
+    texKey: "mob-bird", size: 24, cellW: 16, cellH: 16, singleFacing: true,
+    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  boar: {
+    texKey: "mob-boar", size: 40, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  bear: {
+    texKey: "mob-bear", size: 50, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  fox: {
+    texKey: "mob-fox", size: 36, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+  },
+  wolf: {
+    texKey: "mob-wolf", size: 42, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
   },
 };
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -2090,8 +2129,8 @@ export class WorldScene extends Phaser.Scene {
         // LEFT mirrors the right row (flipX); frame counts come from the
         // per-kind MOB_SHEETS table (Kaetram sprites.json).
         const sheet = MOB_SHEETS[z.kind] ?? MOB_SHEETS.zombie;
-        const fx = this.zombieFlipX(z.facing);
-        const facing = fx ? "right" : this.zombieRowFacing(z.facing);
+        const fx = this.zombieFlipX(z.facing, z.kind);
+        const facing = fx ? "right" : this.zombieRowFacing(z.facing, z.kind);
         const dirRow = (anim: string, face: string): [number, number] => {
           const group = (sheet.rows as any)[anim] ?? sheet.rows.idle;
           return (group as any)[face] ?? group.right;
@@ -3238,7 +3277,13 @@ export class WorldScene extends Phaser.Scene {
   private textureForGid(gid: number): string | null {
     const map = this.welcome?.map;
     if (!map) return null;
-    const cacheKey = `res-${gid}`;
+    // CACHE KEY INCLUDES THE MAP ID (user 25/09): the same gid means
+    // DIFFERENT art on different maps (bigmap gid 41 = cây on the [Base]
+    // sheet; cave gid 41 = nấm on ekonia_baked). A bare "res-<gid>" key
+    // kept the cave's crop alive after walking back to bigmap — resource
+    // tiles rendered the previous map's art ("cái title của bigmap bị
+    // hiển thị lỗi"). Keying by map.id makes each world's crops distinct.
+    const cacheKey = `res-${map.id}-${gid}`;
     if (this.textures.exists(cacheKey)) return cacheKey;
     // Meteor-ore pseudo-tiles (NEGATIVE gids, spawned at meteor craters):
     // no Tiled tileset crop exists for them — they draw the bundled
@@ -3383,15 +3428,20 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** True when the zombie facing needs the RIGHT row mirrored (Kaetram
-   * ships no left rows — left = flipX of right). */
-  private zombieFlipX(facing: string): boolean {
+   * ships no left rows — left = flipX of right). Minifolks wildlife ships
+   * ONE facing per sheet (rows up/down duplicate right), so up/down NEVER
+   * flips — only W/NW/SW mirrors. */
+  private zombieFlipX(facing: string, kind?: string): boolean {
     const f = (facing || "S").toUpperCase();
-    return f === "W" || f === "NW" || f === "SW";
+    const left = f === "W" || f === "NW" || f === "SW";
+    if (kind && MOB_SHEETS[kind]?.singleFacing) return left;
+    return left;
   }
 
   /** Sheet-facing suffix (right/up/down) for a non-mirrored zombie facing. */
-  private zombieRowFacing(facing: string): "right" | "up" | "down" {
+  private zombieRowFacing(facing: string, kind?: string): "right" | "up" | "down" {
     const f = (facing || "S").toUpperCase();
+    if (kind && MOB_SHEETS[kind]?.singleFacing) return "right";
     if (f === "N" || f === "NE" || f === "NW") return "up";
     if (f === "E" || f === "NE" || f === "SE") return "right";
     return "down"; // S, SE, SW
