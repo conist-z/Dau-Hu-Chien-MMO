@@ -3245,11 +3245,13 @@ export class WorldScene extends Phaser.Scene {
     // ui/node/meteor_ore.png sprite fetched through the asset lane.
     if (gid < 0) {
       if (gid === -77) {
-        if (!this.textures.exists("node-meteor-ore")) {
+        // main.ts registers node assets as "node-<basename-without-.png>"
+        // (underscores preserved): meteor_ore.png -> "node-meteor_ore".
+        if (!this.textures.exists("node-meteor_ore")) {
           this.assetFetch?.("node/meteor_ore.png");
           return null; // retry on the next layer refresh once bytes arrive
         }
-        return "node-meteor-ore";
+        return "node-meteor_ore";
       }
       return null;
     }
@@ -3433,6 +3435,9 @@ export class WorldScene extends Phaser.Scene {
 
   /** Sync the zombie layer from one snapshot payload (20 Hz). */
   private syncZombies(list: WebZombiePayload[]): void {
+    // Snapshot can arrive before the scene is fully booted; bail out instead
+    // of crashing on this.add (it is undefined pre-boot).
+    if (!this.add || !this.scene) return;
     const seen = new Set<string>();
     for (const [id, x, y, hp, maxHp, kind, hunter, facing, anim, animT] of list) {
       seen.add(id);

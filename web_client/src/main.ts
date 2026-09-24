@@ -771,6 +771,9 @@ net.idlePosHook = () => scene.getSelfPos();
 
 // DEBUG HANDLE: window.net for console probes (preview_evaluate).
 (window as unknown as { net: Net }).net = net;
+// DEBUG HANDLE: window.gameScene — preview harness probes (meteor ore,
+// resource layer) without a module export.
+(window as unknown as { gameScene: WorldScene }).gameScene = scene;
 
 // F3 collision debug (lobby checkbox or F3 key): paint collision tiles red.
 window.addEventListener("toggle-collision", (e) => {
