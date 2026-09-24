@@ -2203,6 +2203,37 @@ export class Hud {
     }
   }
 
+  /** Status-effect rail: [effect_id, seconds_left, level?], newest-LAST.
+   *  Rerenders the whole rail each call — icons are cheap <img> swaps
+   *  (browser caches the PNGs), so sliding right/left when one expires is
+   *  automatic. level 2..4 draws a bare pixel digit on the icon's TOP-RIGHT
+   *  corner (gold/red/purple) with a faint aura from tier 3 up. */
+  setStatusEffects(effects: Array<[string, number, number?]>): void {
+    const rail = document.getElementById("hud-status");
+    if (!rail) return;
+    rail.textContent = "";
+    for (const [effectId, secs, lvl] of effects) {
+      const d = document.createElement("div");
+      d.className = "status-icon";
+      if (lvl !== undefined && lvl >= 2) d.classList.add(`lvl-${Math.min(4, lvl)}`);
+      const img = document.createElement("img");
+      img.src = `ui/hud/status/${effectId}.png`;
+      img.alt = effectId;
+      d.appendChild(img);
+      if (lvl !== undefined && lvl >= 2 && lvl <= 4) {
+        const l = document.createElement("span");
+        l.className = "lvl";
+        l.textContent = String(lvl);
+        d.appendChild(l);
+      }
+      const s = document.createElement("span");
+      s.className = "secs";
+      s.textContent = String(Math.max(0, Math.floor(secs)));
+      d.appendChild(s);
+      rail.appendChild(d);
+    }
+  }
+
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,
           stamina = 1, maxStamina = 0): void {
     this.hpFill.style.width = `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`;

@@ -3523,16 +3523,24 @@ export class WorldScene extends Phaser.Scene {
           ready
             ? this.add.image(0, 0, sheet.texKey)
             : this.add.rectangle(0, 0, 22, 26, 0x3a7d2c);
+        // FEET ANCHOR (player parity): the player doll's FEET sit at the
+        // container's tile-bottom; the old mob body (origin 0.5 centred on
+        // the tile centre) spilled ~half a tile SOUTH into the next row —
+        // a mob just north of a tree visually stomped OVER the trunk.
+        // dy shifts the body so its bottom edge lands on the tile bottom.
+        const bodyY = ready ? this.tilePx / 2 - sheet.size / 2 : 4;
         // Cut the FIRST idle frame immediately so a fresh spawn never shows
         // the whole stretched sheet for even one frame.
         if (body instanceof Phaser.GameObjects.Image) {
+          body.setPosition(0, bodyY);
           this.applyMobCell(body, 0, sheet.rows.idle.down[0], sheet.size, sheet.cellW, sheet.cellH);
         }
         // No emoji label under mobs (user request): the sprite + hp bar are
         // enough; the container still needs a placeholder for typing.
         const label = this.add.text(0, 24, "", {});
-        const hpBg = this.add.rectangle(0, -22, 28, 4, 0x000000, 0.6);
-        const hpFill = this.add.rectangle(0, -22, 28, 4, 0x6fe26f).setOrigin(0.5);
+        const barY = bodyY - sheet.size / 2 - 4;
+        const hpBg = this.add.rectangle(0, barY, 28, 4, 0x000000, 0.6);
+        const hpFill = this.add.rectangle(0, barY, 28, 4, 0x6fe26f).setOrigin(0.5);
         container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);
         container.setDepth(5);
         this.zombieLayer.add(container);
@@ -3558,6 +3566,8 @@ export class WorldScene extends Phaser.Scene {
         z.body instanceof Phaser.GameObjects.Rectangle
       ) {
         const img = this.add.image(0, 0, sheet.texKey);
+        const bodyY = this.tilePx / 2 - sheet.size / 2;
+        img.setPosition(0, bodyY);
         this.applyMobCell(img, 0, sheet.rows.idle.down[0], sheet.size, sheet.cellW, sheet.cellH);
         z.container.add(img);
         z.container.sendToBack(img);

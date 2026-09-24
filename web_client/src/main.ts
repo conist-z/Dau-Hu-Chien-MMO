@@ -26,6 +26,8 @@ let pendingRejoinChannel: string | null = null;
 // Quick-play guest login: derive a stable pseudo user_id from localStorage
 // so the same browser keeps the same identity/bag across sessions.
 const hud = new Hud();
+// Expose for the 🧪 preview panel's local demos (status effects rail).
+(window as unknown as { hud?: Hud }).hud = hud;
 const scene = new WorldScene();
 
 // =====================================================================
@@ -276,6 +278,10 @@ function applyTexture(name: string, b64: string): void {
         // and mis-cropped goblin (26x26) / spectre (34x34) frames.
         skeleton2: [48, 48], spectre: [34, 34],
         goblin: [26, 26], hobgoblin: [32, 32],
+        // Daytime wildlife (Minifolks pack, normalized to 32px cells by
+        // scripts/pack_animal_sheets.py).
+        bunny: [32, 32], deer: [32, 32], deer2: [32, 32], bird: [32, 32],
+        boar: [32, 32], bear: [32, 32], fox: [32, 32], wolf: [32, 32],
       };
       const [fw, fh] = MOB_CELLS[mobId] ?? [32, 32];
       game.textures.addSpriteSheet(key, img, { frameWidth: fw, frameHeight: fh });

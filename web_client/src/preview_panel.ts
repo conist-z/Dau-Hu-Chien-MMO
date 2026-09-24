@@ -7,7 +7,7 @@
 //
 // Gated by `?preview=1` (or #preview) so production clients never build it.
 
-type Cmd = "clock" | "meteor" | "weather" | "zombies" | "map" | "state";
+type Cmd = "clock" | "meteor" | "weather" | "zombies" | "animals" | "map" | "state";
 
 interface PanelHooks {
   send: (frame: Record<string, unknown>) => void;
@@ -37,6 +37,7 @@ export class PreviewPanel {
   private status: HTMLDivElement | null = null;
   private hooks: PanelHooks | null = null;
   private minimized = false;
+  private statusTimer: number | null = null;
 
   attach(hooks: PanelHooks): void {
     if (this.root || !enabledByQuery()) return;
@@ -53,14 +54,16 @@ export class PreviewPanel {
     root.id = "preview-panel";
     root.style.cssText = [
       "position:fixed", "top:52px", "right:8px", "z-index:3000",
-      "background:rgba(10,12,20,0.92)", "color:#dfe6ff",
+      // Translucent so the map/status rail underneath stays readable.
+      "background:rgba(10,12,20,0.55)", "backdrop-filter:blur(2px)",
+      "color:#dfe6ff",
       "border:1px solid #3b4a7a", "border-radius:10px",
       "font:12px/1.5 monospace", "padding:10px", "width:244px",
       "box-shadow:0 4px 18px rgba(0,0,0,0.5)", "user-select:none",
     ].join(";");
 
     const head = document.createElement("div");
-    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px";
+    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:move";
     head.innerHTML = `<b style="color:#ffd75e">🧪 PREVIEW</b>`;
     const mini = document.createElement("button");
     mini.textContent = "–";
@@ -70,6 +73,12 @@ export class PreviewPanel {
       body.style.display = this.minimized ? "none" : "block";
       mini.textContent = this.minimized ? "+" : "–";
     };
+
+    // DRAGGABLE + position memory: drag by the header; the position is
+    // remembered in localStorage so EVERY future session starts where the
+    // user last parked the panel (and it stops covering the status rail).
+    this.restorePosition(root);
+    this.makeDraggable(root, head);
     head.appendChild(mini);
     root.appendChild(head);
 
@@ -126,12 +135,29 @@ export class PreviewPanel {
     btn("Spawn 10", () => this.send("zombies", "pack"), "#1a3a1a");
     btn("Dọn sạch", () => this.send("zombies", "none"), "#5a1a1a");
 
+    // ---- wildlife (daytime animals) ----
+    section("🦌 Động vật ban ngày");
+    row();
+    btn("Spawn random", () => this.send("animals", "rand"), "#1a3a1a");
+    btn("Thỏ", () => this.send("animals", "bunny"), "#1a2a1a");
+    btn("Nai", () => this.send("animals", "deer"), "#1a2a1a");
+    btn("Heo", () => this.send("animals", "boar"), "#1a2a1a");
+    btn("Gấu", () => this.send("animals", "bear"), "#1a2a1a");
+    btn("Sói", () => this.send("animals", "wolf"), "#1a2a1a");
+    btn("Dọn", () => this.send("animals", "none"), "#5a1a1a");
+
     // ---- map switch ----
     section("🗺️ Đổi map preview");
     row();
     for (const [id, label] of MAPS) {
       btn(label, () => this.send("map", id), "#33321a");
     }
+
+    // ---- status effects (DEMO — local only, no server frames) ----
+    section("✨ Status effects (demo)");
+    row();
+    btn("ON", () => this.startStatusDemo(), "#1a3a1a");
+    btn("OFF", () => this.stopStatusDemo(), "#5a1a1a");
 
     // ---- status + log ----
     section("📡 Trạng thái");
@@ -153,6 +179,112 @@ export class PreviewPanel {
     document.body.appendChild(root);
     this.root = root;
     this.send("state");
+  }
+
+  /** Restore the last-dragged position (every session, same browser). */
+  private restorePosition(root: HTMLDivElement): void {
+    try {
+      const raw = localStorage.getItem("preview-panel-pos");
+      if (!raw) return;
+      const { x, y } = JSON.parse(raw) as { x: number; y: number };
+      if (typeof x !== "number" || typeof y !== "number") return;
+      root.style.right = "auto";
+      root.style.left = `${x}px`;
+      root.style.top = `${y}px`;
+    } catch { /* corrupted storage — keep the default corner */ }
+  }
+
+  /** Header-drag (mouse + touch), clamped to the viewport, saved on release. */
+  private makeDraggable(root: HTMLDivElement, handle: HTMLElement): void {
+    let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
+    const save = (): void => {
+      const r = root.getBoundingClientRect();
+      try {
+        localStorage.setItem(
+          "preview-panel-pos",
+          JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }),
+        );
+      } catch { /* storage unavailable — drag still works this session */ }
+    };
+    const clamp = (): void => {
+      const r = root.getBoundingClientRect();
+      const maxX = window.innerWidth - r.width;
+      const maxY = window.innerHeight - r.height;
+      const x = Math.min(Math.max(0, r.left), Math.max(0, maxX));
+      const y = Math.min(Math.max(0, r.top), Math.max(0, maxY));
+      root.style.right = "auto";
+      root.style.left = `${x}px`;
+      root.style.top = `${y}px`;
+    };
+    const down = (cx: number, cy: number): void => {
+      const r = root.getBoundingClientRect();
+      // Anchor on the panel's current top-left so right-positioned panels
+      // don't jump when the drag starts.
+      root.style.right = "auto";
+      root.style.left = `${r.left}px`;
+      root.style.top = `${r.top}px`;
+      sx = cx; sy = cy; ox = r.left; oy = r.top; dragging = true;
+    };
+    const move = (cx: number, cy: number): void => {
+      if (!dragging) return;
+      root.style.left = `${ox + cx - sx}px`;
+      root.style.top = `${oy + cy - sy}px`;
+      clamp();
+    };
+    const up = (): void => {
+      if (!dragging) return;
+      dragging = false;
+      save();
+    };
+    handle.addEventListener("mousedown", (e) => {
+      if ((e.target as HTMLElement).tagName === "BUTTON") return;
+      down(e.clientX, e.clientY);
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
+    window.addEventListener("mouseup", up);
+    handle.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      down(t.clientX, t.clientY);
+    }, { passive: true });
+    window.addEventListener("touchmove", (e) => {
+      if (!dragging) return;
+      const t = e.touches[0];
+      move(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    window.addEventListener("touchend", up);
+    window.addEventListener("resize", clamp);
+  }
+
+  /** DEMO: fake 3 effects with LIVE countdowns and the new LEVEL tier
+   *  (infection L2 gold, poison L3 red, poison2 L4 purple — tier 3/4 pulse
+   *  a faint aura). poison2 expires first and the rest slide RIGHT. */
+  private startStatusDemo(): void {
+    this.stopStatusDemo();
+    const hud = (window as unknown as { hud?: { setStatusEffects(e: Array<[string, number, number?]>): void } }).hud;
+    if (!hud) return;
+    let effects: Array<[string, number, number?]> = [
+      ["infection", 30, 2], ["poison", 20, 3], ["poison2", 10, 4],
+    ];
+    const tick = (): void => {
+      effects = effects
+        .map(([id, s, l]) => [id, s - 1, l] as [string, number, number?])
+        .filter(([, s]) => s > 0);
+      hud.setStatusEffects(effects);
+      // All effects expired: stop the loop instead of spamming empty rails.
+      this.statusTimer = effects.length ? window.setTimeout(tick, 1000) : null;
+    };
+    tick();
+  }
+
+  private stopStatusDemo(): void {
+    if (this.statusTimer !== null) {
+      clearTimeout(this.statusTimer);
+      this.statusTimer = null;
+    }
+    (window as unknown as { hud?: { setStatusEffects(e: Array<[string, number, number?]>): void } })
+      .hud?.setStatusEffects([]);
   }
 
   /** push toasts land here too (the preview stack tags them "[preview]"). */

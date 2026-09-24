@@ -148,6 +148,62 @@ html, body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
+/* Status effect rail: a FLOATING element OUTSIDE the HP panel box — no
+   background/border of its own, anchored to the same right edge as the HP
+   panel, hanging below it. Each icon is a 32x32 pixel-art tile; the seconds
+   counter is a tiny chip overlapping the icon's BOTTOM-LEFT corner. */
+#hud-status {
+  position: absolute;
+  /* Right edge aligns with #hud-topright (right:10px); hugs the panel's
+     bottom edge (panel bottom ~85px + 2px breathing room). */
+  top: 88px; right: 14px;
+  display: flex;
+  flex-direction: row-reverse; /* first effect = rightmost, newest grows LEFT */
+  justify-content: flex-end;
+  gap: 4px;
+  pointer-events: none;        /* never blocks map clicks */
+  z-index: 2;
+}
+.status-icon {
+  position: relative;
+  width: 32px; height: 32px;
+  image-rendering: pixelated;
+  flex: none;
+}
+.status-icon img {
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+.status-icon .secs {
+  position: absolute; left: -3px; bottom: -5px;
+  background: rgba(12, 18, 28, 0.85);
+  color: #fff;
+  font-size: 9px; font-weight: 700; line-height: 1;
+  padding: 2px 3px;
+  border-radius: 3px;
+  text-shadow: none;
+  pointer-events: none;
+}
+/* Effect LEVEL (2..4 only): a bare pixel-ish digit at the TOP-RIGHT corner
+   — no chip/background, just the glyph with a hard black outline so it reads
+   over any art. Colour encodes the tier (2=gold, 3=red, 4=purple). */
+.status-icon .lvl {
+  position: absolute; right: -2px; top: -4px;
+  font-family: "Courier New", monospace;
+  font-size: 13px; font-weight: 900; line-height: 1;
+  font-style: normal;
+  pointer-events: none;
+  text-shadow:
+    -1px -1px 0 #000, 1px -1px 0 #000,
+    -1px  1px 0 #000, 1px  1px 0 #000,
+     0 1px 0 #000;
+}
+.status-icon.lvl-2 .lvl { color: #ffd75e; }
+.status-icon.lvl-3 .lvl { color: #ff5a48; }
+.status-icon.lvl-4 .lvl { color: #c86bff; }
+
 /* Bottom-center: hotbar — always visible */
 #hud-hotbar {
   position: absolute;
@@ -1603,6 +1659,11 @@ body.mobile-ui {
     right: 8px;
   }
   #hud-topright .bar { height: 15px; }
+  /* Rail hugs the mobile panel (panel bottom ~72px). */
+  #hud-status {
+    top: 74px;
+    right: 12px;
+  }
 
   /* ---- MOBILE HOTBAR: flush bottom-center, COMPACT on phones ----
    * Landscape = flush bottom edge. 7 slots × 52px + gaps ≈ 416px — on a

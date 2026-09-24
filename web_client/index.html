@@ -45,6 +45,12 @@
             <span class="bar-label" id="bar-stamina-label">120/120</span>
           </div>
         </div>
+        <!-- Status effect rail: OUTSIDE the HP panel — its own floating
+             element anchored right under the panel, no box background.
+             Oldest effect RIGHTMOST; a new icon appears to its LEFT and
+             the rest slide back right when one expires (demo toggles in
+             the 🧪 preview panel; real effects arrive via snapshots). -->
+        <div id="hud-status"></div>
         <!-- Bottom-center: hotbar (always visible) -->
         <div id="hud-hotbar"></div>
         <!-- Bottom-right: chat box + commands -->
