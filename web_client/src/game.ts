@@ -79,35 +79,35 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // Frame counts match the sheet rows the packer wrote (padded to >=3).
   bunny: {
     texKey: "mob-bunny", size: 26, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer: {
     texKey: "mob-deer", size: 46, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer2: {
     texKey: "mob-deer2", size: 50, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bird: {
     texKey: "mob-bird", size: 22, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 2], up: [1, 2], down: [1, 2] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   boar: {
     texKey: "mob-boar", size: 42, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bear: {
     texKey: "mob-bear", size: 58, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   fox: {
     texKey: "mob-fox", size: 38, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 6], up: [0, 6], down: [0, 6] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   wolf: {
     texKey: "mob-wolf", size: 44, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 6], up: [1, 6], down: [1, 6] }, idle: { right: [2, 2], up: [2, 2], down: [2, 2] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
 };
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -3028,6 +3028,25 @@ export class WorldScene extends Phaser.Scene {
     if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "#ff5bd6", "#5a1048");
   }
 
+  /** Status-effect DOT splat: BLUE (the icon's colour, user 25/09) so
+   *  poison/infection ticks read differently from bites (purple-red) and
+   *  player-dealt damage (red). */
+  spawnStatusSplat(userId: number, damage: number): void {
+    let tx: number | null = null;
+    let ty: number | null = null;
+    if (userId === this.welcome?.self.id) {
+      tx = Math.floor(this.selfServerPos.x);
+      ty = Math.floor(this.selfServerPos.y);
+    } else {
+      const rp = this.players.get(userId);
+      if (rp) {
+        tx = Math.floor(rp.container.x / this.tilePx);
+        ty = Math.floor(rp.container.y / this.tilePx);
+      }
+    }
+    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "#4db8ff", "#0f2a4a");
+  }
+
   private spawnSplatAt(tx: number, ty: number, text: string, fill: string, stroke: string): void {
     const txt = this.add.text(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx - 4, text, {
       fontSize: "12px",
@@ -3118,7 +3137,39 @@ export class WorldScene extends Phaser.Scene {
       this.resourceLayer = this.add.layer().setDepth(-5);
     }
     this.resourceTiles.clear();
-    for (const [x, y, gid] of tiles) {
+    // Meteor ore (gid -77): ONE big sprite covering the whole 2x2 node —
+    // four identical per-tile sprites read as four separate rocks (user:
+    // "spawn ra 1 cục thôi"). Tiles still map to the image in resourceTiles
+    // so felled-node grouping stays uniform with other multi-tile nodes.
+    const met = tiles.filter((t) => t[2] === -77);
+    const rest = tiles.filter((t) => t[2] !== -77);
+    if (met.length > 0 && this.textures.exists("node-meteor_ore")) {
+      const pending = new Set(met.map(([x, y]) => `${x},${y}`));
+      const anchors = met
+        .map(([x, y]) => [x, y] as [number, number])
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1])
+        .filter(([x, y]) => !pending.has(`${x - 1},${y}`) && !pending.has(`${x},${y - 1}`));
+      for (const [ax, ay] of anchors) {
+        const img = this.add.image(
+          (ax + 1) * this.tilePx, (ay + 1) * this.tilePx, "node-meteor_ore",
+        );
+        img.setDisplaySize(this.tilePx * 2, this.tilePx * 2);
+        this.resourceLayer.add(img);
+        for (const [tx, ty] of [[ax, ay], [ax + 1, ay], [ax, ay + 1], [ax + 1, ay + 1]] as Array<[number, number]>) {
+          const k = `${tx},${ty}`;
+          if (pending.delete(k)) this.resourceTiles.set(k, img);
+        }
+      }
+      for (const k of pending) {
+        const [tx, ty] = k.split(",").map(Number);
+        const img = this.add.image(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx + this.tilePx / 2, "node-meteor_ore");
+        this.resourceLayer.add(img);
+        this.resourceTiles.set(k, img);
+      }
+    } else {
+      for (const t of met) rest.push(t as [number, number, number]);
+    }
+    for (const [x, y, gid] of rest) {
       const texKey = this.textureForGid(gid);
       if (!texKey) continue;
       const img = this.add.image(x * this.tilePx + this.tilePx / 2, y * this.tilePx + this.tilePx / 2, texKey);
