@@ -7,7 +7,7 @@
 //
 // Gated by `?preview=1` (or #preview) so production clients never build it.
 
-type Cmd = "clock" | "meteor" | "weather" | "zombies" | "animals" | "map" | "state";
+type Cmd = "clock" | "meteor" | "weather" | "zombies" | "animals" | "map" | "state" | "bite";
 
 interface PanelHooks {
   send: (frame: Record<string, unknown>) => void;
@@ -133,6 +133,7 @@ export class PreviewPanel {
     section("👾 Quái (spawn theo map)");
     row();
     btn("Spawn 10", () => this.send("zombies", "pack"), "#1a3a1a");
+    btn("Dịch sát mặt", () => this.send("bite"), "#5a3a1a");
     btn("Dọn sạch", () => this.send("zombies", "none"), "#5a1a1a");
 
     // ---- wildlife (daytime animals) ----
@@ -298,11 +299,14 @@ export class PreviewPanel {
 
   onState(s: Record<string, unknown>): void {
     if (!this.status) return;
+    const status = Array.isArray(s.status) ? (s.status as Array<[string, number, number]>) : [];
+    const kinds = Array.isArray(s.mob_kinds) ? (s.mob_kinds as string[]).join(",") : "";
     this.status.textContent =
       `map: ${s.map}\n` +
       `giờ: ${s.clock} (${s.night ? "ĐÊM" : "day"})\n` +
       `thời tiết: ${s.weather}\n` +
-      `quái: ${s.zombies} | ☄️ active: ${s.meteors}\n` +
+      `quái: ${s.zombies} [${kinds}] | ☄️: ${s.meteors}\n` +
+      `status: ${status.length ? JSON.stringify(status) : "KHÔNG"}\n` +
       `đã rơi đêm nay: ${s.felled_tonight} | auto: ${s.auto_meteor ? "ON" : "OFF"}`;
   }
 }

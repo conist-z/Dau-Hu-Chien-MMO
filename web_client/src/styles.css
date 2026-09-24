@@ -1150,9 +1150,10 @@ body.mobile-ui #mc-actions.mc-hidden {
 }
 /* Once fully closed the hole is gone — drop the mask cost entirely. */
 #travel-root.tv-covered .tv-iris { -webkit-mask-image: none; mask-image: none; }
-/* Loading art (undungeon GIF → webm) + % + bar + label, surfaced over the
-   black with a ~0.2s fade ("đen rồi dần rõ dần lên"). Hidden while the
-   iris is animating (tv-opening) so the reveal is pure world, no clutter. */
+/* Loading art (undungeon GIF → webm) + % + bar + label. Surfaced as soon
+   as the iris STARTS closing (0.2s fade-in) — it must be SEEN, not flashed
+   after the black. tv-opening hides it instantly so the reveal is pure
+   world. */
 #travel-root .tv-center {
   position: absolute;
   inset: 0;
@@ -1162,12 +1163,12 @@ body.mobile-ui #mc-actions.mc-hidden {
   justify-content: center;
   gap: 14px;
   opacity: 0;
-  transition: opacity 0.2s ease 0.15s;
+  transition: opacity 0.2s ease 0.1s;
   pointer-events: none;
   font-family: "Segoe UI", system-ui, sans-serif;
 }
-#travel-root.tv-covered .tv-center { opacity: 1; }
-#travel-root.tv-opening .tv-center { opacity: 0; transition: opacity 0.15s ease; }
+#travel-root.tv-active .tv-center { opacity: 1; }
+#travel-root.tv-opening .tv-center { opacity: 0 !important; transition: none; }
 #travel-root .tv-video {
   width: min(52vmin, 420px);
   aspect-ratio: 1 / 1;
