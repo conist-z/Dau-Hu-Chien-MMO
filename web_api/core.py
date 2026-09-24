@@ -1015,9 +1015,15 @@ class WebHub:
         parts = text[1:].split()
         cmd, args = parts[0].lower(), parts[1:]
         if cmd == "help":
+            # BUILD STAMP: proves WHICH code the running process loaded (the
+            # panel keeps the old process until Restart; file uploads alone
+            # change nothing at runtime). Bump when shipping server fixes.
+            import datetime as _dt
+            stamp = "meteor-fix-4d16382"
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /meteor [rand] (admin — gọi thiên thạch)",
+                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /meteor [rand] (admin — gọi thiên thạch)"
+                + f" — build {stamp} ({_dt.datetime.now().strftime('%H:%M')})",
             })
         elif cmd == "cuahang":
             # FAST TRAVEL: teleport straight to the arrival spot in front of
