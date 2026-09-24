@@ -1104,6 +1104,8 @@ class WebHub:
             # /meteor       -> hits the caller's tile exactly
             # /meteor rand  -> hits a tile 6-12 tiles away from the caller
             await self._cmd_meteor(sess, near_random=(args and args[0].lower() == "rand"))
+        elif cmd == "meteorinfo":
+            await self._cmd_meteorinfo(sess)
         else:
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Lệnh không rõ: /{cmd}",
@@ -1459,6 +1461,52 @@ class WebHub:
                 + (" (random)" if near_random else "")
             ),
         })
+
+    async def _cmd_meteorinfo(self, sess: WebSession) -> None:
+        """Admin /meteorinfo: dump the meteor + crater-ore state of this
+        scenario (scheduler counters, active events, ore nodes on the grid,
+        the resource-delta latch). Diagnostic for the "no ore" reports."""
+        if not await self._is_web_admin(sess):
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Chỉ admin mới được xem meteorinfo.",
+            })
+            return
+        rt = self.manager.get_runtime(sess.channel_id)
+        if rt is None:
+            return
+        import time as _time
+
+        st = getattr(rt, "meteors", None)
+        grid = getattr(rt, "resources", None)
+        ore = []
+        if grid is not None:
+            for anchor, node in grid.nodes.items():
+                if node.kind == "meteor_ore":
+                    ore.append(anchor)
+        active = []
+        if st is not None:
+            active = [
+                f"({m.tx},{m.ty}){" IMPACTED" if m.impact_sent else ""}" +
+                f" eta={max(0, round(m.impact_at - _time.monotonic(), 1))}s"
+                for m in st.active
+            ]
+        from game.meteors import _night_id
+        from rendering.daynight import ingame_seconds
+
+        clock = ingame_seconds()
+        msg = (
+            f"☄️ meteorinfo: build=meteor-fix-4d16382\n"
+            f"giờ game={clock // 3600:02d}:{clock % 3600 // 60:02d} "
+            f"night_id={_night_id(clock)}\n"
+            f"felled_tonight={getattr(st, 'felled_tonight', '?')} "
+            f"last_night={getattr(st, 'last_night', '?')} "
+            f"active={len(getattr(st, 'active', []))}\n"
+            f"events: {'; '.join(active) if active else '(không có)'}\n"
+            f"ore nodes trên map: {len(ore)} {ore[:8]}\n"
+            f"res_resent={getattr(rt, '_res_resent', '?')} "
+            f"sig_sent={getattr(rt, '_res_sig_sent', '?')}"
+        )
+        await self.send_to_client_conn(sess, {"type": MSG_PUSH, "message": msg})
 
     async def _is_web_admin(self, sess: WebSession) -> bool:
         """Admin = Administrator / Manage Server on the channel's guild,
