@@ -669,6 +669,17 @@ export class WorldScene extends Phaser.Scene {
         this.mapBake.destroy(); // drop the object too — no invisible leftovers
         this.mapBake = null;
       }
+      // STALE MOB PURGE (user 25/09): the zombie layer survives the map
+      // switch, so the previous map's mobs (in OLD-map tile coords) stayed
+      // painted over the new map — and because mob ids are PER-RUNTIME
+      // ("wzombie-1" exists in every world), an arriving snapshot with the
+      // new map's own "wzombie-1" ADOPTED the stale container and teleported
+      // it — reading as "cave mobs spawning outside the bigmap". Destroy
+      // every mob sprite + clear the map so the new world starts clean.
+      if (this.zombieLayer) {
+        this.zombieLayer.removeAll(true);
+      }
+      this.zombies.clear();
       if (this.mapAbove) {
         this.mapAbove.destroy(); // old roof/canopy must not cover the new map
         this.mapAbove = null;

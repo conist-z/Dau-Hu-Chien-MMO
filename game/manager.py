@@ -36,6 +36,7 @@ ZOMBIE_FAST_CHASE_CHANCE = 0.25
 from game.collision import Collision
 from game.inventory import Inventory
 from game.map_loader import MapData, load_map
+from game.map_catalog import list_map_ids
 from game.npc import NpcMap, load_npcs
 from game.rules import (
     REGEN_DELAY_S,
@@ -719,6 +720,14 @@ class GameManager:
             for rt in list(self.runtimes.values()) + list(self.side_runtimes.values()):
                 sessions = getattr(rt, "web_sessions", None)
                 if not sessions:
+                    # ABANDONED WORLD CLEANUP (user 25/09): a side runtime the
+                    # last player just left keeps its mob pack frozen forever
+                    # (no session = no tick = no despawn). Clear it so a later
+                    # return starts fresh — and so a stale pack can never leak
+                    # across a map switch.
+                    pack = getattr(rt.state, "web_zombies", None)
+                    if isinstance(pack, dict) and pack:
+                        pack.clear()
                     continue
                 try:
                     await self._web_tick_runtime(rt, sessions, now)
@@ -1123,6 +1132,13 @@ class GameManager:
                     )
                 if zres.changed:
                     zombie_touched = True
+                # DEATH SCHEDULER (web path): the Discord tick runs through
+                # _apply_zombie_effects (~line 2762) which schedules the 5s
+                # respawn per dead player — the web tick bypassed it, so a
+                # player killed by the pack stayed at 0/100 forever (the
+                # client-side respawn timer had no server state behind it).
+                for _uid in zres.died_player_ids:
+                    self._schedule_respawn(rt, _uid)
                 # Bite damage persists like any other HP change.
                 if zres.damaged_player_ids and self.db is not None:
                     for uid in zres.damaged_player_ids:
@@ -1170,11 +1186,27 @@ class GameManager:
                             return (tx, ty)
                     return (None, None)
 
-                _met_tick(
-                    rt.meteors, _time, _met_clock,
+                _landed = _met_tick(
+                    rt.meteors, _loop_time(), _met_clock,
                     _met_active(_met_map, _met_clock),
                     _pick_meteor_target, rng=self.zombie_rng,
                 )
+                # Crater ore: EVERY landed meteor mints a meteor-ore node at
+                # the impact tile (user rule: quặng hiếm xuất hiện ngay tại
+                # điểm rơi). Skipped tiles (occupied/map edge) just get no
+                # ore — never crash the tick.
+                for _m in _landed:
+                    from game.meteors import spawn_crater_ore as _spawn_ore
+
+                    try:
+                        if _spawn_ore(rt.resources, _m.tx, _m.ty):
+                            print(f"[METEOR] crater ore spawned at ({_m.tx},{_m.ty})")
+                    except Exception as _e:  # noqa: BLE001 — one bad tile can't kill the tick
+                        print(f"[METEOR] crater ore skipped at ({_m.tx},{_m.ty}): {_e}")
+                if _landed:
+                    # The new node changes the world signature -> push the
+                    # resource tile delta on the next snapshot.
+                    rt._res_resent = True
         if moved_any:
             self._touch_web_activity(rt)
         if zombie_touched:
@@ -1247,6 +1279,7 @@ class GameManager:
     def create_runtime(self, channel_id: int, map_id: str, message_id: Optional[int] = None,
                         hub_message_id: Optional[int] = None) -> ScenarioRuntime:
         map_data = load_map(map_id, self.assets_dir)
+        # (set below — the runtime object must exist first)
         state = GameState(scenario_id=channel_id, map_id=map_id)
         resources = ResourceGrid.from_map(map_data)
         terrain = TerrainGrid.from_map(map_data)
@@ -1263,6 +1296,9 @@ class GameManager:
             terrain=terrain,
         )
         self.runtimes[channel_id] = rt
+        # MAIN-WORLD marker: side runtimes compare against this to decide
+        # whether ``player.world_map`` should be NULL (main) or the map id.
+        rt.main_map_id = map_id
         # New scenario should open on LIVE weather, not the sun_clouds
         # placeholder: seed from the freshest known snapshot. Keeps the web
         # overlay + hub icon truthful from the first snapshot.
@@ -2099,6 +2135,9 @@ class GameManager:
             resources=resources,
             terrain=terrain,
         )
+        # Side world: main_map_id points at the CHANNEL's main map so
+        # world_map persistence writes NULL for main-world bodies.
+        rt.main_map_id = getattr(main_rt, "main_map_id", None) or main_rt.map_data.map_id
         # Side worlds share the main world's placed-block grid reference? No:
         # each runtime needs its OWN empty overlay (blocks are per-world), but
         # the constructor wired a throwaway one above. Rebuild cleanly.
@@ -2175,6 +2214,10 @@ class GameManager:
                     dst_rt, candidates, occupied, portal_cfg=self.portals,
                 )
                 move_player_between_runtimes(cur_rt, dst_rt, user_id, tile)
+        # WORLD PERSISTENCE: flush the new world_map immediately.
+        moved_player = dst_rt.state.players.get(user_id)
+        if moved_player is not None:
+            self._schedule_save(dst_rt, moved_player)
         # MAP-SWITCH GRACE arm (same as _teleport_through_link): without the
         # epoch bump the OLD map's in-flight reports converge the fresh
         # arrival body elsewhere — the "dịch chuyển lúc được lúc không" bug
@@ -2231,6 +2274,9 @@ class GameManager:
             )
             async with cur_rt.lock:
                 move_player_between_runtimes(cur_rt, lobby_rt, user_id, tile)
+            lobby_player = lobby_rt.state.players.get(user_id)
+            if lobby_player is not None:
+                self._schedule_save(lobby_rt, lobby_player)
             self._arm_map_switch_grace(lobby_rt, user_id)
             self.touch_session(channel_id, user_id)
             self._notify_travel_change(cur_rt, user_id)
@@ -2252,6 +2298,9 @@ class GameManager:
             tile = tuple(main_rt.map_data.spawn)
         async with cur_rt.lock:
             move_player_between_runtimes(cur_rt, main_rt, user_id, tile)
+        out_player = main_rt.state.players.get(user_id)
+        if out_player is not None:
+            self._schedule_save(main_rt, out_player)
         self._arm_map_switch_grace(main_rt, user_id)
         player = main_rt.state.get_player(user_id)
         if player is not None:
@@ -2704,6 +2753,12 @@ class GameManager:
             dst_rt, candidates, occupied, portal_cfg=self.portals,
         )
         move_player_between_runtimes(src_rt, dst_rt, user_id, tile)
+        # WORLD PERSISTENCE: flush the new world_map to disk immediately so a
+        # crash/restart right after a portal step still respawns the player
+        # in the DESTINATION world.
+        moved_player = dst_rt.state.players.get(user_id)
+        if moved_player is not None:
+            self._schedule_save(dst_rt, moved_player)
         # MAP-SWITCH GRACE arm: ignore position reports until the client's
         # first post-welcome input frame re-arms the converge (see
         # WebSession.map_switch_at + web_input).
@@ -2728,6 +2783,88 @@ class GameManager:
         # Both worlds changed: refresh the mover now and everyone else shortly.
         self._notify_travel_change(src_rt, user_id)
         self._notify_travel_change(dst_rt, user_id)
+
+    async def ensure_player_world(self, channel_id: int, user_id: int):
+        """WORLD PERSISTENCE (user 25/09): put the player's body back in the
+        world they logged out of.
+
+        The DB saves ``world_map`` on every player write; a rejoin (web
+        reload, token resume, bot restart) must respawn the body THERE, not
+        at the main map's spawn. Creates the side runtime lazily when the
+        saved world has no live runtime (bot restart wiped them). Returns
+        the runtime the player now stands in, or None when no move was
+        needed (body already in a live runtime / no saved world).
+        """
+        main_rt = self.runtimes.get(channel_id)
+        if main_rt is None:
+            return None
+        current = self.runtime_of(channel_id, user_id)
+        if current is not None and user_id in current.state.players:
+            # Body exists somewhere. Keep it there (even the main world) —
+            # its world_map attribute is already correct.
+            if current.map_data.map_id == current.state.players[user_id].world_map \
+                    or current.state.players[user_id].world_map is None:
+                # Sync the attribute when the body sits in the main world.
+                if current.map_data.map_id == (
+                    getattr(current, "main_map_id", None) or current.map_data.map_id
+                ):
+                    current.state.players[user_id].world_map = None
+                return None
+        saved_map = None
+        if self.db is not None:
+            try:
+                rows = await self.db.fetchall(
+                    "SELECT world_map, x, y FROM players "
+                    "WHERE channel_id=? AND user_id=?",
+                    (channel_id, user_id),
+                )
+                if rows:
+                    saved_map = rows[0][0]
+            except Exception:  # noqa: BLE001 — missing table/col must not block join
+                saved_map = None
+        if not saved_map or saved_map == (
+            getattr(main_rt, "main_map_id", None) or main_rt.map_data.map_id
+        ):
+            return None
+        # Sanity: the saved map must still exist on disk.
+        try:
+            known = set(list_map_ids(self.assets_dir))
+        except Exception:  # noqa: BLE001
+            known = set()
+        if saved_map not in known:
+            return None
+        dst_rt = self.get_or_create_side_runtime(main_rt, saved_map)
+        player = current.state.players.get(user_id) if current is not None else None
+        if player is not None:
+            # Body in another live runtime: migrate it wholesale.
+            from game.travel import move_player_between_runtimes
+            saved = dst_rt.map_data.spawn
+            if player.world_map == saved_map:
+                saved = (player.x, player.y)
+            move_player_between_runtimes(current, dst_rt, user_id, saved)
+        else:
+            # No live body (fresh join after restart): create it directly in
+            # the saved world at the saved tile.
+            rows = None
+            if self.db is not None:
+                try:
+                    rows = await self.db.fetchall(
+                        "SELECT x, y FROM players WHERE channel_id=? AND user_id=?",
+                        (channel_id, user_id),
+                    )
+                except Exception:  # noqa: BLE001
+                    rows = None
+            x, y = (rows[0][0], rows[0][1]) if rows else dst_rt.map_data.spawn
+            if not dst_rt.map_data.is_walkable(int(x), int(y)):
+                x, y = dst_rt.map_data.spawn
+            dst_rt.state.add_player(user_id, "", int(x), int(y))
+            p = dst_rt.state.get_player(user_id)
+            if p is not None:
+                p.world_map = saved_map
+                p.sync_float_from_int()
+        # Register the web session on the runtime that now holds the body.
+        self.register_web_session(channel_id, user_id, "")
+        return dst_rt
 
     def _arm_map_switch_grace(self, rt: ScenarioRuntime, user_id: int) -> None:
         """Arm the map-switch grace + bump the map epoch for a chat-command
