@@ -16,6 +16,7 @@ import { previewPanel } from "./preview_panel";
 // the PC-only lag. Same visual as before.
 import { dayNightPhaser } from "./daynight_phaser";
 import { perf } from "./perf";
+import { TravelVeil } from "./transitions";
 
 const assetTextures = new Map<string, string>(); // image file name -> texture key
 let welcome: WelcomePayload | null = null; // kept for held-item lookups
@@ -28,6 +29,9 @@ let pendingRejoinChannel: string | null = null;
 const hud = new Hud();
 // Expose for the 🧪 preview panel's local demos (status effects rail).
 (window as unknown as { hud?: Hud }).hud = hud;
+// TRAVEL VEIL: iris transition + video loading driven by REAL load progress.
+// Topmost DOM layer (z-index 6000) — hides the slow server handoff.
+const travelVeil = new TravelVeil();
 const scene = new WorldScene();
 
 // =====================================================================
@@ -374,6 +378,9 @@ function beginLoadTracking(frame: WelcomePayload): void {
     (k) => !assetTextures.has(k) && !(game.textures && game.textures.exists(k)),
   );
   hud.showLoading(keys.length);
+  // TRAVEL VEIL: feed the REAL blocking-asset count — the iris/loading %
+  // is a pure function of this (prefab-transition: progress = truth).
+  travelVeil.noteLoadTotal(keys.length);
   if (keys.length === 0) return;
   // Safety net: a lost asset frame must never trap the player behind the
   // overlay — force-hide after 12 s no matter what.
@@ -384,6 +391,7 @@ function beginLoadTracking(frame: WelcomePayload): void {
 function onBlockingAssetDone(key: string): void {
   if (!assetTextures.has(key)) return; // not a blocking asset we track
   hud.tickLoading();
+  travelVeil.noteAssetDone(); // real % += 1/N (drives the iris + video)
 }
 
 // DEBUG HANDLE: expose the Phaser game for console probes (preview_evaluate).
@@ -408,12 +416,13 @@ const net = new Net({
     everWelcomed = true;
     // PORTAL SWITCH FEEDBACK: a welcome for a DIFFERENT map means the map
     // body is about to bake on the main thread (heavy even when all assets
-    // are cached). Show the loading sheet NOW so the frozen frames read as
-    // a load, not a hang; the first snapshot of the new map hides it.
+    // are cached). Cover with the iris veil NOW so the frozen frames read
+    // as a transition, not a hang; the first snapshot of the new map opens
+    // the iris back up (travel_begin normally closed it earlier).
     const mapChanged = welcome !== null && frame.map.id !== welcome.map.id;
     if (mapChanged) {
-      hud.showMapLoading(frame.map.name || frame.map.id);
-      // Safety net: never trap the player behind the sheet.
+      travelVeil.onMapSwitch(frame.map.name || frame.map.id);
+      // Safety net: never trap the player behind the veil.
       if (mapLoadSafetyTimer !== null) window.clearTimeout(mapLoadSafetyTimer);
       mapLoadSafetyTimer = window.setTimeout(() => hud.hideMapLoading(), 10000);
     }
@@ -452,6 +461,9 @@ const net = new Net({
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
+    // Status effects rail (server truth): [effect_id, secs_left, level].
+    const se = (frame.self as { status_effects?: Array<[string, number, number?]> }).status_effects;
+    hud.setStatusEffects(Array.isArray(se) ? se : []);
     hud.setClock(0);
     // Welcome carries no weather of its own — prime the overlay with the
     // map default; the first snapshot sets the real key ~50ms later.
@@ -463,8 +475,9 @@ const net = new Net({
   onSnapshot: (frame) => {
     lastSnapshotAt = performance.now();
     // First snapshot of the NEW map after a portal switch: world rebuilt +
-    // streaming — drop the "Đang vào…" sheet (guarded by claim count).
+    // streaming — open the iris (real progress = 100%) + drop any sheet.
     if (mapLoadSafetyTimer !== null && welcome && frame.map_id === welcome.map.id) {
+      travelVeil.noteReady();
       hud.hideMapLoading();
       window.clearTimeout(mapLoadSafetyTimer);
       mapLoadSafetyTimer = null;
@@ -501,6 +514,9 @@ const net = new Net({
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
     hud.setPurse(frame.self.coins, frame.self.crystals ?? 0);
+    // Status effects rail (server truth): [effect_id, secs_left, level].
+    const se = (frame.self as { status_effects?: Array<[string, number, number?]> }).status_effects;
+    hud.setStatusEffects(Array.isArray(se) ? se : []);
     // Hub pages: live bars + player list (20 Hz mirror, re-render only the
     // currently-open page).
     hud.setHubSelf({
@@ -516,8 +532,10 @@ const net = new Net({
       !!(frame.self as { near_station?: boolean }).near_station,
     );
     // Death veil: server ignores our inputs while dead; the scene freezes
-    // prediction and this overlay explains why (5s respawn).
+    // prediction and this overlay explains why (5s respawn). The iris veil
+    // shares the moment (close on death, open on respawn).
     hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
+    travelVeil.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
     if (frame.self.dead) input.clearKeys();
     // Bag rides along only when it changed (inv_version ack) — otherwise
     // this is a no-op and the grid never re-renders mid-drag.
@@ -688,6 +706,13 @@ const net = new Net({
     // chat with "Cầm: … / Tay không …" (bug report 11/09). The hand itself
     // is the feedback: server echo converges the self tool icon here.
     scene.setSelfHeld(itemId ?? null);
+  },
+  onTravelBegin: (mapName, kind) => {
+    // PRE-TRAVEL SIGNAL: close the iris BEFORE the server handoff so the
+    // slow welcome/bake lands behind a black screen ("chống dịch chuyển
+    // chậm"). kind "death" reserved for future server-driven cases.
+    void kind;
+    travelVeil.beginTravel(mapName || "khu vực mới");
   },
   onActionResult: (frame) => {
     if (frame.needed != null) scene.noteChopNeeded(frame.tx, frame.ty, frame.needed);

@@ -9,6 +9,9 @@ export const MSG_INV_OP = "inventory_op";
 export const MSG_CRAFT_OP = "craft_op";
 export const MSG_CHAT_CMD = "chat_cmd";
 export const MSG_PING = "ping";
+/** Server -> client pre-travel signal: iris veil should CLOSE now, before
+ *  the heavy welcome/handoff lands ("che cơ chế dịch chuyển chậm"). */
+export const MSG_TRAVEL_BEGIN = "travel_begin";
 
 export interface WelcomePayload {
   type: "welcome";
@@ -296,5 +299,6 @@ export type ServerFrame =
   | { type: "swing"; uid: number; tx: number | null; ty: number | null }
   | { type: "action_result"; name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }
   | { type: "held"; slot: number; item_id: string | null }
+  | { type: "travel_begin"; map_name?: string; kind?: string }
   | { type: "error"; code: string; message?: string }
   | { type: "pong"; t: unknown };

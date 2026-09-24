@@ -1124,6 +1124,85 @@ body.mobile-ui #mc-actions.mc-hidden {
 }
 .scenario-btn:hover { border-color: var(--accent); }
 
+/* ==================== TRAVEL TRANSITION VEIL (iris) ====================
+   Ported prefab-transition (kCircleCrop) logic: ONE black layer whose
+   circular hole radius is a pure function of REAL load progress (--tv-r).
+   TOPMOST by design (z-index 6000): above #mobile-controls (1), #overlay
+   HUD (2), danger-alert (2500), preview panel (3000) — it must hide the
+   slow server handoff no matter what. While covered it swallows every
+   pointer event so no input reaches a half-switched world. body-level
+   element: independent of Phaser's stacking contexts inside #game-root. */
+#travel-root {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  pointer-events: auto; /* cover = no input passes through */
+}
+#travel-root.hidden { display: none; }
+/* The iris layer: black with a circular hole of radius var(--tv-r).
+   radial-gradient = kCircleCrop parity, transparent hole → opaque black. */
+#travel-root .tv-iris {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent var(--tv-r, 80vmax), #000 calc(var(--tv-r, 80vmax) + 1px));
+  mask-image: radial-gradient(circle at 50% 50%, transparent var(--tv-r, 80vmax), #000 calc(var(--tv-r, 80vmax) + 1px));
+}
+/* Once fully closed the hole is gone — drop the mask cost entirely. */
+#travel-root.tv-covered .tv-iris { -webkit-mask-image: none; mask-image: none; }
+/* Loading art (undungeon GIF → webm) + % + bar + label, surfaced over the
+   black with a ~0.2s fade ("đen rồi dần rõ dần lên"). Hidden while the
+   iris is animating (tv-opening) so the reveal is pure world, no clutter. */
+#travel-root .tv-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  opacity: 0;
+  transition: opacity 0.2s ease 0.15s;
+  pointer-events: none;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+#travel-root.tv-covered .tv-center { opacity: 1; }
+#travel-root.tv-opening .tv-center { opacity: 0; transition: opacity 0.15s ease; }
+#travel-root .tv-video {
+  width: min(52vmin, 420px);
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  image-rendering: pixelated;
+  border-radius: 12px;
+  box-shadow: 0 0 0 3px #10151c, 0 0 0 6px #2b3a4d, 0 10px 40px rgba(0,0,0,0.8);
+}
+#travel-root .tv-video.tv-novideo { opacity: 0; width: 0; height: 0; }
+#travel-root .tv-pct {
+  color: #ffd75e;
+  font: 700 22px/1 monospace;
+  text-shadow: 0 2px 0 #000, 0 0 12px rgba(255, 215, 94, 0.4);
+}
+#travel-root .tv-bar {
+  width: min(46vmin, 340px);
+  height: 10px;
+  background: #10151c;
+  border: 2px solid #2b3a4d;
+  border-radius: 6px;
+  overflow: hidden;
+}
+#travel-root .tv-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #3fae5a, #ffd75e);
+  transition: width 0.15s linear;
+}
+#travel-root .tv-label {
+  color: #e8eaf0;
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 0 2px 0 #000;
+}
+
 /* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */
 #death-overlay {
   position: absolute; inset: 0;

@@ -27,6 +27,9 @@ export interface NetHandlers {
   onLoginFail: (error: string) => void;
   onHeld: (slot: number, itemId: string | null) => void;
   onActionResult: (frame: { name: string; ok: boolean; reason: string; tx: number | null; ty: number | null; kind: string; target_id?: string | null; target_defeated?: boolean; needed: number | null; drops: [string, number][]; damage?: number; critical?: boolean; missed?: boolean }) => void;
+  /** PRE-TRAVEL SIGNAL (travel_begin): the iris veil must close NOW, before
+   *  the map-switch welcome lands. Optional — old servers never send it. */
+  onTravelBegin?: (mapName: string, kind: string) => void;
   onConnectionChange: (connected: boolean) => void;
   /** Optional RTT report (EMA ms) after each pong — feeds reconciliation. */
   onRtt?: (rttMs: number) => void;
@@ -531,6 +534,13 @@ export class Net {
         break;
       case "held":
         this.handlers.onHeld(frame.slot as number, (frame.item_id as string | null) ?? null);
+        break;
+      case "travel_begin":
+        // Optional hook — veil only reacts when the client wired it.
+        this.handlers.onTravelBegin?.(
+          (frame.map_name as string | undefined) ?? "",
+          (frame.kind as string | undefined) ?? "travel",
+        );
         break;
     }
   }
