@@ -506,6 +506,13 @@ class WebHub:
         if rt is None:
             await self.send_to_client(conn.cid, {"type": MSG_ERROR, "code": "scenario_missing"})
             return
+        # WORLD PERSISTENCE (user 25/09): the player's saved body may live in
+        # a SIDE world (cave/forest/trade lobby). Rejoining must respawn them
+        # THERE — the old code always welcomed the main runtime, so entering
+        # the cave and relogging dumped the player back at the bigmap spawn.
+        moved_rt = await self.manager.ensure_player_world(channel_id, sess.user_id)
+        if moved_rt is not None:
+            rt = moved_rt
         welcome = build_welcome(rt, sess.user_id)
         await self.send_to_client(conn.cid, welcome)
         self.start_snapshots()
@@ -1017,7 +1024,9 @@ class WebHub:
             # the destination's gate ("đi bộ mệt vl"). Same plumbing as a
             # portal step — the web_map_change_hook path is NOT needed here
             # because _maybe_teleport_welcome below re-sends the world.
-            dest = (args[0] if args else "hang")
+            # join: the alias "ban do" is TWO words — args[0] alone would
+            # look up "ban" and answer Không biết map.
+            dest = (" ".join(args) if args else "hang")
             rt, message = await self.manager.web_travel_portal(
                 sess.channel_id, sess.user_id, dest,
             )
@@ -1433,11 +1442,14 @@ class WebHub:
             )
             m.tx = max(0, min(w - 1, m.tx))
             m.ty = max(0, min(h - 1, m.ty))
+        # summon() returns the EXISTING event when the caller spams the same
+        # spot while one is already incoming (dedupe by 2x2 ore footprint).
+        dup = getattr(m, "_deduped", False)
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH,
-            "kind": "danger",  # client renders the hazard banner, not a toast
-            "message": (
-                f"☄️ CẢNH BÁO: Thiên thạch sắp rơi ({m.tx},{m.ty}) sau 8 giây!"
+            "message": "☄️ Đã có thiên thạch đang rơi tại đây rồi!"
+            if dup else (
+                f"☄️ Thiên thạch sắp rơi ({m.tx},{m.ty}) sau 8 giây!"
                 + (" (random)" if near_random else "")
             ),
         })
@@ -1510,6 +1522,10 @@ class WebHub:
             base_dir = ASSETS_DIR.parent / "gui" / "icons"
         elif name.startswith("mobs/"):
             base_dir = ASSETS_DIR.parent / "mobs"
+        elif name.startswith("node/"):
+            # Bundled node sprites (meteor-ore crater rock, game/meteors.py)
+            # — served from assets/node the same way as mobs.
+            base_dir = ASSETS_DIR.parent / "node"
         elif name.startswith("players/"):
             # Paperdoll sheets (player/base + players/weapon/<tool>.png)
             # served from assets/players — same manifest-driven pipeline as

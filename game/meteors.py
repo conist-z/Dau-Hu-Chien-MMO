@@ -41,7 +41,12 @@ def _night_id(second_of_day: int) -> int:
     day-ish counter works — the value only needs to CHANGE at 06:00.
     """
     shifted = (second_of_day - 6 * 3600) % 86400  # 0 at 06:00
-    return int(shifted // 60)  # coarse bucket: changes shortly after 06:00
+    # One id per full 20:00->06:00 night window: dividing the shifted clock
+    # by the WHOLE night span. A 60s bucket here used to "reset the night"
+    # every minute — on the accelerated in-game clock (~48x real time) that
+    # meant the halving counter zeroed every ~1.25 real seconds and the
+    # scheduler carpeted the map with meteors all night long.
+    return int(shifted // (14 * 3600))
 
 
 @dataclass
@@ -175,6 +180,14 @@ def summon(state: MeteorState, now: float, tx: int, ty: int,
         dist = (rng or random).uniform(6.0, 12.0)
         tx = int(math.floor(tx + math.cos(ang) * dist))
         ty = int(math.floor(ty + math.sin(ang) * dist))
+    # Dedupe: repeated summons (Enter spam / double click) on a tile that
+    # ALREADY has an incoming meteor within its 2x2 ore footprint just
+    # return the existing event — no stacked duplicates on one spot. The
+    # _deduped flag lets callers tell the user "already incoming".
+    for existing in state.active:
+        if not existing.impact_sent and abs(existing.tx - tx) <= 1 and abs(existing.ty - ty) <= 1:
+            existing._deduped = True  # type: ignore[attr-defined]
+            return existing
     m = MeteorEvent(
         id=state.next_id, tx=tx, ty=ty,
         dir=dir or (rng or random).choice(["left", "right"]),
@@ -199,3 +212,35 @@ def shake_for_player(m: MeteorEvent, px: float, py: float) -> Tuple[float, float
         return (0.0, 0.0, 0.0)
     mag = IMPACT_MAX_SHAKE * (1.0 - dist / IMPACT_SHAKE_RADIUS)
     return (dx / dist, dy / dist, mag)
+
+
+def spawn_crater_ore(grid, tx: int, ty: int) -> bool:
+    """Mint one meteor-ore node at the crater (tx, ty) — called by the
+    manager the moment a meteor lands.
+
+    The node covers 2x2 tiles (top-left anchored at (tx, ty)) like a tree,
+    every tile carries METEOR_ORE_GID so both renderers draw the bundled
+    meteor-ore sprite, and the ResourceGrid machinery (chop progress,
+    persistence-free regrow, collision) treats it exactly like any other
+    node — no special cases anywhere else.
+
+    Returns True when a node was created; False when the spot is blocked
+    (another node / map edge) or the grid does not exist.
+    """
+    from game.resources import METEOR_ORE_GID, ResourceNode
+
+    if grid is None:
+        return False
+    tiles = [(tx, ty), (tx + 1, ty), (tx, ty + 1), (tx + 1, ty + 1)]
+    # Reject if ANY tile already belongs to another node — never overwrite
+    # a tree/rock/ore index entry (the _tile_index is keyed per tile).
+    for t in tiles:
+        if grid.node_at(*t) is not None:
+            return False
+    anchor = (tx, ty)
+    node = ResourceNode("meteor_ore", anchor, tiles)
+    grid.nodes[anchor] = node
+    for t in tiles:
+        grid._tile_index[t] = node
+        grid._tile_gids[t] = METEOR_ORE_GID
+    return True
