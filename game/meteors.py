@@ -72,8 +72,14 @@ class MeteorState:
 
 
 def is_meteor_map(map_id: str) -> bool:
-    """Only the bigmap overworld gets meteor showers."""
-    return map_id == "ekonia/overworld"
+    """Only the bigmap overworld gets meteor showers.
+
+    TWO ids map to the same overworld: "bigmap" (production assets/maps/
+    bigmap.json) and "ekonia/overworld" (preview harness). The gate used to
+    accept ONLY the preview id, so on production the scheduler tick NEVER ran
+    — summoned events sat in `active` forever (client looped the fall anim),
+    no impact was ever processed and no crater ore ever spawned."""
+    return map_id in ("bigmap", "ekonia/overworld")
 
 
 def meteor_chance(felled_tonight: int) -> float:
