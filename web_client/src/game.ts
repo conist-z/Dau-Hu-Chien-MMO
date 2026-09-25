@@ -31,6 +31,9 @@ interface MobSheetInfo {
   /** Minifolks wildlife: ONE facing per sheet — never pick up/down rows,
    * flipX only for leftward facing. */
   singleFacing?: boolean;
+  /** Displayed ART height (px): the verbatim pack cell is mostly
+   * transparent around the animal — the HP bar anchors to this, not `size`. */
+  artH?: number;
 }
 const MOB_SHEETS: Record<string, MobSheetInfo> = {
   zombie: {
@@ -84,35 +87,35 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // used to hover the HP bar just above the animal's back instead of an
   // empty transparent cell top (bear's cell is 2 tiles tall).
   bunny: {
-    texKey: "mob-bunny", size: 64, artH: 16, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bunny", size: 32, artH: 8, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer: {
-    texKey: "mob-deer", size: 80, artH: 35, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer", size: 48, artH: 21, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer2: {
-    texKey: "mob-deer2", size: 80, artH: 43, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer2", size: 64, artH: 34, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bird: {
-    texKey: "mob-bird", size: 48, artH: 21, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bird", size: 32, artH: 14, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   boar: {
-    texKey: "mob-boar", size: 96, artH: 30, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-boar", size: 64, artH: 20, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bear: {
-    texKey: "mob-bear", size: 128, artH: 44, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bear", size: 80, artH: 28, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   fox: {
-    texKey: "mob-fox", size: 80, artH: 28, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-fox", size: 48, artH: 16, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   wolf: {
-    texKey: "mob-wolf", size: 96, artH: 33, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-wolf", size: 64, artH: 22, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
 };
@@ -322,6 +325,11 @@ export class WorldScene extends Phaser.Scene {
   private seqReplayActive = false;
   /** Wall-clock time of the last update() frame — feeds pendingDt. */
   private lastFrameT = 0;
+  /** performance.now() of the last 180° input reversal (setLocalInput).
+   *  Feeds the reversal-SPAM guard: a second flip within 350 ms is joystick
+   *  spam — the latches and the reconcile rewind both stand down for it
+   *  (the "spam lên xuống khi chạy nhanh = dịch đi 1 khoảng" bug). */
+  private lastReversalAt = -1e9;
 
   /** CLIENT-AUTHORITATIVE position reporting: the web client is the truth
    *  source for its own body position (the user asked for this model — no
@@ -888,28 +896,47 @@ export class WorldScene extends Phaser.Scene {
     // The body may still be ≤1 tile above us (the stale half-step we just
     // dropped) — applying the NEW axis latches us onto the live server
     // command immediately (see applySnapshot), instead of teleporting back.
-    if (
-      this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx)
-    ) {
-      const d = Math.hypot(this.selfX - this.selfServerPos.x, 0);
-      const behind = (this.selfServerPos.x - this.selfX) * dx > 0.02;
-      if (d > 0.02 && d <= 1.2 && behind) {
-        // FULL latch, same rationale as the vertical branch above.
-        this.selfX = this.selfServerPos.x;
-      }
-    }
-    if (
-      this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy)
-    ) {
-      const d = Math.hypot(0, this.selfY - this.selfServerPos.y);
-      const behind = (this.selfServerPos.y - this.selfY) * dy > 0.02;
-      if (d > 0.02 && d <= 1.2 && behind) {
-        // FULL latch (was 0.6 partial — the leftover residue kept replaying
-        // and snapped later, the "spam lên xuống xong quay ra chỗ khác là
-        // bị dịch chuyển" report): we KNOW the residual is the stale
-        // half-step (behind + ≤1.2 tiles), so drop it completely and stand
-        // exactly on the server's live command position.
-        this.selfY = this.selfServerPos.y;
+    //
+    // REVERSAL-SPAM GUARD (user 26/09: joystick spam 2 hướng đối nghịch khi
+    // CHẠY NHANH — player cảm giác bị DỊCH đi 1 khoảng thay vì chỉ quay
+    // mặt): mỗi cú lật khiến server body TỤT LẠI phía cũ (latency × run
+    // speed ≈ 1+ ô) = vị trí server nằm TRƯỚC mặt theo trục MỚI. Với một
+    // cú lật đơn lẻ, latch về server pos là đúng (vị trí thật). Nhưng spam
+    // liên tục thì MỖI cú lật đều latch/replay cứng một cú về phía sau rồi
+    // chạy tới lại — cộng dồn thành cảm giác dịch chuyển. Chỉ áp dụng latch
+    // cho cú lật ĐẦU TIÊN sau ≥350 ms ổn định; các cú lật dồn dập sau đó
+    // được bỏ qua (prediction tự nhiên mượt vì nó chính là truth source,
+    // server sẽ converge tới report của nó). applySnapshot cũng đứng ngoài
+    // rewind trong cửa sổ 400 ms sau cú lật (xem applySnapshot).
+    const nowRev = performance.now();
+    const flipX =
+      this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx);
+    const flipY =
+      this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy);
+    if (flipX || flipY) {
+      const spam = nowRev - this.lastReversalAt < 350;
+      this.lastReversalAt = nowRev;
+      if (!spam) {
+        if (flipX) {
+          const d = Math.hypot(this.selfX - this.selfServerPos.x, 0);
+          const behind = (this.selfServerPos.x - this.selfX) * dx > 0.02;
+          if (d > 0.02 && d <= 1.2 && behind) {
+            // FULL latch, same rationale as the vertical branch below.
+            this.selfX = this.selfServerPos.x;
+          }
+        }
+        if (flipY) {
+          const d = Math.hypot(0, this.selfY - this.selfServerPos.y);
+          const behind = (this.selfServerPos.y - this.selfY) * dy > 0.02;
+          if (d > 0.02 && d <= 1.2 && behind) {
+            // FULL latch (was 0.6 partial — the leftover residue kept replaying
+            // and snapped later, the "spam lên xuống xong quay ra chỗ khác là
+            // bị dịch chuyển" report): we KNOW the residual is the stale
+            // half-step (behind + ≤1.2 tiles), so drop it completely and stand
+            // exactly on the server's live command position.
+            this.selfY = this.selfServerPos.y;
+          }
+        }
       }
     }
     // Keep the 8-way facing label in sync with the raw input (used by
@@ -3622,7 +3649,7 @@ export class WorldScene extends Phaser.Scene {
         // HP bar hovers just above the VISIBLE art (artH), not the raw cell
         // top — the bear's verbatim cell is 2 tiles tall, mostly transparent;
         // a cell-anchored bar floated a tile above its back.
-        const barH = (sheet as { artH?: number }).artH ?? sheet.size;
+        const barH = sheet.artH ?? sheet.size;
         const barY = bodyY + sheet.size / 2 - barH - 5;
         const hpBg = this.add.rectangle(0, barY, 28, 4, 0x000000, 0.6);
         const hpFill = this.add.rectangle(0, barY, 28, 4, 0x6fe26f).setOrigin(0.5);
@@ -4076,7 +4103,17 @@ export class WorldScene extends Phaser.Scene {
           // the report channel genuinely broke).
           const v = this.inputVec;
           const moving = v.dx !== 0 || v.dy !== 0;
-          const srvAhead = moving
+          // REVERSAL-WINDOW stand-down: right after a 180° flip the server
+          // body structurally sits AHEAD along the NEW axis (it is where we
+          // just ran FROM) — the srvAhead test misreads that echo as an
+          // error and rewinds, so every joystick flip-spam tick yanked the
+          // avatar back a tile ("spam lên xuống khi chạy = dịch 1 khoảng",
+          // only at run speed: the echo is latency × speed). For ~400 ms
+          // after a flip the residual is EXPECTED echo: pred stays put and
+          // the server converges forward on its own. Real errors (jump > 4,
+          // portal/death) still hard-snap below.
+          const inReversalWindow = performance.now() - this.lastReversalAt < 400;
+          const srvAhead = moving && !inReversalWindow
             ? ((this.selfServerPos.x - this.selfX) * v.dx +
                (this.selfServerPos.y - this.selfY) * v.dy) /
               (Math.hypot(v.dx, v.dy) || 1)
