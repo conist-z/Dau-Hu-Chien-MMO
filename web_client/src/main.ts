@@ -477,10 +477,17 @@ const net = new Net({
     lastSnapshotAt = performance.now();
     // First snapshot of the NEW map after a portal switch: world rebuilt +
     // streaming — open the iris (real progress = 100%) + drop any sheet.
-    // noteReady is UNGATED: the veil ignores it unless it is loading and
-    // latches idempotently (a gated miss = bar never finishes + the exit
-    // waits for the 8 s force timer — visibly stuck at ~95%).
-    travelVeil.noteReady();
+    // GATE = MAP CHANGE vs the PREVIOUS SNAPSHOT (not vs welcome.map.id:
+    // welcome's id can be a different format, and an ungated latch would
+    // fire on the OLD map's still-arriving snapshots — the veil then exits
+    // after one frame / before the new world even exists, user: "giật giật,
+    // lúc che lúc không"). Idle-guard: a stray snapshot can only latch the
+    // veil while it is actually loading; the veil itself ignores noteReady
+    // otherwise.
+    if (lastSnapshotMapId !== null && frame.map_id !== lastSnapshotMapId) {
+      travelVeil.noteReady();
+    }
+    lastSnapshotMapId = frame.map_id;
     if (mapLoadSafetyTimer !== null && welcome && frame.map_id === welcome.map.id) {
       hud.hideMapLoading();
       window.clearTimeout(mapLoadSafetyTimer);
@@ -1541,6 +1548,9 @@ document.addEventListener("visibilitychange", () => {
 
 /** ms since the last snapshot arrived (Infinity before the first one). */
 let lastSnapshotAt = 0;
+/** Map id of the previous snapshot — the travel veil's readiness gate is a
+ *  CHANGE between consecutive snapshots (see onSnapshot). null = none yet. */
+let lastSnapshotMapId: string | null = null;
 /** Dedupe keys for the incoming-damage hitsplat feed. */
 const seenDamageKeys = new Set<string>();
 function lastSnapshotAgeMs(): number {

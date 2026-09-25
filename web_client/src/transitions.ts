@@ -119,7 +119,10 @@ export class TravelVeil {
    *  the iris-close — dropping it here would stall the exit until the 8 s
    *  force timer (user: "vài giây mới thật sự open"). */
   noteReady(): void {
-    if (this.deathMode) return;
+    // Only meaningful while a travel is actually in progress — a stray
+    // snapshot of the CURRENT map (arriving before travel_begin) must not
+    // pre-latch truth=1 or the veil would exit after one frame.
+    if (this.deathMode || this.state === "idle") return;
     this.truth = 1;
   }
 
