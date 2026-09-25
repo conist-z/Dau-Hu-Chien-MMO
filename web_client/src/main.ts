@@ -377,15 +377,21 @@ function beginLoadTracking(frame: WelcomePayload): void {
   const keys = [...mapKeys, ...blockKeys].filter(
     (k) => !assetTextures.has(k) && !(game.textures && game.textures.exists(k)),
   );
-  hud.showLoading(keys.length);
-  // TRAVEL VEIL: feed the REAL blocking-asset count — the iris/loading %
-  // is a pure function of this (prefab-transition: progress = truth).
-  travelVeil.noteLoadTotal(keys.length);
-  if (keys.length === 0) return;
-  // Safety net: a lost asset frame must never trap the player behind the
-  // overlay — force-hide after 12 s no matter what.
-  if (loadSafetyTimer !== null) window.clearTimeout(loadSafetyTimer);
-  loadSafetyTimer = window.setTimeout(() => hud.hideLoading(), 12000);
+  // TRAVEL VEIL OWNS the loading visuals during a travel: the old HUD
+  // overlay ("0 / N" counter) must NOT stack on top of the video — it is
+  // a second, competing loading screen (user: "bị dính cái loading cũ").
+  // Only when the veil is idle (fresh session boot, no travel) does the
+  // legacy overlay still show.
+  if (!travelVeil.busy) {
+    hud.showLoading(keys.length);
+    if (keys.length > 0) {
+      // Safety net: a lost asset frame must never trap the player behind
+      // the overlay — force-hide after 12 s no matter what.
+      if (loadSafetyTimer !== null) window.clearTimeout(loadSafetyTimer);
+      loadSafetyTimer = window.setTimeout(() => hud.hideLoading(), 12000);
+    }
+  }
+  travelVeil.noteLoadTotal(keys.length); // no-op, kept for call sites
 }
 
 function onBlockingAssetDone(key: string): void {

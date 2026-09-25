@@ -345,6 +345,11 @@ class GameManager:
         # source map while snapshots carried destination coordinates — the
         # permanent d=1.68..33 desync ("tele qua cửa nhà cũ").
         self.web_map_change_hook = None
+        # WEB TRAVEL-BEGIN HOOK (iris transition, user 25/09): set by WebHub.
+        # Called with (dst_map_name, user_id) BEFORE a portal/trade move —
+        # the client closes its veil while the destination world is being
+        # prepared, so the heavy handoff never shows on screen.
+        self.web_travel_begin_hook = None
         # Serializes real Discord message edits per (channel, message) and spaces
         # them so we never hit the edit rate-limit bucket (429). See editor.py.
         self.edit_gate = ChannelEditGate()
@@ -1220,10 +1225,17 @@ class GameManager:
     @staticmethod
     def _drain_stamina(player, amount: float) -> None:
         """Spend stamina (fractional, never below 0); stamps the exertion
-        time so regen waits STAMINA_REGEN_DELAY_S after the last effort."""
+        time so regen waits STAMINA_REGEN_DELAY_S after the last effort.
+        Infection (thối rửa) multiplies the cost x1.5 (user 25/09)."""
         import time as _time
         if player is None:
             return
+        try:
+            from game.status_effects import stamina_cost_mult
+
+            amount *= stamina_cost_mult(player)
+        except Exception:  # noqa: BLE001 — status gate must never break a drain
+            pass
         player.stamina = max(0.0, player.stamina - amount)
         player.last_exert_at = _time.monotonic()
 
@@ -1261,10 +1273,39 @@ class GameManager:
             now - player.last_damaged_at < REGEN_DELAY_S
         ):
             return  # recently hurt: no healing yet
+        # STATUS EFFECTS (user 25/09): infection/poison block natural regen
+        # outright (potions/food go through the eat path with their own gates).
+        from game.status_effects import blocks_natural_regen, tick_effects
         from game.rules import apply_regen
 
+        if blocks_natural_regen(player):
+            # Still tick DOT while regen is blocked (the poison kills, not
+            # the regen) — then bail before any heal.
+            self._status_dot_beat(rt, player)
+            return
         if apply_regen(player, 1.0 / max(1.0, WEB_TICK_HZ)):
             self._schedule_save(rt, player)
+        self._status_dot_beat(rt, player)
+
+    def _status_dot_beat(self, rt: ScenarioRuntime, player) -> None:
+        """Fire due status-effect DOT ticks + handle death (20 Hz beat)."""
+        from game.status_effects import tick_effects
+
+        landed = tick_effects(player)
+        if not landed:
+            return
+        feed = getattr(rt.state, "recent_damage", None)
+        if feed is not None:
+            import time as _t
+
+            for _eid, _lvl, dmg in landed:
+                feed.append((_t.time(), player.user_id, dmg, "status"))
+            del feed[:-40]
+        if player.hp <= 0:
+            player.visible = False
+            player.dead_until = time.time() + 5.0
+            player.death_reason = "chết vì hiệu ứng độc/thối rửa"
+            self._schedule_respawn(rt, player.user_id)
 
     def _touch_web_activity(self, rt: ScenarioRuntime) -> None:
         """Hook for the web layer (set by bot.py): notify snapshot consumers
@@ -1714,11 +1755,34 @@ class GameManager:
         inv = rt.inventories.get(player.user_id)
         if item is None or inv is None or inv.count(item_id) <= 0:
             return
+        # STATUS EFFECTS gate (user 25/09): infection (thối rửa) blocks FOOD
+        # heals outright (potions bypass); poison L2 cuts every heal 20%.
+        # The item is still CONSUMED — the heal amount is just scaled.
+        try:
+            from game.status_effects import heal_multiplier
+
+            is_potion = "heal_hp" in item.effect and item.id.startswith("potion")
+            mult = heal_multiplier(player, is_potion)
+        except Exception:  # noqa: BLE001
+            mult = 1.0
+        if mult <= 0.0:
+            # Rejected heal (food while infected): consume nothing, tell the
+            # player via the eat hook — the chew finishes, no heal lands.
+            self._notify_inventory_change(rt.channel_id, player.user_id)
+            return
+        pre_hp = player.hp
+        pre_mp = player.mana
         # Apply the heal (same rules as apply_effect but through inv.use so
         # the stack decrements atomically).
         ok, _reason = inv.use(item_id, player)
         if not ok:
             return
+        if mult < 1.0:
+            # Roll back the cut portion (poison L2: keep only 80% of the heal).
+            gained_hp = player.hp - pre_hp
+            gained_mp = player.mana - pre_mp
+            player.hp = min(player.max_hp, pre_hp + int(gained_hp * mult))
+            player.mana = min(player.max_mana, pre_mp + int(gained_mp * mult))
         if self.db is not None:
             from persistence.repositories import save_player, save_inventory_order
 
@@ -2193,6 +2257,8 @@ class GameManager:
             dst_rt = main_rt
         else:
             dst_rt = self.get_or_create_side_runtime(main_rt, target_id)
+        # IRIS TRANSITION: veil closes before the move + welcome.
+        await self._web_travel_begin(dst_rt, user_id)
         # Arrival = the portal link's target tiles on the DESTINATION map
         # (the same spot a normal gate teleport would land on). Any link
         # whose DESTINATION is target_id carries the canonical gate-front
@@ -2264,6 +2330,9 @@ class GameManager:
                         cur_rt.map_data.map_id, player.x, player.y,
                         player.direction,
                     )
+            # IRIS TRANSITION (monster-trade zone): veil closes first.
+            lobby_rt = self.get_or_create_side_runtime(main_rt, TRADE_LOBBY_MAP)
+            await self._web_travel_begin(lobby_rt, user_id)
             lobby_rt = self.get_or_create_side_runtime(main_rt, TRADE_LOBBY_MAP)
             occupied = {(p.x, p.y) for p in lobby_rt.state.get_visible_players()}
             tile = free_arrival_tile(
@@ -2296,6 +2365,8 @@ class GameManager:
             tile, direction = (saved[1], saved[2]), saved[3]
         if not main_rt.collision.is_walkable(*tile):
             tile = tuple(main_rt.map_data.spawn)
+        # IRIS TRANSITION: veil closes before leaving the trade zone.
+        await self._web_travel_begin(main_rt, user_id)
         async with cur_rt.lock:
             move_player_between_runtimes(cur_rt, main_rt, user_id, tile)
         out_player = main_rt.state.players.get(user_id)
@@ -2722,6 +2793,24 @@ class GameManager:
 
         return rt, result
 
+    async def _web_travel_begin(self, dst_rt, user_id: int) -> None:
+        """AWAIT the web travel-begin hook: the client MUST have its iris
+        veil closed (frame flushed to the socket) BEFORE the teleport
+        welcome is built — otherwise the new map's first frames land on the
+        client BEFORE the veil and the game flashes on screen uncovered
+        (user: "iris chưa kịp load nữa là đã thấy màn game 1 nháy"). A
+        fire-and-forget task raced the welcome and lost. Any failure must
+        never break the actual travel."""
+        hook = getattr(self, "web_travel_begin_hook", None)
+        if hook is None:
+            return
+        try:
+            await hook(
+                dst_rt.map_data.display_name or dst_rt.map_data.map_id, user_id
+            )
+        except Exception:  # noqa: BLE001 — veil must never break travel
+            log.exception("[WEB] travel-begin hook failed uid=%s", user_id)
+
     async def _teleport_through_link(
         self, channel_id: int, src_rt: ScenarioRuntime, user_id: int, link
     ) -> None:
@@ -2743,6 +2832,9 @@ class GameManager:
             dst_rt = self.get_or_create_side_runtime(
                 main_rt or src_rt, link.map_id
             )
+        # IRIS TRANSITION: veil closes NOW, before the move + welcome (the
+        # client gets a head start while the destination world loads).
+        await self._web_travel_begin(dst_rt, user_id)
         # Choose the arrival tile now that the destination map is loaded.
         candidates = resolve_link_target(dst_rt, link, self.portals)
         occupied = {

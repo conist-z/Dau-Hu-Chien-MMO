@@ -104,9 +104,24 @@ export class TravelVeil {
   }
 
   /** welcome for a DIFFERENT map without a travel_begin (reconnect etc.):
-   *  same iris-close — the bake is already imminent. */
+   *  the bake is IMMINENT — there is no 450 ms to animate a close; go
+   *  FULLY BLACK this very frame (user: "iris chưa kịp load nữa là đã
+   *  thấy màn game 1 nháy"). The close-side animation only runs on the
+   *  early travel_begin path where the world still exists for a moment. */
   onMapSwitch(_mapName: string): void {
-    if (this.state === "idle") this.startTravel();
+    if (this.state !== "idle") return;
+    this.clearForceTimer();
+    this.cancelDrivers();
+    this.deathMode = false;
+    this.truth = 0;
+    this.iris.style.transition = "none"; // no animation — snap
+    this.applyIris(0); // 0 = fully black hole = fully covered
+    this.showVideo(false);
+    this.setLabel("");
+    this.root.classList.remove("hidden");
+    this.state = "loading"; // skip "closing" — already black
+    this.enterLoading();
+    this.armForceTimer();
   }
 
   /** Blocking-asset counters are no longer rendered (the bar is native
