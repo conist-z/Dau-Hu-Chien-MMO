@@ -396,6 +396,7 @@ function onBlockingAssetDone(key: string): void {
 
 // DEBUG HANDLE: expose the Phaser game for console probes (preview_evaluate).
 (window as unknown as { game: Phaser.Game }).game = game;
+(window as unknown as { __travelVeil?: TravelVeil }).__travelVeil = travelVeil;
 // (window.net is attached right after `const net = new Net(...)` below.)
 
 const net = new Net({

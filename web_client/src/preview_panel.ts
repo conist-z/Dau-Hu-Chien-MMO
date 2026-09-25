@@ -259,22 +259,34 @@ export class PreviewPanel {
   }
 
   /** DEMO: fake 3 effects with LIVE countdowns and the new LEVEL tier
-   *  (infection L2 gold, poison L3 red, poison2 L4 purple — tier 3/4 pulse
-   *  a faint aura). poison2 expires first and the rest slide RIGHT. */
+   *  (infection L2 gold, poison L3 red, poison2 L4 purple). poison2 expires
+   *  first and the rest slide RIGHT. While the demo runs it OWNS the rail
+   *  (hud.setDemoStatusEffects) so the 20 Hz server snapshots can't wipe it
+   *  between ticks — the old "ON feels dead / counter frozen" bug. */
   private startStatusDemo(): void {
     this.stopStatusDemo();
-    const hud = (window as unknown as { hud?: { setStatusEffects(e: Array<[string, number, number?]>): void } }).hud;
+    const hud = (window as unknown as {
+      hud?: {
+        setDemoStatusEffects(e: Array<[string, number, number?]> | null): void;
+      };
+    }).hud;
     if (!hud) return;
     let effects: Array<[string, number, number?]> = [
       ["infection", 30, 2], ["poison", 20, 3], ["poison2", 10, 4],
     ];
     const tick = (): void => {
+      hud.setDemoStatusEffects(effects);
       effects = effects
         .map(([id, s, l]) => [id, s - 1, l] as [string, number, number?])
         .filter(([, s]) => s > 0);
-      hud.setStatusEffects(effects);
-      // All effects expired: stop the loop instead of spamming empty rails.
-      this.statusTimer = effects.length ? window.setTimeout(tick, 1000) : null;
+      // All effects expired: release the rail + stop instead of spamming an
+      // empty rail forever.
+      if (!effects.length) {
+        hud.setDemoStatusEffects(null);
+        this.statusTimer = null;
+        return;
+      }
+      this.statusTimer = window.setTimeout(tick, 1000);
     };
     tick();
   }
@@ -284,8 +296,11 @@ export class PreviewPanel {
       clearTimeout(this.statusTimer);
       this.statusTimer = null;
     }
-    (window as unknown as { hud?: { setStatusEffects(e: Array<[string, number, number?]>): void } })
-      .hud?.setStatusEffects([]);
+    (window as unknown as {
+      hud?: {
+        setDemoStatusEffects(e: Array<[string, number, number?]> | null): void;
+      };
+    }).hud?.setDemoStatusEffects(null);
   }
 
   /** push toasts land here too (the preview stack tags them "[preview]"). */

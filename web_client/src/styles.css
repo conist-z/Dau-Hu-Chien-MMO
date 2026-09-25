@@ -204,6 +204,33 @@ html, body {
 .status-icon.lvl-3 .lvl { color: #ff5a48; }
 .status-icon.lvl-4 .lvl { color: #c86bff; }
 
+/* Stamp-in entrance ("đóng mộc"): the icon first appears OVERSIZED and
+   translucent, then snaps down into place — like a seal being stamped.
+   Runs ONCE per new effect (ui.ts adds .stamp-in only for effect ids that
+   were not in the rail on the previous update). */
+@keyframes stamp-in {
+  0% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.status-icon.stamp-in {
+  animation: stamp-in 0.3s cubic-bezier(0.2, 0, 0.4, 1) 1 both;
+  /* Scale around the icon centre so it "lands" exactly on its slot. */
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+/* Once the animation finishes, drop the class so the element carries no
+   stale animation state (also frees the compositor layer). */
+.status-icon.stamp-in.is-done { animation: none; }
+
 /* Bottom-center: hotbar — always visible */
 #hud-hotbar {
   position: absolute;
@@ -1124,84 +1151,68 @@ body.mobile-ui #mc-actions.mc-hidden {
 }
 .scenario-btn:hover { border-color: var(--accent); }
 
-/* ==================== TRAVEL TRANSITION VEIL (iris) ====================
-   Ported prefab-transition (kCircleCrop) logic: ONE black layer whose
-   circular hole radius is a pure function of REAL load progress (--tv-r).
-   TOPMOST by design (z-index 6000): above #mobile-controls (1), #overlay
-   HUD (2), danger-alert (2500), preview panel (3000) — it must hide the
-   slow server handoff no matter what. While covered it swallows every
-   pointer event so no input reaches a half-switched world. body-level
-   element: independent of Phaser's stacking contexts inside #game-root. */
+/* ==================== TRAVEL TRANSITION VEIL ====================
+   THE VIDEO *IS* THE LOADING SCREEN: the undungeon webm is a full black
+   screen with its own pixel "LOADING..." bar — no extra HTML UI stacked
+   on top. Full-screen black layer (video letterboxed on black), topmost
+   (z-index 6000): above #mobile-controls (1), #overlay HUD (2), danger
+   alert (2500), preview panel (3000). While covered it swallows every
+   pointer event so no input reaches a half-switched world. Enter a zone
+   = INSTANT black; exit = the video's bar reverses back to empty, then
+   the veil hides. body-level element: independent of Phaser's stacking
+   contexts inside #game-root. */
 #travel-root {
   position: fixed;
   inset: 0;
   z-index: 6000;
+  background: #000; /* the video's own background — seamless letterbox */
   pointer-events: auto; /* cover = no input passes through */
 }
 #travel-root.hidden { display: none; }
-/* The iris layer: black with a circular hole of radius var(--tv-r).
-   radial-gradient = kCircleCrop parity, transparent hole → opaque black. */
-#travel-root .tv-iris {
-  position: absolute;
-  inset: 0;
-  background: #000;
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent var(--tv-r, 80vmax), #000 calc(var(--tv-r, 80vmax) + 1px));
-  mask-image: radial-gradient(circle at 50% 50%, transparent var(--tv-r, 80vmax), #000 calc(var(--tv-r, 80vmax) + 1px));
-}
-/* Once fully closed the hole is gone — drop the mask cost entirely. */
-#travel-root.tv-covered .tv-iris { -webkit-mask-image: none; mask-image: none; }
-/* Loading art (undungeon GIF → webm) + % + bar + label. Surfaced as soon
-   as the iris STARTS closing (0.2s fade-in) — it must be SEEN, not flashed
-   after the black. tv-opening hides it instantly so the reveal is pure
-   world. */
-#travel-root .tv-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  opacity: 0;
-  transition: opacity 0.2s ease 0.1s;
-  pointer-events: none;
-  font-family: "Segoe UI", system-ui, sans-serif;
-}
-#travel-root.tv-active .tv-center { opacity: 1; }
-#travel-root.tv-opening .tv-center { opacity: 0 !important; transition: none; }
+/* The loading video: fills the screen (cover) — its content IS black +
+   the pixel bar, so cover/crop is safe and looks native at any aspect. */
 #travel-root .tv-video {
-  width: min(52vmin, 420px);
-  aspect-ratio: 1 / 1;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   image-rendering: pixelated;
-  border-radius: 12px;
-  box-shadow: 0 0 0 3px #10151c, 0 0 0 6px #2b3a4d, 0 10px 40px rgba(0,0,0,0.8);
 }
-#travel-root .tv-video.tv-novideo { opacity: 0; width: 0; height: 0; }
-#travel-root .tv-pct {
-  color: #ffd75e;
-  font: 700 22px/1 monospace;
-  text-shadow: 0 2px 0 #000, 0 0 12px rgba(255, 215, 94, 0.4);
-}
-#travel-root .tv-bar {
-  width: min(46vmin, 340px);
-  height: 10px;
-  background: #10151c;
-  border: 2px solid #2b3a4d;
-  border-radius: 6px;
-  overflow: hidden;
-}
-#travel-root .tv-bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #3fae5a, #ffd75e);
-  transition: width 0.15s linear;
-}
+/* Context label — death text ONLY (travel shows no HTML label: the video
+   already contains the "LOADING..." pixel bar). */
 #travel-root .tv-label {
-  color: #e8eaf0;
-  font-size: 14px;
-  font-weight: 600;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  color: #9be26a;
+  font: 600 15px "Segoe UI", system-ui, sans-serif;
   text-shadow: 0 2px 0 #000;
+  pointer-events: none;
+}
+/* BLACK IRIS layer: the element itself IS the circular hole (transparent,
+   border-radius 50%, JS-driven width/height = 2×radius); the huge-spread
+   box-shadow fills everything OUTSIDE the circle with solid black. During
+   "closing" the hole shrinks to 0 (screen fully black); during "opening"
+   it grows back out, exposing the game — the exact inverse of the close.
+   Painted UNDER the video so the loading screen fades into pure black on
+   exit. box-shadow trick: cheap, GPU-friendly, crisp at any radius. */
+#travel-root .tv-iris {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow:
+    0 0 0 200vmax #000, /* solid black everywhere outside the hole */
+    0 0 36px 12px #000; /* feathered edge just outside the hole */
+  pointer-events: none;
 }
 
 /* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */

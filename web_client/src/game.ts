@@ -77,41 +77,42 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // ---- daytime wildlife (Minifolks Forest Animals, scripts/pack_animal_sheets.py)
   // 4-row layout (atk/walk/idle/dead) with ONE facing: up/down reuse the
   // right row; LEFT mirrors right (zombieFlipX already handles W/NW/SW).
-  // Frames are VERBATIM 32px pack cells (art sits at its native fill, feet
-  // on the tile bottom) — `size` is the DISPLAYED CELL, chosen so
-  // (size/32) × camera-zoom(2) stays INTEGER (same crispness rule as the
-  // zombie 1.5×2=3x): art px map 1:1 to screen px, outline never blurs.
-  // size must be a multiple of 16.
+  // Frames are VERBATIM 32px pack cells — art fills only its natural share
+  // of the cell (bunny 8px … deer2 17px of 32), feet on the tile bottom.
+  // `size` = displayed CELL (multiple of 16 so size/32 × camera-zoom 2 stays
+  // integer); `artH` = displayed ART height = native_art_px × size/32 —
+  // used to hover the HP bar just above the animal's back instead of an
+  // empty transparent cell top (bear's cell is 2 tiles tall).
   bunny: {
-    texKey: "mob-bunny", size: 80, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bunny", size: 64, artH: 16, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer: {
-    texKey: "mob-deer", size: 80, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer", size: 80, artH: 35, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer2: {
-    texKey: "mob-deer2", size: 80, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer2", size: 80, artH: 43, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bird: {
-    texKey: "mob-bird", size: 64, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bird", size: 48, artH: 21, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   boar: {
-    texKey: "mob-boar", size: 96, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-boar", size: 96, artH: 30, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bear: {
-    texKey: "mob-bear", size: 128, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bear", size: 128, artH: 44, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   fox: {
-    texKey: "mob-fox", size: 80, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-fox", size: 80, artH: 28, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   wolf: {
-    texKey: "mob-wolf", size: 96, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-wolf", size: 96, artH: 33, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
 };
@@ -3618,7 +3619,11 @@ export class WorldScene extends Phaser.Scene {
         // No emoji label under mobs (user request): the sprite + hp bar are
         // enough; the container still needs a placeholder for typing.
         const label = this.add.text(0, 24, "", {});
-        const barY = bodyY - sheet.size / 2 - 4;
+        // HP bar hovers just above the VISIBLE art (artH), not the raw cell
+        // top — the bear's verbatim cell is 2 tiles tall, mostly transparent;
+        // a cell-anchored bar floated a tile above its back.
+        const barH = (sheet as { artH?: number }).artH ?? sheet.size;
+        const barY = bodyY + sheet.size / 2 - barH - 5;
         const hpBg = this.add.rectangle(0, barY, 28, 4, 0x000000, 0.6);
         const hpFill = this.add.rectangle(0, barY, 28, 4, 0x6fe26f).setOrigin(0.5);
         container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);

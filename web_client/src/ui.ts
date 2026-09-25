@@ -2203,18 +2203,45 @@ export class Hud {
     }
   }
 
+  /** Ids present in the rail after the last render — used to
+   *  detect NEWLY-APPEARING effects so the "stamp-in" entrance animation only
+   *  plays once per effect (a mere duration refresh must not re-animate). */
+  private statusRailPrev = new Set<string>();
+
+  /** Demo override (preview panel 🧪): while non-null, SERVER snapshot frames
+   *  are ignored and this array is shown instead. Without this the 20 Hz
+   *  snapshot (usually status_effects=[]) wipes the demo icons between the
+   *  demo's 1 s ticks — the classic "counter frozen / ON feels dead" bug. */
+  private demoStatus: Array<[string, number, number?]> | null = null;
+
+  /** Preview-panel demo hook. Pass an array to take over the rail (server
+   *  frames are dropped until you pass null to release it back). */
+  setDemoStatusEffects(effects: Array<[string, number, number?]> | null): void {
+    this.demoStatus = effects;
+    this.renderStatusRail(effects ?? []);
+  }
+
   /** Status-effect rail: [effect_id, seconds_left, level?], newest-LAST.
    *  Rerenders the whole rail each call — icons are cheap <img> swaps
    *  (browser caches the PNGs), so sliding right/left when one expires is
    *  automatic. level 2..4 draws a bare pixel digit on the icon's TOP-RIGHT
-   *  corner (gold/red/purple) with a faint aura from tier 3 up. */
+   *  corner (gold/red/purple). A freshly-appearing effect plays the one-shot
+   *  "stamp-in" entrance (starts oversized+translucent, snaps into place). */
   setStatusEffects(effects: Array<[string, number, number?]>): void {
+    if (this.demoStatus) return; // demo owns the rail right now
+    this.renderStatusRail(effects);
+  }
+
+  private renderStatusRail(effects: Array<[string, number, number?]>): void {
     const rail = document.getElementById("hud-status");
     if (!rail) return;
     rail.textContent = "";
+    const now = new Set<string>();
     for (const [effectId, secs, lvl] of effects) {
+      now.add(effectId);
       const d = document.createElement("div");
       d.className = "status-icon";
+      if (!this.statusRailPrev.has(effectId)) d.classList.add("stamp-in");
       if (lvl !== undefined && lvl >= 2) d.classList.add(`lvl-${Math.min(4, lvl)}`);
       const img = document.createElement("img");
       img.src = `ui/hud/status/${effectId}.png`;
@@ -2230,8 +2257,11 @@ export class Hud {
       s.className = "secs";
       s.textContent = String(Math.max(0, Math.floor(secs)));
       d.appendChild(s);
+      d.addEventListener("animationend", () => d.classList.remove("stamp-in"),
+        { once: true });
       rail.appendChild(d);
     }
+    this.statusRailPrev = now;
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,
