@@ -9,6 +9,7 @@ import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appea
 import { ICON_ITEM_IDS } from "./pixel_ui";
 import { perf } from "./perf";
 import { dayNightPhaser } from "./daynight_phaser";
+import { meteorFxBusyNear } from "./meteors";
 
 const PLAYER_SIZE = 22; // px in world space (tile = 32)
 
@@ -492,6 +493,9 @@ export class WorldScene extends Phaser.Scene {
    *  EXCEEDS this many tiles (echo lag converges to well under half of it). */
   private static readonly RECONCILE_DRIFT = 0.75;
   private resourceTiles = new Map<string, Phaser.GameObjects.Image>();
+  // Meteor-ore sprites held invisible until the impact FX near them has
+  // finished exploding (meteorFxBusyNear gate in updateResourceLayer).
+  private pendingOreReveal = new Map<string, Phaser.GameObjects.Image>();
   private resourceSig = "";
   // Tile count at the last base-map bake: the rebake trigger (chop/regrow
   // changes the count; an unchanged carried payload must not re-bake).
@@ -1914,6 +1918,17 @@ export class WorldScene extends Phaser.Scene {
     }
     this.updateHoverSquare();
     this.updateStationPrompt();
+    // Meteor-ore reveal beat: fade in any ore sprite once the impact FX
+    // near it has finished exploding (see updateResourceLayer gate).
+    if (this.pendingOreReveal.size > 0) {
+      for (const [key, img] of [...this.pendingOreReveal.entries()]) {
+        const [tx, ty] = key.split(",").map(Number);
+        if (!meteorFxBusyNear(tx, ty)) {
+          this.pendingOreReveal.delete(key);
+          this.tweens.add({ targets: img, alpha: 1, duration: 400, ease: "Quad.easeOut" });
+        }
+      }
+    }
     // NPC proximity is recomputed per frame (cheap — a handful of tokens).
     this.nearestNpc = this.findNearestNpc();
     // --- client-side prediction: move SELF instantly every frame ---
@@ -3153,7 +3168,17 @@ export class WorldScene extends Phaser.Scene {
         const img = this.add.image(
           (ax + 1) * this.tilePx, (ay + 1) * this.tilePx, "node-meteor_ore",
         );
-        img.setDisplaySize(this.tilePx * 2, this.tilePx * 2);
+        // 2x2 node drawn at 80% size (user: "giảm kích thước quặng đi 20%")
+        // — reads smaller than the full footprint without leaving gaps.
+        img.setDisplaySize(this.tilePx * 2 * 0.8, this.tilePx * 2 * 0.8);
+        // IMPACT GATE: the ore only becomes visible once the meteor FX has
+        // finished exploding near this spot. Without it the snapshot delivers
+        // the new node while the fall/boom is still playing and the rock
+        // "popped in" before the explosion (user bug report).
+        if (meteorFxBusyNear(ax, ay)) {
+          img.setAlpha(0);
+          this.pendingOreReveal.set(`${ax},${ay}`, img);
+        }
         this.resourceLayer.add(img);
         for (const [tx, ty] of [[ax, ay], [ax + 1, ay], [ax, ay + 1], [ax + 1, ay + 1]] as Array<[number, number]>) {
           const k = `${tx},${ty}`;

@@ -8,6 +8,11 @@ import Phaser from "phaser";
 const FLY_FRAMES = 15;
 const BOOM_FRAMES = 7;
 const FALL_MS = 900;          // flight duration once the warning expires
+const BOOM_MS = 1500;         // impact explosion lingers (user: the old 600ms
+                              // burst ended before the snapshot-delivered ore
+                              // even appeared — felt like the rock popped in
+                              // BEFORE the explosion)
+const METEOR_SPRITE_SCALE = 2; // fall sprite x2 (user request)
 const WARNING_MS = 8000;      // must match server WARNING_SECONDS
 const SHAKE_RADIUS_PX = 14 * 32;  // mirrors server IMPACT_SHAKE_RADIUS (tiles)
 const SHAKE_MAX_PX = 22.0;        // mirrors server IMPACT_MAX_SHAKE
@@ -141,7 +146,7 @@ export class MeteorFx {
         const fy = sy + (cy - sy) * ease;
 
         if (!m.sprite) {
-          m.sprite = scene.add.image(fx, fy, "met-fly0").setDepth(960);
+          m.sprite = scene.add.image(fx, fy, "met-fly0").setDepth(960).setScale(METEOR_SPRITE_SCALE);
         }
         m.sprite.setPosition(fx, fy);
         if (m.dir === "right") m.sprite.setFlipX(true);
@@ -167,7 +172,7 @@ export class MeteorFx {
         }
       }
       if (m.phase === "done") {
-        const p = (now - m.boomStart) / 600;
+        const p = (now - m.boomStart) / BOOM_MS;
         if (m.boom && p < 1) {
           const fi = Math.min(BOOM_FRAMES - 1, Math.floor(p * BOOM_FRAMES));
           m.boom.setTexture(`met-boom${fi}`);
@@ -202,6 +207,16 @@ export class MeteorFx {
     }
   }
 
+  /** Active events near (tx, ty) — public read-only view for the ore-reveal
+   * gate (game.ts must not reach into the private map). */
+  busyNear(tx: number, ty: number): ActiveMeteor[] {
+    const out: ActiveMeteor[] = [];
+    for (const m of this.active.values()) {
+      if (Math.abs(m.tx - tx) <= 2 && Math.abs(m.ty - ty) <= 2) out.push(m);
+    }
+    return out;
+  }
+
   private doImpact(m: ActiveMeteor, cx: number, cy: number): void {
     const scene = this.scene!;
     m.boom = scene.add.image(cx, cy, "met-boom0").setDepth(970);
@@ -223,3 +238,17 @@ export class MeteorFx {
 }
 
 export const meteorFx = new MeteorFx();
+
+/** True while a meteor fall/impact FX is still animating near (tx, ty).
+ *
+ * The resource layer consults this before revealing a freshly spawned
+ * meteor-ore sprite: the ore only fades in once the explosion has finished,
+ * so the rock never pops into existence before/during the impact
+ * ("xuất hiện trước cả khi vụ nổ xảy ra là sai"). Called from game.ts.
+ */
+export function meteorFxBusyNear(tx: number, ty: number): boolean {
+  for (const m of meteorFx.busyNear(tx, ty)) {
+    if (m.phase !== "warning") return true;
+  }
+  return false;
+}
