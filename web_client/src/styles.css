@@ -1204,22 +1204,39 @@ body.mobile-ui #mc-actions.mc-hidden {
    inverse of the close. Painted UNDER the video so the loading screen
    fades into pure black on exit. */
 /* Register --tv-r as a real interpolable length: without @property a CSS
-   custom property does NOT animate — the value flips 0↔max in one frame,
-   which was the actual root cause of the iris "nhấp nháy / lúc được lúc
-   không / skip thẳng sang loading" bugs. */
+   custom property does NOT animate — the value flips 0↔max in one frame. */
 @property --tv-r {
   syntax: "<length>";
   inherits: false;
   initial-value: 0px;
 }
+/* BLACK IRIS layer (HOLE, not disc): full-screen black with a circular
+   TRANSPARENT hole of radius --tv-r cut out of its center via mask —
+   clip-path circle() on a black element yields a black DISC (inverted!):
+   that inversion was the "đen ngược với trong suốt" bug, and r=0 being
+   fully transparent flashed the new map before the iris-open ran.
+   ENTER: hole starts at the inscribed radius (corners already black) and
+   shrinks to 0 — black floods from the edges onto the center.
+   EXIT: hole grows 0→past the corners — the new map is revealed from the
+   center out. The transition runs on the REGISTERED custom property
+   itself (--tv-r), which Chromium interpolates smoothly. */
 #travel-root .tv-iris {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   background: #000;
-  clip-path: circle(var(--tv-r) at 50% 50%);
   pointer-events: none;
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent calc(var(--tv-r) - 1px),
+    #000 var(--tv-r)
+  );
+  mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent calc(var(--tv-r) - 1px),
+    #000 var(--tv-r)
+  );
 }
 
 /* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */

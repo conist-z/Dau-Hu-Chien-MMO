@@ -54,7 +54,6 @@ export class TravelVeil {
   private forceTimer: number | null = null;
 
   private static readonly MIN_LOAD_MS = 2200; // veil must be SEEN
-  private static readonly IRIS_CLOSE_MS = 450;
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
@@ -177,25 +176,19 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.truth = 0;
-    // IRIS CLOSE FIRST, video only after: the server AWAITS travel_begin
-    // before teleporting, so this frame arrives while the main thread is
-    // still free — the ~450 ms close animation fits inside that window and
-    // the bake only starts when the welcome lands (veil already black).
-    // BLACK FLOODS FROM THE EDGES (user pick): the hole starts at the
-    // INSCRIBED circle radius — the four corners are ALREADY black on the
-    // first frame, and the black ring converges onto the center as the
-    // hole shrinks to 0. Starting from the full-screen radius would leave
-    // the whole game visible for a beat ("thấy game trước khi thấy iris").
+    // SOLID BLACK THIS FRAME (no reveal window): iris hole radius 0 = the
+    // mask hides nothing = fully black. Any animated start radius would
+    // leave the game visible for a beat ("thấy game trước khi thấy iris"
+    // — reported until it stuck). The circle experience lives on the OPEN
+    // phase only: the new map is revealed through a growing center hole
+    // after the loading completes.
     this.iris.style.transition = "none";
-    this.applyIris(this.inscribedR());
-    this.root.classList.remove("hidden");
+    this.applyIris(0);
     this.showVideo(false);
     this.setLabel("");
-    void this.iris.offsetWidth; // flush the start state before animating
-    this.state = "closing";
-    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
-      if (this.state === "closing") this.enterLoading();
-    });
+    void this.iris.offsetWidth; // flush the black state before the video
+    this.root.classList.remove("hidden");
+    this.enterLoading();
     this.armForceTimer();
   }
 
@@ -323,7 +316,7 @@ export class TravelVeil {
     this.applyIris(fromR);
     void this.iris.offsetWidth; // flush the start state
     this.iris.style.transition =
-      `clip-path ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
+      `--tv-r ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
     this.applyIris(toR);
     this.iris.addEventListener("transitionend", done);
     this.irisTimer = window.setTimeout(done, ms + 150);
@@ -346,13 +339,6 @@ export class TravelVeil {
   /** Radius that clears every corner of the viewport (+ a margin). */
   private maxR(): number {
     return Math.hypot(window.innerWidth, window.innerHeight) / 2 + 40;
-  }
-
-  /** Inscribed-circle radius: a hole this size touches the screen edges —
-   *  everything OUTSIDE it (the four corners) is already black. The close
-   *  starts here so the black floods in from the edges from frame one. */
-  private inscribedR(): number {
-    return Math.min(window.innerWidth, window.innerHeight) / 2;
   }
 
   private showVideo(on: boolean): void {
