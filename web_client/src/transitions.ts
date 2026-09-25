@@ -71,6 +71,7 @@ export class TravelVeil {
     // "LOADING...").
     this.root.innerHTML = `
       <div class="tv-iris"></div>
+      <div class="tv-fill"></div>
       <video class="tv-video" src="ui/travel_wipe.webm" muted playsinline
              preload="auto" disablepictureinpicture></video>
       <div class="tv-label"></div>
@@ -90,7 +91,8 @@ export class TravelVeil {
       });
       this.video = vid;
     }
-    this.applyIris(0);
+    this.syncIrisBase();
+    this.applyIris(TravelVeil.MIN_SCALE * this.baseR());
   }
 
   /** True while the veil is on screen. */
@@ -120,8 +122,11 @@ export class TravelVeil {
     this.deathMode = false;
     this.truth = 0;
     this.iris.style.transition = "none"; // no animation — snap
-    this.applyIris(0); // 0 = fully black hole = fully covered
-    this.showVideo(false);
+    this.syncIrisBase();
+    this.applyIris(TravelVeil.MIN_SCALE * this.baseR());
+    // The iris alone leaves a tiny center hole at the clamp — cover it with
+    // the OPAQUE loading video in the SAME frame (its background is black).
+    this.showVideo(true);
     this.setLabel("");
     this.root.classList.remove("hidden");
     this.state = "loading"; // skip "closing" — already black
@@ -179,11 +184,11 @@ export class TravelVeil {
     this.truth = 0;
     // IRIS CLOSE (the user's "hình tròn kéo về tâm siêu nhỏ"): the hole
     // starts at the INSCRIBED radius — the four corners are already black
-    // on the first frame — and shrinks to 0, visually pulling the old map
-    // into a pinpoint at the center while the black floods in from the
-    // edges. (The OLD map showing through the shrinking hole is the
-    // effect; what was never acceptable was the NEW map flashing before
-    // the loading — that is gone since travel_begin is awaited.)
+    // on the first frame — and shrinks toward the MIN_SCALE clamp while
+    // black floods in from the edges. At the clamp the opaque loading
+    // video (solid black with its own bar) replaces the iris in the SAME
+    // frame — the hole never rubber-bands below what the shadow covers.
+    this.syncIrisBase();
     this.iris.style.transition = "none";
     this.applyIris(this.inscribedR());
     this.root.classList.remove("hidden");
@@ -191,7 +196,8 @@ export class TravelVeil {
     this.setLabel("");
     void this.iris.offsetWidth; // flush the start state before animating
     this.state = "closing";
-    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
+    const endR = TravelVeil.MIN_SCALE * this.baseR();
+    this.animateIris(endR, TravelVeil.IRIS_CLOSE_MS, () => {
       if (this.state === "closing") this.enterLoading();
     });
     this.armForceTimer();
@@ -284,6 +290,11 @@ export class TravelVeil {
   private beginOpening(): void {
     this.state = "opening";
     this.showVideo(false);
+    // Start from the clamp (the video hid at exactly this hole size) and
+    // grow past the corners for a full reveal.
+    this.applyIris(TravelVeil.MIN_SCALE * this.baseR());
+    this.iris.style.transition = "none";
+    void this.iris.offsetWidth;
     this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
       if (this.state === "opening") this.finish();
     });
@@ -295,7 +306,7 @@ export class TravelVeil {
     this.truth = 0;
     this.setLabel("");
     this.iris.style.transition = "none";
-    this.applyIris(0);
+    this.applyIris(this.inscribedR()); // reset to the start-of-close size
     this.clearForceTimer();
     this.cancelDrivers();
   }
@@ -347,14 +358,29 @@ export class TravelVeil {
     this.heartbeat = window.setInterval(() => fn(performance.now()), 50);
   }
 
-  /** Hole radius in px → GPU scale factor on the 110vmax base circle.
-   *  transform-only animation: zero repaints (the mask/gradient versions
-   *  re-rasterized a full-screen gradient every frame and looked laggy). */
+  /** Minimum scale clamp: below ~6% the scaled box-shadow stops reaching
+   *  the screen corners ("không lấp đầy — như cọng thun"). The close
+   *  animates down to the clamp and then hands over to the OPAQUE loading
+   *  video in the same frame — no reveal gap, no rubber-band look. */
+  private static readonly MIN_SCALE = 0.06;
+
+  /** Hole radius in px → GPU scale factor. The element's base size is set
+   *  so that scale 1 = the hole exactly touches the screen edges (the
+   *  corners are black from frame one). transform-only: zero repaints. */
   private applyIris(r: number): void {
     this.r = r;
-    const base = Math.min(window.innerWidth, window.innerHeight) * 1.1 / 2;
-    const s = base > 0 ? Math.max(0, r / base) : 0;
+    const base = this.baseR();
+    const s = base > 0 ? Math.max(TravelVeil.MIN_SCALE, r / base) : TravelVeil.MIN_SCALE;
     this.iris.style.setProperty("--tv-s", s.toFixed(4));
+  }
+
+  /** Set the element's base size from the current viewport: diameter = the
+   *  inscribed-circle diameter (scale 1 hole touches all four edges). */
+  private syncIrisBase(): void {
+    const d = Math.min(window.innerWidth, window.innerHeight);
+    this.iris.style.width = `${d}px`;
+    this.iris.style.height = `${d}px`;
+    this.iris.style.margin = `${-d / 2}px 0 0 ${-d / 2}px`;
   }
 
   /** Radius that clears every corner of the viewport (+ a margin). */
@@ -369,7 +395,15 @@ export class TravelVeil {
     return Math.min(window.innerWidth, window.innerHeight) / 2;
   }
 
+  private baseR(): number {
+    return Math.min(window.innerWidth, window.innerHeight) / 2;
+  }
+
+  /** Video visible ⇔ the black filler covers the clamp hole. Kept in sync
+   *  so the tiny center hole never shows the world. */
   private showVideo(on: boolean): void {
+    const fill = this.root.querySelector(".tv-fill") as HTMLDivElement | null;
+    if (fill) fill.style.visibility = on ? "visible" : "hidden";
     if (this.video) {
       this.video.style.visibility = on ? "visible" : "hidden";
       this.video.style.opacity = on ? "1" : "0";

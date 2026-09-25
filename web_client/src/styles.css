@@ -1203,32 +1203,35 @@ body.mobile-ui #mc-actions.mc-hidden {
    "opening" grows it past the corner, exposing the game — the exact
    inverse of the close. Painted UNDER the video so the loading screen
    fades into pure black on exit. */
-/* BLACK IRIS layer (HOLE via box-shadow, transform-scaled — GPU smooth):
-   the element itself IS the circular transparent hole (a huge black
-   box-shadow fills everything OUTSIDE it). Animating it uses ONLY
-   transform:scale — a compositor-only property, zero repaints per frame,
-   unlike the mask/gradient versions that re-rasterized a full-screen
-   gradient every frame and looked laggy. --tv-s is the scale factor.
-   r=0 (scale 0) = the hole collapses → fully black; growing the hole
-   reveals the world from the center out. */
-@property --tv-s {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
+/* BLACK IRIS layer (HOLE via a FIXED huge box-shadow, transform-scaled):
+   the element itself IS the circular transparent hole; the box-shadow —
+   a FIXED 12000px spread, NOT relative to the element — fills everything
+   outside it. transform:scale is compositor-only (zero repaints). The
+   scale range is clamped (JS never goes below ~0.06): below that the
+   scaled shadow would stop reaching the corners — the "không lấp đầy,
+   như cọng thun" bug. The close ends at the clamp and swaps to the
+   opaque-black loading video in the same frame; the open starts from it.
+   Base size is set from JS (2× the inscribed radius) so scale 1 = the
+   hole exactly touches the screen edges (corners black from frame one). */
 #travel-root .tv-iris {
   position: absolute;
   left: 50%;
   top: 50%;
-  /* 220vmax base diameter — even at the smallest real hole size the
-     shadow still clears every corner after scaling. */
-  width: 110vmax;
-  height: 110vmax;
-  margin: -55vmax 0 0 -55vmax; /* center on the screen middle */
   border-radius: 50%;
   background: transparent;
-  box-shadow: 0 0 0 200vmax #000;
-  transform: scale(var(--tv-s));
+  box-shadow: 0 0 0 12000px #000;
+  transform: scale(var(--tv-s, 1));
+  will-change: transform;
+  pointer-events: none;
+}
+/* Solid-black filler ABOVE the iris, BELOW the video: covers the tiny
+   center hole left by the MIN_SCALE clamp while the loading video (whose
+   own first frame may not be painted yet) takes over. Toggled with the
+   video visibility by JS. */
+#travel-root .tv-fill {
+  position: absolute;
+  inset: 0;
+  background: #000;
   pointer-events: none;
 }
 
