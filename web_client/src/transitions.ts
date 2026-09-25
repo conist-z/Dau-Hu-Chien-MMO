@@ -54,6 +54,7 @@ export class TravelVeil {
   private forceTimer: number | null = null;
 
   private static readonly MIN_LOAD_MS = 2200; // veil must be SEEN
+  private static readonly IRIS_CLOSE_MS = 450; // hole shrinks onto the center
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
@@ -176,19 +177,23 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.truth = 0;
-    // SOLID BLACK THIS FRAME (no reveal window): iris hole radius 0 = the
-    // mask hides nothing = fully black. Any animated start radius would
-    // leave the game visible for a beat ("thấy game trước khi thấy iris"
-    // — reported until it stuck). The circle experience lives on the OPEN
-    // phase only: the new map is revealed through a growing center hole
-    // after the loading completes.
+    // IRIS CLOSE (the user's "hình tròn kéo về tâm siêu nhỏ"): the hole
+    // starts at the INSCRIBED radius — the four corners are already black
+    // on the first frame — and shrinks to 0, visually pulling the old map
+    // into a pinpoint at the center while the black floods in from the
+    // edges. (The OLD map showing through the shrinking hole is the
+    // effect; what was never acceptable was the NEW map flashing before
+    // the loading — that is gone since travel_begin is awaited.)
     this.iris.style.transition = "none";
-    this.applyIris(0);
+    this.applyIris(this.inscribedR());
+    this.root.classList.remove("hidden");
     this.showVideo(false);
     this.setLabel("");
-    void this.iris.offsetWidth; // flush the black state before the video
-    this.root.classList.remove("hidden");
-    this.enterLoading();
+    void this.iris.offsetWidth; // flush the start state before animating
+    this.state = "closing";
+    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
+      if (this.state === "closing") this.enterLoading();
+    });
     this.armForceTimer();
   }
 
@@ -203,14 +208,27 @@ export class TravelVeil {
       vid.pause();
       vid.currentTime = 0;
       vid.style.opacity = "1";
-      // BAR COMPLETES AT EXIT: run the video at a rate that lands ~96%
-      // right when MIN_LOAD elapses (the usual exit moment) — otherwise the
-      // bar died at ~25% while the world was already ready (user: "load mới
-      // 20% là mất tiêu"). A slower-than-expected load just holds the bar
-      // at its end; a faster one cuts it slightly short — both fine.
+      // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS: run the video at a rate
+      // that lands ~96% right when MIN_LOAD elapses, and PAUSE it there —
+      // playing on to the final frame made the bar hit 100%, blink out and
+      // re-appear for ~0.5s (user: "load 100% rồi mất, hiện lại rồi mới
+      // mất đi"). If the load takes longer than MIN_LOAD the bar simply
+      // holds at 96% until the real exit.
       if (this.videoDur > 0) {
-        const rate = (this.videoDur * 0.96) / (TravelVeil.MIN_LOAD_MS / 1000);
+        const target = this.videoDur * 0.96;
+        const rate = target / (TravelVeil.MIN_LOAD_MS / 1000);
         vid.playbackRate = Math.min(3, Math.max(1, rate));
+        const hold = () => {
+          if (this.state !== "loading") {
+            vid.removeEventListener("timeupdate", hold);
+            return;
+          }
+          if (vid.currentTime >= target) {
+            vid.pause();
+            vid.currentTime = target;
+          }
+        };
+        vid.addEventListener("timeupdate", hold);
       }
       // muted+playsinline ⇒ autoplay is always permitted.
       vid.play().catch(() => {
@@ -339,6 +357,13 @@ export class TravelVeil {
   /** Radius that clears every corner of the viewport (+ a margin). */
   private maxR(): number {
     return Math.hypot(window.innerWidth, window.innerHeight) / 2 + 40;
+  }
+
+  /** Inscribed-circle radius: a hole this size touches the screen edges —
+   *  everything OUTSIDE it (the four corners) is already black from frame
+   *  one, and shrinking the hole pulls the old map into a center pinpoint. */
+  private inscribedR(): number {
+    return Math.min(window.innerWidth, window.innerHeight) / 2;
   }
 
   private showVideo(on: boolean): void {
