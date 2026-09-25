@@ -53,8 +53,7 @@ export class TravelVeil {
   private irisTimer: number | null = null;
   private forceTimer: number | null = null;
 
-  private static readonly MIN_LOAD_MS = 1400; // veil must be SEEN
-  private static readonly IRIS_CLOSE_MS = 450;
+  private static readonly MIN_LOAD_MS = 2200; // veil must be SEEN
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
@@ -98,7 +97,12 @@ export class TravelVeil {
     return this.state !== "idle";
   }
 
-  /** PRE-TRAVEL SIGNAL (server travel_begin): iris closes NOW. */
+  /** PRE-TRAVEL SIGNAL (server travel_begin): FULLY BLACK NOW.
+   *  No close animation on purpose: the map bake freezes the main thread
+   *  right after this frame, and a frozen mid-close iris = the game flashes
+   *  on screen uncovered (user: "thấy preview trước rồi iris mới load").
+   *  The circle experience lives on the OPEN phase, which runs after the
+   *  bake when the main thread is free. */
   beginTravel(_mapName: string): void {
     this.startTravel();
   }
@@ -163,10 +167,8 @@ export class TravelVeil {
   private startTravel(): void {
     if (this.state !== "idle") {
       // Already transitioning (travel_begin arriving AFTER the welcome's
-      // onMapSwitch — the server schedules the hook fire-and-forget, so its
-      // frame can land last). Touch NOTHING: the close animation and the
-      // force timer must keep running, or the veil sticks half-closed
-      // (user: "lúc được lúc không"). Just re-arm the safety net.
+      // onMapSwitch — either frame covers the screen solid black anyway).
+      // Touch NOTHING except the safety net.
       this.armForceTimer();
       return;
     }
@@ -174,18 +176,14 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.truth = 0;
-    // Prep the iris FULLY OPEN while the root is still hidden, then reveal
-    // and close — no visible jump.
+    // SNAP to solid black THIS frame: iris hole radius 0 = fully covered,
+    // transition disabled so nothing can animate before the paint.
     this.iris.style.transition = "none";
-    this.applyIris(this.maxR());
-    this.root.classList.remove("hidden");
+    this.applyIris(0);
     this.showVideo(false);
     this.setLabel("");
-    void this.iris.offsetWidth; // flush so the transition starts here
-    this.state = "closing";
-    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
-      if (this.state === "closing") this.enterLoading();
-    });
+    this.root.classList.remove("hidden");
+    this.enterLoading();
     this.armForceTimer();
   }
 
@@ -200,6 +198,15 @@ export class TravelVeil {
       vid.pause();
       vid.currentTime = 0;
       vid.style.opacity = "1";
+      // BAR COMPLETES AT EXIT: run the video at a rate that lands ~96%
+      // right when MIN_LOAD elapses (the usual exit moment) — otherwise the
+      // bar died at ~25% while the world was already ready (user: "load mới
+      // 20% là mất tiêu"). A slower-than-expected load just holds the bar
+      // at its end; a faster one cuts it slightly short — both fine.
+      if (this.videoDur > 0) {
+        const rate = (this.videoDur * 0.96) / (TravelVeil.MIN_LOAD_MS / 1000);
+        vid.playbackRate = Math.min(3, Math.max(1, rate));
+      }
       // muted+playsinline ⇒ autoplay is always permitted.
       vid.play().catch(() => {
         /* blocked playback: the black screen + iris still work */
@@ -224,11 +231,6 @@ export class TravelVeil {
     if (this.state === "idle" || this.state === "opening") return;
     this.cancelDrivers();
     this.setLabel("");
-    if (this.state === "closing") {
-      // Never finished closing (fast death/respawn): just open back up.
-      this.beginOpening();
-      return;
-    }
     const vid = this.video;
     if (!vid || this.videoDur <= 0) {
       this.beginOpening();
