@@ -477,8 +477,11 @@ const net = new Net({
     lastSnapshotAt = performance.now();
     // First snapshot of the NEW map after a portal switch: world rebuilt +
     // streaming — open the iris (real progress = 100%) + drop any sheet.
+    // noteReady is UNGATED: the veil ignores it unless it is loading and
+    // latches idempotently (a gated miss = bar never finishes + the exit
+    // waits for the 8 s force timer — visibly stuck at ~95%).
+    travelVeil.noteReady();
     if (mapLoadSafetyTimer !== null && welcome && frame.map_id === welcome.map.id) {
-      travelVeil.noteReady();
       hud.hideMapLoading();
       window.clearTimeout(mapLoadSafetyTimer);
       mapLoadSafetyTimer = null;

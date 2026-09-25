@@ -1152,20 +1152,22 @@ body.mobile-ui #mc-actions.mc-hidden {
 .scenario-btn:hover { border-color: var(--accent); }
 
 /* ==================== TRAVEL TRANSITION VEIL ====================
-   THE VIDEO *IS* THE LOADING SCREEN: the undungeon webm is a full black
-   screen with its own pixel "LOADING..." bar — no extra HTML UI stacked
-   on top. Full-screen black layer (video letterboxed on black), topmost
-   (z-index 6000): above #mobile-controls (1), #overlay HUD (2), danger
-   alert (2500), preview panel (3000). While covered it swallows every
-   pointer event so no input reaches a half-switched world. Enter a zone
-   = INSTANT black; exit = the video's bar reverses back to empty, then
-   the veil hides. body-level element: independent of Phaser's stacking
-   contexts inside #game-root. */
+   Three phases: iris-close (black circle shrinks onto the center) →
+   loading video (its own "LOADING..." bar, scrubbed by REAL progress) →
+   video reverse + iris-open (circle grows back out). The ROOT MUST BE
+   TRANSPARENT: the black comes ONLY from the .tv-iris box-shadow layer —
+   an opaque root background would paint over the iris and hide both the
+   closing and the opening circle entirely (user bug: "hiệu ứng hình tròn
+   không hiện"). Topmost (z-index 6000): above #mobile-controls (1),
+   #overlay HUD (2), danger alert (2500), preview panel (3000). While
+   covered it swallows every pointer event so no input reaches a
+   half-switched world. body-level element: independent of Phaser's
+   stacking contexts inside #game-root. */
 #travel-root {
   position: fixed;
   inset: 0;
   z-index: 6000;
-  background: #000; /* the video's own background — seamless letterbox */
+  background: transparent; /* black lives ONLY on .tv-iris below */
   pointer-events: auto; /* cover = no input passes through */
 }
 #travel-root.hidden { display: none; }
@@ -1193,25 +1195,24 @@ body.mobile-ui #mc-actions.mc-hidden {
   text-shadow: 0 2px 0 #000;
   pointer-events: none;
 }
-/* BLACK IRIS layer: the element itself IS the circular hole (transparent,
-   border-radius 50%, JS-driven width/height = 2×radius); the huge-spread
-   box-shadow fills everything OUTSIDE the circle with solid black. During
-   "closing" the hole shrinks to 0 (screen fully black); during "opening"
-   it grows back out, exposing the game — the exact inverse of the close.
-   Painted UNDER the video so the loading screen fades into pure black on
-   exit. box-shadow trick: cheap, GPU-friendly, crisp at any radius. */
+/* BLACK IRIS layer: a full-screen radial gradient — transparent inside
+   radius --tv-r (the circular hole), solid black outside (feathered edge
+   over the last 36 px). "closing" shrinks --tv-r to 0 (fully black);
+   "opening" grows it back past the corner, exposing the game — the exact
+   inverse of the close. Painted UNDER the video so the loading screen
+   fades into pure black on exit. radial-gradient is used instead of a
+   box-shadow spread trick: huge box-shadow spreads silently fail to paint
+   in some Chromium builds (bug: circle never visible), gradients don't. */
 #travel-root .tv-iris {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 0;
-  height: 0;
-  border-radius: 50%;
-  background: transparent;
-  box-shadow:
-    0 0 0 200vmax #000, /* solid black everywhere outside the hole */
-    0 0 36px 12px #000; /* feathered edge just outside the hole */
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    transparent calc(var(--tv-r, 0px) - 36px),
+    #000 var(--tv-r, 0px)
+  );
   pointer-events: none;
 }
 
