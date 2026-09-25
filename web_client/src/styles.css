@@ -1195,24 +1195,21 @@ body.mobile-ui #mc-actions.mc-hidden {
   text-shadow: 0 2px 0 #000;
   pointer-events: none;
 }
-/* BLACK IRIS layer: a full-screen radial gradient — transparent inside
-   radius --tv-r (the circular hole), solid black outside (feathered edge
-   over the last 36 px). "closing" shrinks --tv-r to 0 (fully black);
-   "opening" grows it back past the corner, exposing the game — the exact
+/* BLACK IRIS layer: solid black full-screen, cut by a CSS clip-path
+   circle of radius --tv-r centered on screen (JS animates the var via a
+   clip-path TRANSITION — compositor-friendly, no per-frame gradient
+   repaint; the per-frame radial-gradient version painted far too slowly:
+   user "RẤT CHẬM"). "closing" shrinks the circle to 0 (fully black);
+   "opening" grows it past the corner, exposing the game — the exact
    inverse of the close. Painted UNDER the video so the loading screen
-   fades into pure black on exit. radial-gradient is used instead of a
-   box-shadow spread trick: huge box-shadow spreads silently fail to paint
-   in some Chromium builds (bug: circle never visible), gradients don't. */
+   fades into pure black on exit. */
 #travel-root .tv-iris {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    transparent calc(var(--tv-r, 0px) - 36px),
-    #000 var(--tv-r, 0px)
-  );
+  background: #000;
+  clip-path: circle(var(--tv-r, 0px) at 50% 50%);
   pointer-events: none;
 }
 

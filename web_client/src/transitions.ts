@@ -1,19 +1,20 @@
 /**
  * TRAVEL TRANSITION VEIL — web client map-switch/loading screen.
  *
- * Three visual phases, all pure rAF time-based (deterministic: identical
- * every run, immune to CSS transition drift — user: "lúc được lúc không,
- * nhanh, giật"):
+ * Three visual phases:
  *
- *  1. CLOSE  — a black iris SHRINKS onto the center (the hole closes),
- *              revealing nothing: the screen ends fully black.
- *  2. LOAD   — the bundled webm ("LOADING..." pixel bar on black) IS the
- *              loading screen; its clock is scrubbed by the REAL load
- *              progress (blocking assets + first snapshot). No extra HTML
- *              bar/label — the video already contains one (user: "mắc gì
- *              phải thêm 1 cái loading bên dưới nữa").
- *  3. OPEN   — the video reverses (bar un-fills), then the black iris
- *              OPENS from the center back out, exposing the new map.
+ *  1. CLOSE  — a black iris (CSS clip-path circle) SHRINKS onto the center:
+ *              the screen ends fully black.
+ *  2. LOAD   — the bundled webm ("LOADING..." pixel bar on black) plays
+ *              NATIVELY from frame 0. Playback is compositor-driven, so the
+ *              bar keeps moving even while the main thread is busy baking
+ *              the new map — a JS seek-scrub froze right there (user:
+ *              "bar đứng im", iris "mất vài giây mới open/out"). Exit is
+ *              still gated on REAL readiness (first snapshot + MIN_LOAD),
+ *              so the veil never opens before the world exists.
+ *  3. OPEN   — the video scrubs back to frame 0 (bar un-fills while
+ *              fading — main thread is idle again by now), then the iris
+ *              OPENS from the center back out: the exact inverse of close.
  *
  * HARD RULES honored (AGENTS.md):
  *  - Topmost layer: z-index 6000 — above #mobile-controls (1), #overlay HUD
@@ -30,8 +31,8 @@ export class TravelVeil {
   private videoDur = 0;
   private label: HTMLDivElement;
 
-  /** idle → closing (iris in) → loading (video scrub) → reversing (bar
-   *  un-fills) → opening (iris out) → idle. */
+  /** idle → closing (iris in) → loading (native video playback) →
+   *  reversing (bar un-fills) → opening (iris out) → idle. */
   private state:
     | "idle"
     | "closing"
@@ -40,14 +41,16 @@ export class TravelVeil {
     | "opening" = "idle";
   private deathMode = false;
 
-  // REAL load truth (0..1): blocking assets + first snapshot = 1.
+  /** REAL readiness (0..1): latched to 1 by the first snapshot of the NEW
+   *  map (noteReady). Drives the EXIT decision only — the bar itself is
+   *  native playback (see header). */
   private truth = 0;
-  private shown = 0; // eased display value (drives the video clock)
-  private total = 0;
-  private done = 0;
   private startedAt = 0;
+  /** Current iris hole radius in px (mirrors the CSS var). */
+  private r = 0;
   private raf: number | null = null;
   private heartbeat: number | null = null;
+  private irisTimer: number | null = null;
   private forceTimer: number | null = null;
 
   private static readonly MIN_LOAD_MS = 1400; // veil must be SEEN
@@ -55,8 +58,7 @@ export class TravelVeil {
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
-  /** Soft edge of the iris hole (px). */
-  private static readonly IRIS_FEATHER = 36;
+  private static readonly POLL_MS = 100;
 
   constructor() {
     this.root = document.createElement("div");
@@ -102,30 +104,20 @@ export class TravelVeil {
   }
 
   /** welcome for a DIFFERENT map without a travel_begin (reconnect etc.):
-   *  same instant iris-close — the bake is already imminent. */
+   *  same iris-close — the bake is already imminent. */
   onMapSwitch(_mapName: string): void {
     if (this.state === "idle") this.startTravel();
   }
 
-  /** Blocking-asset count for the new map (0 = cached → truth jumps to 0.9;
-   *  the last 0.1 is the first snapshot of the new map). */
-  noteLoadTotal(total: number): void {
-    this.total = total;
-    this.done = 0;
-    this.truth = total > 0 ? 0.04 : 0.9;
-  }
+  /** Blocking-asset counters are no longer rendered (the bar is native
+   *  playback — see header); kept as no-ops for call-site stability. */
+  noteLoadTotal(_total: number): void {}
 
-  noteAssetDone(): void {
-    if (this.total <= 0) return;
-    this.done = Math.min(this.done + 1, this.total);
-    this.truth = 0.04 + 0.86 * (this.done / this.total);
-  }
+  noteAssetDone(): void {}
 
-  /** First snapshot of the NEW map (caller guards map_id): truth = 100% →
-   *  let the video reach its end → reverse → iris-open. LATCHED: the first
-   *  snapshot often lands DURING the iris-close (450 ms) — dropping it here
-   *  would leave truth at 0 forever and the bar would never run (bug:
-   *  "loading không chạy từ 0 đến 100"). */
+  /** First snapshot of the NEW map: truth = 100% (latched). May land during
+   *  the iris-close — dropping it here would stall the exit until the 8 s
+   *  force timer (user: "vài giây mới thật sự open"). */
   noteReady(): void {
     if (this.deathMode) return;
     this.truth = 1;
@@ -161,73 +153,58 @@ export class TravelVeil {
       return;
     }
     this.clearForceTimer();
-    this.cancelRaf();
+    this.cancelDrivers();
     this.deathMode = false;
-    // Fresh travel: drop the previous run's progress. noteLoadTotal /
-    // noteReady fire AFTER this (welcome ordering varies), so the reset
-    // must live HERE — enterLoading must never discard what already came
-    // in during the close animation.
     this.truth = 0;
-    this.shown = 0;
-    this.total = 0;
-    this.done = 0;
+    // Prep the iris FULLY OPEN while the root is still hidden, then reveal
+    // and close — no visible jump.
+    this.iris.style.transition = "none";
+    this.applyIris(this.maxR());
     this.root.classList.remove("hidden");
     this.showVideo(false);
     this.setLabel("");
+    void this.iris.offsetWidth; // flush so the transition starts here
     this.state = "closing";
-    this.animateIris(this.maxR(), 0, TravelVeil.IRIS_CLOSE_MS, () => {
+    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
       if (this.state === "closing") this.enterLoading();
     });
     this.armForceTimer();
   }
 
-  /** Fully black now: swap the iris for the loading video and start the
-   *  real-progress scrub. Keeps whatever truth/total the welcome already
-   *  fed during the close (ordering: travel_begin ↔ welcome varies). */
+  /** Fully black now: swap the iris for the loading video and let it play
+   *  natively (compositor-driven — survives the main-thread bake stall). */
   private enterLoading(): void {
     this.state = "loading";
     this.startedAt = performance.now();
     this.showVideo(true);
-    if (this.video) {
-      this.video.pause();
-      this.video.currentTime = 0;
+    const vid = this.video;
+    if (vid) {
+      vid.pause();
+      vid.currentTime = 0;
+      vid.style.opacity = "1";
+      // muted+playsinline ⇒ autoplay is always permitted.
+      vid.play().catch(() => {
+        /* blocked playback: the black screen + iris still work */
+      });
     }
-    this.applyProgress(0);
-    this.drive(this.tick);
+    // Exit poll: truth complete + minimum display time → exit sequence.
+    this.heartbeat = window.setInterval(() => {
+      if (
+        this.state === "loading" &&
+        this.truth >= 1 &&
+        performance.now() - this.startedAt >= TravelVeil.MIN_LOAD_MS
+      ) {
+        this.exitSequence();
+      }
+    }, TravelVeil.POLL_MS);
   }
 
-  /** Driver helper: run `fn` on rAF PLUS a 50 ms setInterval heartbeat —
-   *  hidden/unfocused tabs throttle rAF to 0 Hz and the whole transition
-   *  would freeze (user: "lúc được lúc không, nhanh, giật"). Every step is
-   *  time-based and idempotent, so the two drivers converge safely. */
-  private drive(fn: (now: number) => void): void {
-    this.cancelRaf();
-    this.raf = requestAnimationFrame(fn);
-    this.heartbeat = window.setInterval(() => fn(performance.now()), 50);
-  }
-
-  /** Progress driver while loading: `shown` eases toward the REAL truth and
-   *  the video clock follows it (fast load = the bar speeds up, slow load =
-   *  it crawls and holds near the end — never lies, never runs backwards). */
-  private tick = (): void => {
-    if (this.state !== "loading") return;
-    this.shown += (this.truth - this.shown) * 0.075;
-    if (Math.abs(this.truth - this.shown) < 0.004) this.shown = this.truth;
-    this.applyProgress(this.shown);
-    // Truth complete + minimum display time honored → exit sequence.
-    const minElapsed =
-      performance.now() - this.startedAt >= TravelVeil.MIN_LOAD_MS;
-    if (this.shown >= 0.995 && this.truth >= 1 && minElapsed) {
-      this.exitSequence();
-      return;
-    }
-  };
-
-  /** Deterministic exit: video reverses to frame 0 (bar un-fills), then the
-   *  black iris opens from the center back out. Works from any state. */
+  /** Deterministic exit: video reverses to frame 0 (bar un-fills, fading
+   *  into the black iris beneath), then the iris opens from the center back
+   *  out. Works from any state. */
   private exitSequence(): void {
     if (this.state === "idle" || this.state === "opening") return;
-    this.cancelRaf();
+    this.cancelDrivers();
     this.setLabel("");
     if (this.state === "closing") {
       // Never finished closing (fast death/respawn): just open back up.
@@ -266,87 +243,83 @@ export class TravelVeil {
   private beginOpening(): void {
     this.state = "opening";
     this.showVideo(false);
-    this.animateIris(0, this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
-      this.finish();
+    this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
+      if (this.state === "opening") this.finish();
     });
   }
 
   private finish(): void {
     this.state = "idle";
     this.root.classList.add("hidden");
-    this.shown = 0;
     this.truth = 0;
-    this.total = 0;
-    this.done = 0;
     this.setLabel("");
+    this.iris.style.transition = "none";
     this.applyIris(0);
     this.clearForceTimer();
+    this.cancelDrivers();
   }
 
   // ------------------------------------------------------------- internals
 
-  /** Time-based rAF tween of the iris hole radius: deterministic — lost
-   *  frames (hidden tab) never skew the trajectory, only skip ahead. */
-  private animateIris(
-    fromR: number,
-    toR: number,
-    ms: number,
-    onDone: () => void,
-  ): void {
-    this.cancelRaf();
-    const t0 = performance.now();
-    let done = false;
-    const step = (now: number) => {
-      if (done || this.state === "idle") return;
-      const k = Math.min(1, (now - t0) / ms);
-      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; // easeInOutCubic
-      this.applyIris(fromR + (toR - fromR) * e);
-      if (k >= 1) {
-        done = true;
-        this.raf = null;
-        if (this.heartbeat !== null) {
-          window.clearInterval(this.heartbeat);
-          this.heartbeat = null;
-        }
-        onDone();
+  /** Iris tween via CSS clip-path TRANSITION (not per-frame JS): the style
+   *  recalc cost is paid by the compositor-driven transition timeline, not
+   *  by 60 full-screen gradient repaints per second — the JS-driven version
+   *  was visibly slow/janky (user: "RẤT CHẬM"). `transitionend` fires the
+   *  callback; a timeout fallback covers missed events. */
+  private animateIris(toR: number, ms: number, onDone: () => void): void {
+    if (this.irisTimer !== null) {
+      window.clearTimeout(this.irisTimer);
+      this.irisTimer = null;
+    }
+    const fromR = this.r;
+    if (Math.abs(toR - fromR) < 0.5) {
+      onDone();
+      return;
+    }
+    let fired = false;
+    const done = () => {
+      if (fired) return;
+      fired = true;
+      this.iris.removeEventListener("transitionend", done);
+      if (this.irisTimer !== null) {
+        window.clearTimeout(this.irisTimer);
+        this.irisTimer = null;
       }
+      onDone();
     };
-    // HEARTBEAT (throttle-proof driver): a hidden/unfocused tab (or a main
-    // thread busy baking the new map) throttles requestAnimationFrame to 0
-    // Hz — the iris would freeze mid-animation (user: "lúc được lúc không,
-    // giật"). drive() runs the step on rAF PLUS a 50 ms setInterval; both
-    // are pure time-based, so whichever ticks advances the same trajectory
-    // and the first one past k>=1 finishes it.
-    this.drive(step);
+    this.iris.style.transition = "none";
+    this.applyIris(fromR);
+    void this.iris.offsetWidth; // flush the start state
+    this.iris.style.transition =
+      `clip-path ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
+    this.applyIris(toR);
+    this.iris.addEventListener("transitionend", done);
+    this.irisTimer = window.setTimeout(done, ms + 150);
+  }
+
+  /** Throttle-proof driver for the video reverse: rAF PLUS a 50 ms
+   *  setInterval heartbeat — hidden/unfocused tabs throttle rAF to 0 Hz
+   *  and the scrub would freeze. Both drivers are pure time-based and
+   *  idempotent, so whichever ticks advances the same trajectory. */
+  private drive(fn: (now: number) => void): void {
+    this.raf = requestAnimationFrame(fn);
+    this.heartbeat = window.setInterval(() => fn(performance.now()), 50);
   }
 
   private applyIris(r: number): void {
-    // Radius feeds the CSS radial-gradient hole (--tv-r); the element itself
-    // is full-screen — sizing it inline would collapse the gradient to 0×0.
+    this.r = r;
     this.iris.style.setProperty("--tv-r", `${Math.max(0, r)}px`);
   }
 
-  /** Radius that clears every corner of the viewport (+feather). */
+  /** Radius that clears every corner of the viewport (+ a margin). */
   private maxR(): number {
-    return Math.hypot(window.innerWidth, window.innerHeight) / 2 +
-      TravelVeil.IRIS_FEATHER + 2;
+    return Math.hypot(window.innerWidth, window.innerHeight) / 2 + 40;
   }
 
   private showVideo(on: boolean): void {
     if (this.video) {
       this.video.style.visibility = on ? "visible" : "hidden";
       this.video.style.opacity = "1";
-    }
-  }
-
-  private applyProgress(p: number): void {
-    if (this.video && this.videoDur > 0) {
-      // Map 0..1 onto the video, stopping a hair before the end so the bar
-      // never visually "completes" before the world is actually ready.
-      this.video.currentTime = Math.min(
-        this.videoDur - 0.05,
-        Math.max(0, p) * (this.videoDur - 0.05),
-      );
     }
   }
 
@@ -371,7 +344,7 @@ export class TravelVeil {
     }
   }
 
-  private cancelRaf(): void {
+  private cancelDrivers(): void {
     if (this.raf !== null) {
       cancelAnimationFrame(this.raf);
       this.raf = null;
@@ -379,6 +352,10 @@ export class TravelVeil {
     if (this.heartbeat !== null) {
       window.clearInterval(this.heartbeat);
       this.heartbeat = null;
+    }
+    if (this.irisTimer !== null) {
+      window.clearTimeout(this.irisTimer);
+      this.irisTimer = null;
     }
   }
 }
