@@ -181,13 +181,17 @@ export class TravelVeil {
     // before teleporting, so this frame arrives while the main thread is
     // still free — the ~450 ms close animation fits inside that window and
     // the bake only starts when the welcome lands (veil already black).
-    // Prep the iris fully OPEN while hidden, then reveal + close.
+    // BLACK FLOODS FROM THE EDGES (user pick): the hole starts at the
+    // INSCRIBED circle radius — the four corners are ALREADY black on the
+    // first frame, and the black ring converges onto the center as the
+    // hole shrinks to 0. Starting from the full-screen radius would leave
+    // the whole game visible for a beat ("thấy game trước khi thấy iris").
     this.iris.style.transition = "none";
-    this.applyIris(this.maxR());
+    this.applyIris(this.inscribedR());
     this.root.classList.remove("hidden");
     this.showVideo(false);
     this.setLabel("");
-    void this.iris.offsetWidth; // flush the open state before animating
+    void this.iris.offsetWidth; // flush the start state before animating
     this.state = "closing";
     this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
       if (this.state === "closing") this.enterLoading();
@@ -342,6 +346,13 @@ export class TravelVeil {
   /** Radius that clears every corner of the viewport (+ a margin). */
   private maxR(): number {
     return Math.hypot(window.innerWidth, window.innerHeight) / 2 + 40;
+  }
+
+  /** Inscribed-circle radius: a hole this size touches the screen edges —
+   *  everything OUTSIDE it (the four corners) is already black. The close
+   *  starts here so the black floods in from the edges from frame one. */
+  private inscribedR(): number {
+    return Math.min(window.innerWidth, window.innerHeight) / 2;
   }
 
   private showVideo(on: boolean): void {
