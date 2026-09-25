@@ -1203,40 +1203,33 @@ body.mobile-ui #mc-actions.mc-hidden {
    "opening" grows it past the corner, exposing the game — the exact
    inverse of the close. Painted UNDER the video so the loading screen
    fades into pure black on exit. */
-/* Register --tv-r as a real interpolable length: without @property a CSS
-   custom property does NOT animate — the value flips 0↔max in one frame. */
-@property --tv-r {
-  syntax: "<length>";
+/* BLACK IRIS layer (HOLE via box-shadow, transform-scaled — GPU smooth):
+   the element itself IS the circular transparent hole (a huge black
+   box-shadow fills everything OUTSIDE it). Animating it uses ONLY
+   transform:scale — a compositor-only property, zero repaints per frame,
+   unlike the mask/gradient versions that re-rasterized a full-screen
+   gradient every frame and looked laggy. --tv-s is the scale factor.
+   r=0 (scale 0) = the hole collapses → fully black; growing the hole
+   reveals the world from the center out. */
+@property --tv-s {
+  syntax: "<number>";
   inherits: false;
-  initial-value: 0px;
+  initial-value: 0;
 }
-/* BLACK IRIS layer (HOLE, not disc): full-screen black with a circular
-   TRANSPARENT hole of radius --tv-r cut out of its center via mask —
-   clip-path circle() on a black element yields a black DISC (inverted!):
-   that inversion was the "đen ngược với trong suốt" bug, and r=0 being
-   fully transparent flashed the new map before the iris-open ran.
-   ENTER: hole starts at the inscribed radius (corners already black) and
-   shrinks to 0 — black floods from the edges onto the center.
-   EXIT: hole grows 0→past the corners — the new map is revealed from the
-   center out. The transition runs on the REGISTERED custom property
-   itself (--tv-r), which Chromium interpolates smoothly. */
 #travel-root .tv-iris {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
+  left: 50%;
+  top: 50%;
+  /* 220vmax base diameter — even at the smallest real hole size the
+     shadow still clears every corner after scaling. */
+  width: 110vmax;
+  height: 110vmax;
+  margin: -55vmax 0 0 -55vmax; /* center on the screen middle */
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 200vmax #000;
+  transform: scale(var(--tv-s));
   pointer-events: none;
-  -webkit-mask-image: radial-gradient(
-    circle at 50% 50%,
-    transparent calc(var(--tv-r) - 1px),
-    #000 var(--tv-r)
-  );
-  mask-image: radial-gradient(
-    circle at 50% 50%,
-    transparent calc(var(--tv-r) - 1px),
-    #000 var(--tv-r)
-  );
 }
 
 /* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */

@@ -247,9 +247,10 @@ export class TravelVeil {
     }, TravelVeil.POLL_MS);
   }
 
-  /** Deterministic exit: video reverses to frame 0 (bar un-fills, fading
-   *  into the black iris beneath), then the iris opens from the center back
-   *  out. Works from any state. */
+  /** Exit: FADE the video into the black iris beneath (no reverse-scrub:
+   *  seeking the paused video re-painted its current frame one extra time
+   *  — the user's "nháy 1 frame loading sau khi load xong") then open the
+   *  iris. A short crossfade reads the same and can never flash. */
   private exitSequence(): void {
     if (this.state === "idle" || this.state === "opening") return;
     this.cancelDrivers();
@@ -261,21 +262,18 @@ export class TravelVeil {
     }
     this.state = "reversing";
     vid.pause();
-    const from = vid.currentTime;
+    vid.style.transition = `opacity ${TravelVeil.REVERSE_MS}ms linear`;
+    vid.style.opacity = "0";
     const t0 = performance.now();
     const step = (now: number) => {
       if (this.state !== "reversing") return;
-      const k = Math.min(1, (now - t0) / TravelVeil.REVERSE_MS);
-      vid.currentTime = Math.max(0, from * (1 - k));
-      // Fade the whole loading screen into the black iris beneath it while
-      // the bar un-fills — no abrupt bar disappearance at the swap.
-      vid.style.opacity = String(1 - k);
-      if (k >= 1) {
+      if (now - t0 >= TravelVeil.REVERSE_MS) {
         this.raf = null;
         if (this.heartbeat !== null) {
           window.clearInterval(this.heartbeat);
           this.heartbeat = null;
         }
+        vid.style.transition = "none";
         this.showVideo(false);
         this.beginOpening();
       }
@@ -334,7 +332,7 @@ export class TravelVeil {
     this.applyIris(fromR);
     void this.iris.offsetWidth; // flush the start state
     this.iris.style.transition =
-      `--tv-r ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
+      `transform ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
     this.applyIris(toR);
     this.iris.addEventListener("transitionend", done);
     this.irisTimer = window.setTimeout(done, ms + 150);
@@ -349,9 +347,14 @@ export class TravelVeil {
     this.heartbeat = window.setInterval(() => fn(performance.now()), 50);
   }
 
+  /** Hole radius in px → GPU scale factor on the 110vmax base circle.
+   *  transform-only animation: zero repaints (the mask/gradient versions
+   *  re-rasterized a full-screen gradient every frame and looked laggy). */
   private applyIris(r: number): void {
     this.r = r;
-    this.iris.style.setProperty("--tv-r", `${Math.max(0, r)}px`);
+    const base = Math.min(window.innerWidth, window.innerHeight) * 1.1 / 2;
+    const s = base > 0 ? Math.max(0, r / base) : 0;
+    this.iris.style.setProperty("--tv-s", s.toFixed(4));
   }
 
   /** Radius that clears every corner of the viewport (+ a margin). */
@@ -369,7 +372,7 @@ export class TravelVeil {
   private showVideo(on: boolean): void {
     if (this.video) {
       this.video.style.visibility = on ? "visible" : "hidden";
-      this.video.style.opacity = "1";
+      this.video.style.opacity = on ? "1" : "0";
     }
   }
 
