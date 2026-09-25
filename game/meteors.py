@@ -237,13 +237,39 @@ def spawn_crater_ore(grid, tx: int, ty: int) -> bool:
 
     if grid is None:
         return False
+
+    def _fits(ax: int, ay: int) -> bool:
+        # Reject if ANY tile already belongs to another node — never
+        # overwrite a tree/rock/ore index entry (_tile_index is per tile).
+        for x, y in ((ax, ay), (ax + 1, ay), (ax, ay + 1), (ax + 1, ay + 1)):
+            if (x, y) in grid._tile_index or grid.node_at(x, y) is not None:
+                return False
+        return True
+
+    # Exact spot first; when the crater already holds a node (back-to-back
+    # meteors on the same area — user report: "viên 2 không có quặng"),
+    # settle on the NEAREST free 2x2 spot within 3 tiles instead of
+    # silently dropping the ore. Failure now only means the whole area
+    # around the impact is genuinely full.
+    anchor = None
+    if _fits(tx, ty):
+        anchor = (tx, ty)
+    else:
+        candidates: list = []
+        for r in range(1, 4):
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    if max(abs(dx), abs(dy)) != r:
+                        continue  # ring sweep, not the square
+                    ax, ay = tx + dx, ty + dy
+                    if _fits(ax, ay):
+                        candidates.append((ax, ay))
+        if candidates:
+            anchor = min(candidates, key=lambda c: (c[0] - tx) ** 2 + (c[1] - ty) ** 2)
+    if anchor is None:
+        return False
+    tx, ty = anchor
     tiles = [(tx, ty), (tx + 1, ty), (tx, ty + 1), (tx + 1, ty + 1)]
-    # Reject if ANY tile already belongs to another node — never overwrite
-    # a tree/rock/ore index entry (the _tile_index is keyed per tile).
-    for t in tiles:
-        if grid.node_at(*t) is not None:
-            return False
-    anchor = (tx, ty)
     node = ResourceNode("meteor_ore", anchor, tiles)
     grid.nodes[anchor] = node
     for t in tiles:

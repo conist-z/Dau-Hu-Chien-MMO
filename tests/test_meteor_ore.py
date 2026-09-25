@@ -17,11 +17,25 @@ def test_spawn_creates_2x2_node():
 
 
 def test_spawn_rejects_overlap():
+    """A fully surrounded impact yields no node — but back-to-back meteors on
+    the same tile now settle on the NEAREST free 2x2 spot (user report:
+    "viên 2 không có quặng") instead of silently dropping the ore."""
     g = ResourceGrid()
     assert spawn_crater_ore(g, 10, 10) is True
-    assert spawn_crater_ore(g, 10, 10) is False  # same anchor
-    assert spawn_crater_ore(g, 9, 9) is False    # 2x2 would overlap
-    assert spawn_crater_ore(g, 11, 10) is False  # covers an existing tile
+    # Same spot again: ore survives, anchored at a free 2x2 nearby.
+    assert spawn_crater_ore(g, 10, 10) is True
+    assert (10, 10) in g.nodes
+    nearby = [a for a in g.nodes if a != (10, 10)]
+    assert nearby, "second meteor must still mint an ore node nearby"
+    ax, ay = nearby[0]
+    assert max(abs(ax - 10), abs(ay - 10)) <= 3  # within the search radius
+    # Fully wall the area in (r<=3 ring) -> genuine overflow -> no node.
+    g2 = ResourceGrid()
+    assert spawn_crater_ore(g2, 10, 10) is True
+    for dx in range(-4, 6):
+        for dy in range(-4, 6):
+            g2._tile_index.setdefault((10 + dx, 10 + dy), object())
+    assert spawn_crater_ore(g2, 10, 10) is False
 
 
 def test_spawn_rejects_none_grid():

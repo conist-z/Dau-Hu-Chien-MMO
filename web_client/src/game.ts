@@ -77,37 +77,41 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // ---- daytime wildlife (Minifolks Forest Animals, scripts/pack_animal_sheets.py)
   // 4-row layout (atk/walk/idle/dead) with ONE facing: up/down reuse the
   // right row; LEFT mirrors right (zombieFlipX already handles W/NW/SW).
-  // Frame counts match the sheet rows the packer wrote (padded to >=3).
+  // Frames are VERBATIM 32px pack cells (art sits at its native fill, feet
+  // on the tile bottom) — `size` is the DISPLAYED CELL, chosen so
+  // (size/32) × camera-zoom(2) stays INTEGER (same crispness rule as the
+  // zombie 1.5×2=3x): art px map 1:1 to screen px, outline never blurs.
+  // size must be a multiple of 16.
   bunny: {
-    texKey: "mob-bunny", size: 26, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bunny", size: 80, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer: {
-    texKey: "mob-deer", size: 46, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer", size: 80, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   deer2: {
-    texKey: "mob-deer2", size: 50, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer2", size: 80, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bird: {
-    texKey: "mob-bird", size: 22, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bird", size: 64, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   boar: {
-    texKey: "mob-boar", size: 42, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-boar", size: 96, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bear: {
-    texKey: "mob-bear", size: 58, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bear", size: 128, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   fox: {
-    texKey: "mob-fox", size: 38, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-fox", size: 80, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   wolf: {
-    texKey: "mob-wolf", size: 44, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-wolf", size: 96, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
 };
@@ -1925,7 +1929,7 @@ export class WorldScene extends Phaser.Scene {
         const [tx, ty] = key.split(",").map(Number);
         if (!meteorFxBusyNear(tx, ty)) {
           this.pendingOreReveal.delete(key);
-          this.tweens.add({ targets: img, alpha: 1, duration: 400, ease: "Quad.easeOut" });
+          this.tweens.add({ targets: img, alpha: 1, duration: 250, ease: "Quad.easeOut" });
         }
       }
     }

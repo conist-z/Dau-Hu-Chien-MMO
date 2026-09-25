@@ -239,16 +239,18 @@ export class MeteorFx {
 
 export const meteorFx = new MeteorFx();
 
-/** True while a meteor fall/impact FX is still animating near (tx, ty).
+/** True while a meteor fall is still INCOMING near (tx, ty) — i.e. the
+ * impact has not happened yet.
  *
  * The resource layer consults this before revealing a freshly spawned
- * meteor-ore sprite: the ore only fades in once the explosion has finished,
- * so the rock never pops into existence before/during the impact
- * ("xuất hiện trước cả khi vụ nổ xảy ra là sai"). Called from game.ts.
+ * meteor-ore sprite: the rock stays hidden until the meteor actually lands,
+ * then fades in UNDER the explosion frames (boom depth sits above the
+ * resource layer) — never popping in before impact, and not waiting for the
+ * whole boom to finish either.
  */
 export function meteorFxBusyNear(tx: number, ty: number): boolean {
   for (const m of meteorFx.busyNear(tx, ty)) {
-    if (m.phase !== "warning") return true;
+    if (m.phase === "warning" || m.phase === "falling") return true;
   }
   return false;
 }
