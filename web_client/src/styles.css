@@ -1203,13 +1203,22 @@ body.mobile-ui #mc-actions.mc-hidden {
    "opening" grows it past the corner, exposing the game — the exact
    inverse of the close. Painted UNDER the video so the loading screen
    fades into pure black on exit. */
+/* Register --tv-r as a real interpolable length: without @property a CSS
+   custom property does NOT animate — the value flips 0↔max in one frame,
+   which was the actual root cause of the iris "nhấp nháy / lúc được lúc
+   không / skip thẳng sang loading" bugs. */
+@property --tv-r {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
 #travel-root .tv-iris {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   background: #000;
-  clip-path: circle(var(--tv-r, 0px) at 50% 50%);
+  clip-path: circle(var(--tv-r) at 50% 50%);
   pointer-events: none;
 }
 

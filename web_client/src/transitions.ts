@@ -54,6 +54,7 @@ export class TravelVeil {
   private forceTimer: number | null = null;
 
   private static readonly MIN_LOAD_MS = 2200; // veil must be SEEN
+  private static readonly IRIS_CLOSE_MS = 450;
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
@@ -176,14 +177,21 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.truth = 0;
-    // SNAP to solid black THIS frame: iris hole radius 0 = fully covered,
-    // transition disabled so nothing can animate before the paint.
+    // IRIS CLOSE FIRST, video only after: the server AWAITS travel_begin
+    // before teleporting, so this frame arrives while the main thread is
+    // still free — the ~450 ms close animation fits inside that window and
+    // the bake only starts when the welcome lands (veil already black).
+    // Prep the iris fully OPEN while hidden, then reveal + close.
     this.iris.style.transition = "none";
-    this.applyIris(0);
+    this.applyIris(this.maxR());
+    this.root.classList.remove("hidden");
     this.showVideo(false);
     this.setLabel("");
-    this.root.classList.remove("hidden");
-    this.enterLoading();
+    void this.iris.offsetWidth; // flush the open state before animating
+    this.state = "closing";
+    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
+      if (this.state === "closing") this.enterLoading();
+    });
     this.armForceTimer();
   }
 
