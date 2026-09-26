@@ -2328,6 +2328,10 @@ export class Hud {
       `<span class="st-kind">${info.kind === "debuff" ? "Debuff" : "Buff"}</span></div>` +
       `<div class="st-desc">${info.desc}</div>` +
       `<div class="st-time">Còn ${rem}</div>`;
+    // Title colour follows the LEVEL tier colour shown on the icon's
+    // corner digit (lvl-2 gold, lvl-3 red, lvl-4 purple; lvl 1 = default).
+    tip.classList.remove("lvl-2", "lvl-3", "lvl-4");
+    if (lvl !== undefined && lvl >= 2) tip.classList.add(`lvl-${Math.min(4, lvl)}`);
     tip.classList.add("visible");
     // Position: above the icon, horizontally centred; clamp to viewport.
     const r = anchor.getBoundingClientRect();
