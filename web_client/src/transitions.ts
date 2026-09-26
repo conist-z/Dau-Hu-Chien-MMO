@@ -121,6 +121,7 @@ export class TravelVeil {
     this.deathMode = false;
     this.truth = 0;
     this.iris.style.transition = "none"; // no animation — snap
+    this.syncShadowSpread();
     this.applyIris(0); // fully black THIS frame
     this.showVideo(true);
     this.setLabel("");
@@ -180,9 +181,10 @@ export class TravelVeil {
     this.truth = 0;
     // IRIS CLOSE (the user's "hình tròn kéo về tâm siêu nhỏ"): the hole
     // starts at the INSCRIBED radius — the four corners are already black
-    // on the first frame — and shrinks to r=0 (FULLY black: the fixed
-    // spread shadow covers every corner at every radius — no clamp, no
-    // rubber-band, no hand-off flash).
+    // on the first frame — and shrinks to r=0 (FULLY black: the shadow
+    // covers every corner at every radius — no clamp, no rubber-band, no
+    // hand-off flash).
+    this.syncShadowSpread();
     this.iris.style.transition = "none";
     this.applyIris(this.inscribedR());
     this.root.classList.remove("hidden");
@@ -288,9 +290,20 @@ export class TravelVeil {
     this.applyIris(0);
     this.iris.style.transition = "none";
     void this.iris.offsetWidth;
-    this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
-      if (this.state === "opening") this.finish();
-    });
+    // WAIT FOR 2 SERVICED rAF TICKS before the tween starts. The screen is
+    // solid black here, so this hand-off is invisible — but it lets the new
+    // map's first paint/texture-upload burst drain BEFORE the first tween
+    // frame, which is what read as "open chậm hơn screen" when leaving
+    // cave→bigmap (the burst hogged the main thread mid-animation and the
+    // layout-driven transition froze then jumped).
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (this.state !== "opening") return; // force-timer/skip raced us
+        this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
+          if (this.state === "opening") this.finish();
+        });
+      }),
+    );
   }
 
   private finish(): void {
@@ -352,17 +365,30 @@ export class TravelVeil {
   }
 
   /** Hole radius in px → element size. The element IS the see-through
-   *  hole (transparent circle); its box-shadow (fixed 12000px spread) is
-   *  the black outside. Animating the REAL size (not transform:scale)
-   *  keeps the shadow's coverage absolute at every radius — scale shrank
-   *  the shadow with the hole and uncovered the corners for one frame
-   *  (user: "không thật sự lấp đầy / cọng thun" + the 1-frame flash). */
+   *  hole (transparent circle); its box-shadow (fixed spread, sized by
+   *  syncShadowSpread) is the black outside. Animating the REAL size (not
+   *  transform:scale) keeps the shadow's coverage absolute at every
+   *  radius — scale shrank the shadow with the hole and uncovered the
+   *  corners for one frame (user: "không thật sự lấp đầy / cọng thun" +
+   *  the 1-frame flash). */
   private applyIris(r: number): void {
     this.r = r;
     const d = Math.max(0, r * 2);
     this.iris.style.width = `${d}px`;
     this.iris.style.height = `${d}px`;
     this.iris.style.margin = `${-d / 2}px 0 0 ${-d / 2}px`;
+  }
+
+  /** Size the black shadow ONCE per travel to just cover the viewport: the
+   *  shadow starts at the hole's edge, so spread ≥ half-diagonal covers
+   *  every corner even at r=0 (+margin for safety). The old fixed 12000px
+   *  made the per-frame repaint of the moving shadow ~25× more expensive
+   *  than needed — that repaint ran DURING the open tween and janked it
+   *  whenever the bigmap streamed tiles (user: "open bị lag khi ra big
+   *  map"). Same geometry, far cheaper paint. */
+  private syncShadowSpread(): void {
+    const spread = Math.ceil(Math.hypot(window.innerWidth, window.innerHeight)) + 200;
+    this.iris.style.boxShadow = `0 0 0 ${spread}px #000`;
   }
 
   /** Radius that clears every corner of the viewport (+ a margin). */

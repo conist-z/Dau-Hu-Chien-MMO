@@ -1203,16 +1203,18 @@ body.mobile-ui #mc-actions.mc-hidden {
    "opening" grows it past the corner, exposing the game — the exact
    inverse of the close. Painted UNDER the video so the loading screen
    fades into pure black on exit. */
-/* BLACK IRIS layer (HOLE via a FIXED huge box-shadow, transform-scaled):
-   the element itself IS the circular transparent hole; the box-shadow —
-   a FIXED 12000px spread, NOT relative to the element — fills everything
-   outside it. transform:scale is compositor-only (zero repaints). The
-   scale range is clamped (JS never goes below ~0.06): below that the
-   scaled shadow would stop reaching the corners — the "không lấp đầy,
-   như cọng thun" bug. The close ends at the clamp and swaps to the
-   opaque-black loading video in the same frame; the open starts from it.
-   Base size is set from JS (2× the inscribed radius) so scale 1 = the
-   hole exactly touches the screen edges (corners black from frame one). */
+/* BLACK IRIS layer (HOLE via a box-shadow, size-animated):
+   the element itself IS the circular transparent hole; the box-shadow
+   fills everything outside it. The SPREAD is set from JS once per travel
+   (≈ viewport diagonal + margin — enough to cover every corner at every
+   radius, including r=0) instead of a fixed 12000px: the shadow repaint
+   during the width/height tween then touches a ~diagonal-sized slab, not
+   a 12000px monster — the per-frame paint cost during the open tween
+   drops ~25× and no longer janks when the bigmap streams tiles (user:
+   "open bị lag khi ra big map"). Size is animated by JS (width/height/
+   margin — NEVER transform:scale, which scaled the shadow down with the
+   hole and left the corners uncovered for one visible frame — the user's
+   "không thật sự lấp đầy / cọng thun" + the 1-frame game flash). */
 #travel-root .tv-iris {
   position: absolute;
   left: 50%;
@@ -1226,7 +1228,8 @@ body.mobile-ui #mc-actions.mc-hidden {
    * "không thật sự lấp đầy / cọng thun" + the 1-frame game flash at the
    * end of close/open). With a fixed spread the black reaches every
    * corner at EVERY radius, including r=0 (fully black). */
-  box-shadow: 0 0 0 12000px #000;
+  /* Placeholder — JS (syncShadowSpread) sizes the spread per travel. */
+  box-shadow: 0 0 0 2400px #000;
   pointer-events: none;
 }
 /* Solid-black filler ABOVE the iris, BELOW the video: covers the tiny
