@@ -446,6 +446,12 @@ test ngay 1 lần sau khi viết (load trang không tham số → kiểm tra FX 
   theo từng pixel chuột là lag/drift.
 - Diagonal chuẩn hóa; `_web_direction` server dùng dominant-axis 8-way —
   client `dominantDir` mirror y hệt.
+- **Đảo chiều 180° khi run bị dịch 1 ô (session 27/09, 3 commit `f3cc927`
+  → `ef667f7d` → `eb71e8f1`):** latch cũ teleport prediction về server pos
+  mỗi cú lật + phát hiện flip qua mẫu liền trước bị mẫu (0,0) của bàn phím
+  đánh lừa. Cuối cùng: KHÔNG đụng vị trí khi lật, chỉ stamp
+  `lastReversalAt`; reconcile stand-down 450 ms; phát hiện flip bằng
+  per-axis sign history. Chi tiết đầy đủ ở mục 10d.
 
 ### Chết / hồi sinh (hp 0) — "bị nhốt ở vòng tròn vô hình"
 - `Player.alive` = `hp > 0 AND dead_until is None`. `dead_until` là **EPHEMERAL,
@@ -815,6 +821,64 @@ tương tác được). Server probe sạch 100% — blocker nằm ở CLIENT.
   song, lệch parity một chữ là chặn người chơi.
 - **`load_map` cần `Path` object + `-X utf8`** khi chạy script probe trên
   Windows (cp1252 nuốt tên layer tiếng Việt).
+
+## 10d. 🔄 BUG "ĐẢO CHIỀU BỊ DỊCH 1 KHOẢNG" — 3 LẦN FIX MỚI DỨT (session 27/09)
+
+**Triệu chứng:** giữ Shift (PC) hoặc joystick run (mobile) rồi đảo chiều 180°
+liên tục (W↔S, A↔D, lên↔xuống) → player có cảm giác **DỊCH đi ~1 ô thay vì
+chỉ quay mặt lại**. CHỈ dính khi CHẠY NHANH (run 6 ô/s); đi bộ gần như
+không thấy. PC VÀ MOBILE đều dính (đầu tiên tưởng chỉ joystick).
+
+### Bản chất vật lý (đọc trước khi đụng movement)
+Trong mô hình client-authoritative, server body **TỤT LẠI SAU** prediction
+một khoảng = **độ trễ mạng × tốc độ** (100–250 ms relay × 6 ô/s ≈ 0.6–1.5 ô
+khi run; ~0.4–1 ô khi walk). Khoảng tụt này nằm **phía sau hướng chạy cũ** —
+tức là khi đảo chiều, nó nằm "trước mặt" theo trục MỚI. Mọi cơ chế kéo vị trí
+prediction về server pos lúc này đều tạo cú giật LÙI ~1 ô. Đi bộ tụt ít hơn
++ dưới ngưỡng gate 0.75 ô (`RECONCILE_DRIFT`) nên gần như vô hình — vì thế
+bug chỉ hiện khi run.
+
+### Chuỗi fix (3 commit — 2 cái đầu chữa hỏng chữa darn, cái 3 dứt điểm)
+1. **`f3cc927` — spam-guard 350 ms (SAU):** chỉ chặn các cú lật DỒN DẬP
+   (<350 ms giữa 2 lật); giữ Shift bấm W/S cách nhau >350 ms vẫn latch. Không đủ.
+2. **`ef667f7d` — bỏ hẳn "FULL latch" (ĐÚNG HƯỚNG):** latch là tàn dư thời
+   server-integration — nó TELEPORT prediction về `selfServerPos` mỗi lần đảo
+   chiều = chính là cú dịch 1 ô. Trong mô hình client-authoritative KHÔNG CÓ
+   gì cần kéo về cả: server tự hội tụ về report của client. **LUẬT: đừng thêm
+   latch/kéo vị trí khi đảo chiều nữa** — đúng duy nhất là chặn lớp tua lại.
+3. **`eb71e8f1` — phát hiện flip bằng sign-history (DỨT ĐIỂM):** bản v2 phát
+   hiện lật bằng so dấu với MẪU INPUT LIỀN TRƯỚC (`prevInputVec`) — nhưng
+   trên bàn phím W→S đi qua mẫu **(0,0)** (2 phím giữ cùng lúc triệt tiêu)
+   hoặc mẫu 0 ở giữa (thả rồi bấm) → so với mẫu 0 **không bao giờ thấy đổi
+   dấu** → cửa sổ bảo vệ không bao giờ bật trên PC (đúng như user báo "vẫn
+   bug, PC cũng dính"). Fix: so dấu từng trục với **dấu KHÁC-0 CUỐI CÙNG
+   trên trục đó** (`lastNonzeroDxSign/lastNonzeroDySign` trong game.ts) —
+   mẫu 0 ở giữa không che được cú lật.
+
+### Trạng thái cuối cùng (game.ts — giữ nguyên những cái này)
+- `setLocalInput`: mỗi sample có dx/dy khác 0 so dấu với `lastNonzero*Sign`;
+  thấy đổi dấu → stamp `lastReversalAt = performance.now()`. KHÔNG đụng vị trí.
+- `applySnapshot` (reconcile): trong cửa sổ **450 ms** sau `lastReversalAt`,
+  phép thử `srvAhead` bị **stand-down** (coi residual là echo hợp lệ, giữ
+  prediction nguyên vị trí — server tự hội tụ tới). Lỗi thật vẫn snap cứng:
+  `jump > 20` (portal/respawn), `jump > 4`, chết, idle-rescue 1.5 s.
+- Các lớp khác KHÔNG đổi: stepSelf, inputLog/replay, freeX/freeY, drift
+  recovery, converge — toàn bộ như mô tả docs/client_authoritative_movement.md.
+
+### Bài học quy trình (dùng lại khi debug movement)
+1. **Bàn phím phát vector qua mẫu (0,0) khi 2 phím trái chiều giữ cùng lúc** —
+   mọi logic "so với mẫu trước" trên input đều phải nghĩ đến trường hợp này.
+   Joystick analog thì flick nhanh cũng tạo mẫu gần-0 tạm thời.
+2. **PC và mobile dùng CHUNG pipeline input** (`setLocalInput` + `net.setInput`) —
+   bug movement xuất hiện trên cả 2 nền tảng = thủ phạm nằm ở lớp chung,
+   đừng đổ cho mobile_controls.
+3. **"Chỉ run mới thấy" là manh mối chứ không phải tạp âm:** độ lớn của echo
+   tỉ lệ với tốc độ — bug có ngưỡng tốc độ = đi tìm cơ chế tỉ lệ tốc độ
+   (latency × speed) và các gate theo khoảng cách ô (0.75/1.2/4 ô).
+4. **Cơ chế điều chỉnh vị trí vô điều kiện là ấu trĩ trong mô hình
+   client-authoritative** — đã xóa 2 latch qua 2 session; đừng tái sinh.
+5. Khi nghi ngờ deploy: `curl -s <site>/ | grep -o "assets/index-[^\"]*\.js"`
+   đối chiếu hash bundle local — 30 giây, đừng ngồi đoán cache.
 
 ## 10. Hub bar dọc Kaetram (web client) — kiến trúc + sprite data
 
