@@ -2228,7 +2228,7 @@ export class Hud {
   /** Ids present in the rail after the last render — used to
    *  detect NEWLY-APPEARING effects so the "stamp-in" entrance animation only
    *  plays once per effect (a mere duration refresh must not re-animate). */
-  private statusRailPrev = new Set<string>();
+  // (statusRailPrev set was replaced by statusRailEls — see renderStatusRail)
 
   /** Demo override (preview panel 🧪): while non-null, SERVER snapshot frames
    *  are ignored and this array is shown instead. Without this the 20 Hz
@@ -2240,7 +2240,14 @@ export class Hud {
    *  frames are dropped until you pass null to release it back). */
   setDemoStatusEffects(effects: Array<[string, number, number?]> | null): void {
     this.demoStatus = effects;
-    this.renderStatusRail(effects ?? []);
+    if (effects === null) {
+      // Release: wipe the demo elements so the server rail rebuilds fresh.
+      for (const [, entry] of this.statusRailEls) entry.el.remove();
+      this.statusRailEls.clear();
+      this.renderStatusRail([]);
+      return;
+    }
+    this.renderStatusRail(effects);
   }
 
   /** Status-effect rail: [effect_id, seconds_left, level?], newest-LAST.
@@ -2254,53 +2261,103 @@ export class Hud {
     this.renderStatusRail(effects);
   }
 
+  /** Diff-based rail: element per effect id, kept across 20 Hz updates.
+   *  The old full-rebuild ran 20×/s and DESTROYED a freshly-stamped icon
+   *  mid-animation (50 ms after it appeared the rebuild dropped .stamp-in),
+   *  so the entrance never played smoothly on the live web — it only looked
+   *  right in the preview where the demo ticks 1×/s. Now: a new effect
+   *  creates its element ONCE (stamp-in plays in full), existing ones just
+   *  update the seconds text; expired ones are removed. */
+  private statusRailEls = new Map<string, {
+    el: HTMLDivElement;
+    secs: HTMLSpanElement;
+    info: { name: string; desc: string; kind: "debuff" } | null;
+    lvl?: number;
+    effectId: string;
+  }>();
+
   private renderStatusRail(effects: Array<[string, number, number?]>): void {
     const rail = document.getElementById("hud-status");
     if (!rail) return;
-    // The rebuild DESTROYS the hovered icon element without firing its
-    // pointerleave (an expiring effect while hovered left the tooltip stuck
-    // on screen forever). Any re-render simply closes the tooltip — the
-    // user can re-hover the remaining icons.
-    this.hideStatusTooltip();
-    rail.textContent = "";
-    const now = new Set<string>();
+    const seen = new Set<string>();
     for (const [effectId, secs, lvl] of effects) {
-      now.add(effectId);
-      const d = document.createElement("div");
-      d.className = "status-icon";
-      if (!this.statusRailPrev.has(effectId)) d.classList.add("stamp-in");
-      if (lvl !== undefined && lvl >= 2) d.classList.add(`lvl-${Math.min(4, lvl)}`);
-      const img = document.createElement("img");
-      img.src = `ui/hud/status/${effectId}.png`;
-      img.alt = effectId;
-      d.appendChild(img);
-      if (lvl !== undefined && lvl >= 2 && lvl <= 4) {
-        const l = document.createElement("span");
-        l.className = "lvl";
-        l.textContent = String(lvl);
-        d.appendChild(l);
+      seen.add(effectId);
+      let entry = this.statusRailEls.get(effectId);
+      if (!entry) {
+        // NEW effect: build the element once, play the stamp-in entrance.
+        const d = document.createElement("div");
+        d.className = "status-icon stamp-in";
+        if (lvl !== undefined && lvl >= 2) d.classList.add(`lvl-${Math.min(4, lvl)}`);
+        const img = document.createElement("img");
+        img.src = `ui/hud/status/${effectId}.png`;
+        img.alt = effectId;
+        d.appendChild(img);
+        if (lvl !== undefined && lvl >= 2 && lvl <= 4) {
+          const l = document.createElement("span");
+          l.className = "lvl";
+          l.textContent = String(lvl);
+          d.appendChild(l);
+        }
+        const s = document.createElement("span");
+        s.className = "secs";
+        d.appendChild(s);
+        // HOVER TOOLTIP: icons with copy accept pointer events (the rail
+        // container stays pointer-events:none for map clicks).
+        const info = STATUS_EFFECT_INFO[effectId] ?? null;
+        if (info) {
+          d.classList.add("hoverable");
+          d.addEventListener("pointerenter", () => {
+            const cur = this.statusRailEls.get(effectId);
+            if (cur) this.showStatusTooltip(cur.el, cur.effectId, cur.info!, cur.lvl, parseFloat(cur.secs.textContent || "0"));
+          });
+          d.addEventListener("pointerleave", () => this.hideStatusTooltip());
+        }
+        d.addEventListener("animationend", () => d.classList.remove("stamp-in"),
+          { once: true });
+        rail.appendChild(d);
+        entry = { el: d, secs: s, info, lvl, effectId };
+        this.statusRailEls.set(effectId, entry);
+      } else {
+        // EXISTING: refresh the countdown + level class in place — the
+        // element (and any running animation) is never touched.
+        if (lvl !== entry.lvl) {
+          entry.el.classList.remove("lvl-2", "lvl-3", "lvl-4");
+          if (lvl !== undefined && lvl >= 2) entry.el.classList.add(`lvl-${Math.min(4, lvl)}`);
+          const corner = entry.el.querySelector(".lvl");
+          if (lvl !== undefined && lvl >= 2) {
+            if (corner) corner.textContent = String(lvl);
+            else {
+              const l = document.createElement("span");
+              l.className = "lvl";
+              l.textContent = String(lvl);
+              entry.el.appendChild(l);
+            }
+          } else if (corner) corner.remove();
+          entry.lvl = lvl;
+        }
       }
-      const s = document.createElement("span");
-      s.className = "secs";
-      s.textContent = String(Math.max(0, Math.floor(secs)));
-      d.appendChild(s);
-      // HOVER TOOLTIP: a mini box (name + icon + description + remaining
-      // time) that follows the hovered icon. Icons must accept pointer
-      // events for this — the rail itself re-enables them per-icon (the
-      // rail container stays pointer-events:none for map clicks).
-      const info = STATUS_EFFECT_INFO[effectId];
-      if (info) {
-        d.classList.add("hoverable");
-        d.addEventListener("pointerenter", () => {
-          this.showStatusTooltip(d, effectId, info, lvl, secs);
-        });
-        d.addEventListener("pointerleave", () => this.hideStatusTooltip());
-      }
-      d.addEventListener("animationend", () => d.classList.remove("stamp-in"),
-        { once: true });
-      rail.appendChild(d);
+      entry.secs.textContent = String(Math.max(0, Math.floor(secs)));
     }
-    this.statusRailPrev = now;
+    // Remove expired effects (element destroyed only when REALLY gone —
+    // and since it is destroyed, the pointerleave-close hack is unnecessary:
+    // hide the tooltip if its anchor disappeared).
+    for (const [effectId, entry] of this.statusRailEls) {
+      if (!seen.has(effectId)) {
+        entry.el.remove();
+        this.statusRailEls.delete(effectId);
+        this.hideStatusTooltip();
+      }
+    }
+    // Order: newest-LAST per the server contract — reorder DOM children to
+    // match the effects array order (cheap, only when the order changed).
+    const order = effects.map(([id]) => id);
+    const current = [...rail.children].map(c => (c as HTMLElement).querySelector("img")?.alt);
+    if (current.join(",") !== order.join(",")) {
+      for (const id of order) {
+        const entry = this.statusRailEls.get(id);
+        if (entry) rail.appendChild(entry.el); // re-append moves to the end
+      }
+    }
   }
 
   /** One shared tooltip element for the status rail (created lazily).
