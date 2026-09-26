@@ -34,7 +34,57 @@ interface MobSheetInfo {
   /** Displayed ART height (px): the verbatim pack cell is mostly
    * transparent around the animal — the HP bar anchors to this, not `size`. */
   artH?: number;
+  /** Antihero HP-bar icon lane: "prey" = friendly white cat, "neutral" =
+   * horned white cat (fights back only when hit), "hostile" = black cat
+   * (attacks on sight). Drives which icon sprite the mob's HP bar shows. */
+  disposition?: "prey" | "neutral" | "hostile";
 }
+
+// ---- Antihero health-bar sprites (web_client/public/ui/bars/) -----------
+// One 60x20 PNG per lane; icon / bar / fill are cut from the same frame:
+//   icon  x 0..16   (roughly y 2..16)
+//   bar   x 7..53   y 5..15  (dark slab, drawn as the background)
+//   fill  x 13..39  y 9..13  (purple fill, cropped to hp ratio via cropX)
+const ANTI_BAR = {
+  keyBg: "anti-bar-bg",
+  keyFill: "anti-bar-fill",
+  keyIcon: { prey: "anti-icon-white", neutral: "anti-icon-horn", hostile: "anti-icon-black" } as Record<string, string>,
+  files: {
+    "anti-bar-bg": "ui/bars/antihero-bg.png",
+    "anti-bar-fill": "ui/bars/antihero-fill-red.png", // hue-shifted to RED (user request)
+    "anti-icon-white": "ui/bars/antihero-icon-white.png",
+    "anti-icon-horn": "ui/bars/antihero-icon-horn.png",
+    "anti-icon-black": "ui/bars/antihero-icon-black.png",
+  } as Record<string, string>,
+  BAR_X: 7, BAR_W: 46,      // dark slab extent inside the 60x20 frame
+  FILL_X: 13, FILL_W: 26, FILL_Y: 9, FILL_H: 4,
+  // Per-icon TRUE opaque bbox (measured) — cropping wider leaves a
+  // transparent tail that visually detaches the cat from the slab.
+  iconGeom: {
+    "anti-icon-white": { x: 4, y: 2, w: 10, h: 14 },
+    "anti-icon-horn":  { x: 3, y: 3, w: 11, h: 13 },
+    "anti-icon-black": { x: 4, y: 2, w: 10, h: 14 },
+  } as Record<string, { x: number; y: number; w: number; h: number }>,
+  GAP: 1.5,                 // visible gap between icon and slab (px, scaled)
+  // Icon OVERLAPS the slab's left edge (authentic antihero layout: icon ends
+  // at frame x=14, slab starts x=7 -> ~7px of the icon sits ON the bar,
+  // covering the fill's tail). Icon renders last so it draws on top.
+  OVERLAP: 7,
+  SCALE: 0.8,               // display scale (60px frame -> ~48px on screen)
+  SHOW_MS: 5000,            // bar stays visible this long after a hp change
+  FADE_MS: 350,             // fade-out duration once the timer expires
+};
+// Disposition per mob kind — mirrors game/mob_profiles.MOB_BEHAVIORS styles:
+// melee/ambush/ranged/swarm = hostile (đánh người chơi ngay khi gặp),
+// neutral = fights back only when hit, prey/skittish = friendly.
+const MOB_DISPOSITION: Record<string, "prey" | "neutral" | "hostile"> = {
+  zombie: "hostile", skeleton: "hostile", slime: "hostile",
+  spider: "hostile", bat: "hostile", skeleton2: "hostile",
+  spectre: "hostile", hobgoblin: "hostile",
+  boar: "neutral", bear: "neutral",
+  bunny: "prey", deer: "prey", deer2: "prey", bird: "prey", fox: "prey",
+  rat: "prey", goblin: "prey", wolf: "hostile",
+};
 const MOB_SHEETS: Record<string, MobSheetInfo> = {
   zombie: {
     texKey: "mob-zombie", size: 48, cellW: 32, cellH: 32,
@@ -126,6 +176,15 @@ const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
 // rebuild + this expiry guarantee no phantom solid/walkable tile outlives
 // this window.
 const OPTIMISTIC_TTL_MS = 800;
+
+// Antihero bar visuals derived from the hp ratio: full/healthy keeps the
+// native RED fill; low hp dims so damaged mobs read at a glance. Returns
+// the tint to setFill on the fill image.
+function antiBarFillTint(ratio: number): number {
+  if (ratio > 0.5) return 0xffffff;
+  if (ratio > 0.25) return 0xd89090; // dimmed red
+  return 0x909098; // grey — heavily wounded
+}
 
 // Direction name -> unit vector (mirrors game.state.Direction).
 const DIR_VECTORS: Record<string, [number, number]> = {
@@ -559,8 +618,16 @@ export class WorldScene extends Phaser.Scene {
     container: Phaser.GameObjects.Container;
     body: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
     label: Phaser.GameObjects.Text;
-    hpBg: Phaser.GameObjects.Rectangle;
-    hpFill: Phaser.GameObjects.Rectangle;
+    // Antihero HP bar (antihero-healthbar pack): icon + slab bg + fill.
+    // Created lazily once the bundled PNGs load; null until then.
+    hpBg: Phaser.GameObjects.Image | null;
+    hpFill: Phaser.GameObjects.Image | null;
+    hpIcon: Phaser.GameObjects.Image | null;
+    disp: "prey" | "neutral" | "hostile";
+    barY: number;       // local container y the bar hovers at
+    hpLast: number;     // hp seen in the previous snapshot
+    hpShownAt: number;  // performance.now() of the last hp change (0 = never)
+    hpRatio: number;    // latest hp/maxHp clamp 0..1
     buf: [number, number, number][];
     lastX: number; lastY: number;
     anim: string; // last server anim (walk|idle|atk)
@@ -575,6 +642,7 @@ export class WorldScene extends Phaser.Scene {
   }>();
   // Per-kind sheet readiness: kind -> true once its asset arrived.
   private mobTextureReady = new Set<string>();
+  private antiBarLoadAsked = false; // one-shot Phaser loader guard
   private zombieFetchAsked = false;
   private lastZombieFrameT = 0;
   /** Latest measured websocket RTT (EMA, ms) from the net ping/pong loop.
@@ -2223,7 +2291,51 @@ export class WorldScene extends Phaser.Scene {
         if (z.anim === "atk") z.body.setScale(1.35, 0.85);
         else z.body.setScale(1, 1);
       }
+      this.updateAntiBar(z, now);
     }
+  }
+
+  /** Per-frame HP-bar state: lazily create once textures + a hit exist,
+   * keep the fill crop in sync with the hp ratio, and fade the bar out
+   * ANTI_BAR.FADE_MS after ANTI_BAR.SHOW_MS of no hp changes. */
+  private updateAntiBar(
+    z: { container: Phaser.GameObjects.Container; hpBg: Phaser.GameObjects.Image | null; hpFill: Phaser.GameObjects.Image | null; hpIcon: Phaser.GameObjects.Image | null; disp: "prey" | "neutral" | "hostile"; barY: number; hpShownAt: number; hpRatio: number },
+    now: number,
+  ): void {
+    let bg = z.hpBg;
+    let fill = z.hpFill;
+    let icon = z.hpIcon;
+    if (!bg || !fill || !icon) {
+      // Only mobs that have actually been hit ever get a bar (Kaetram rule);
+      // textures must be ready too.
+      if (z.hpShownAt === 0) return;
+      this.ensureAntiBar(z);
+      bg = z.hpBg;
+      fill = z.hpFill;
+      icon = z.hpIcon;
+      if (!bg || !fill || !icon) return;
+    }
+    const age = now - z.hpShownAt;
+    const visible = age < ANTI_BAR.SHOW_MS;
+    const alpha = visible
+      ? Math.min(1, (ANTI_BAR.SHOW_MS - age) / ANTI_BAR.FADE_MS)
+      : 0;
+    bg.setAlpha(alpha);
+    fill.setAlpha(alpha);
+    icon.setAlpha(alpha);
+    const show = alpha > 0;
+    bg.setVisible(show);
+    fill.setVisible(show);
+    icon.setVisible(show);
+    if (!show) return;
+    // Fill shrinks LEFT-to-right as hp drops: crop width tracks the ratio
+    // every frame (the initial full-width crop in ensureAntiBar is only the
+    // spawn state — without this per-frame update the bar never drains).
+    fill.setCrop(
+      ANTI_BAR.FILL_X, ANTI_BAR.FILL_Y,
+      Math.max(1, ANTI_BAR.FILL_W * z.hpRatio), ANTI_BAR.FILL_H,
+    );
+    fill.setTint(antiBarFillTint(z.hpRatio));
   }
 
   /** One frame of predicted local movement, mirroring the server exactly. */
@@ -3580,6 +3692,68 @@ export class WorldScene extends Phaser.Scene {
    * setFrame gives every cell its own cut + origin — unlike setCrop on the
    * full-sheet Image, which kept the quad at sheet size and drew cells
    * offset sideways, shifting position on every frame change. */
+  /** Antihero HP-bar textures: bundled static PNGs, loaded on first mob
+   * spawn (Phaser loader, same pattern as fx-cracks). Returns true once
+   * every key is registered — until then new mobs just skip the bar (the
+   * per-frame pass creates it as soon as the load completes). */
+  private antiBarTexturesReady(): boolean {
+    if (!this.textures) return false;
+    const missing = Object.entries(ANTI_BAR.files).filter(([k]) => !this.textures.exists(k));
+    if (missing.length > 0) {
+      if (!this.antiBarLoadAsked) {
+        this.antiBarLoadAsked = true;
+        for (const [key, file] of missing) this.load.image(key, file);
+        this.load.start();
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /** Build the antihero HP bar objects for one mob (called lazily once the
+   * textures are ready AND the mob has taken damage). All three pieces use
+   * origin (0,0) + absolute local offsets so the icon sits left of the slab
+   * and the fill shrinks left-to-right with the hp ratio via setCrop. */
+  private ensureAntiBar(z: { container: Phaser.GameObjects.Container; hpBg: Phaser.GameObjects.Image | null; hpFill: Phaser.GameObjects.Image | null; hpIcon: Phaser.GameObjects.Image | null; disp: "prey" | "neutral" | "hostile"; barY: number }): void {
+    if (z.hpBg || !this.antiBarTexturesReady()) return;
+    const sc = ANTI_BAR.SCALE;
+    const g = ANTI_BAR.iconGeom[ANTI_BAR.keyIcon[z.disp]];
+    // VISIBLE span: icon content [0..g.w] then GAP then slab [0..BAR_W].
+    // Each image is the same 60px frame cropped, so its CONTENT starts at
+    // (pos.x + cropX*sc) — the quad position must therefore be shifted back
+    // by its own crop offset to land the content where we want.
+    const spanW = (g.w + ANTI_BAR.BAR_W - ANTI_BAR.OVERLAP) * sc;
+    const iconContentX = -spanW / 2;                    // visible icon left edge
+    const iconX = iconContentX - g.x * sc;              // quad pos for the crop
+    const bg = this.add.image(0, 0, ANTI_BAR.keyBg).setOrigin(0, 0);
+    bg.setCrop(ANTI_BAR.BAR_X, 5, ANTI_BAR.BAR_W, 10);
+    bg.setScale(sc);
+    // bg content must start OVERLAP px BEFORE the icon's right edge (the
+    // icon's right tail sits ON the slab, covering the fill's tail).
+    const bgContentX = iconContentX + (g.w - ANTI_BAR.OVERLAP) * sc;
+    bg.setPosition(bgContentX - ANTI_BAR.BAR_X * sc, z.barY - 10 * sc * 0.5);
+    const fill = this.add.image(0, 0, ANTI_BAR.keyFill).setOrigin(0, 0);
+    fill.setCrop(ANTI_BAR.FILL_X, ANTI_BAR.FILL_Y, ANTI_BAR.FILL_W, ANTI_BAR.FILL_H);
+    fill.setScale(sc);
+    // Same quad origin as bg: fill content sits at bg.x + FILL_X*sc, which
+    // is (bgContentX + (FILL_X-BAR_X)*sc) — exactly right inside the slab.
+    fill.setPosition(bg.x, bg.y);
+    const icon = this.add.image(0, 0, ANTI_BAR.keyIcon[z.disp]).setOrigin(0, 0);
+    icon.setCrop(g.x, g.y, g.w, g.h);
+    icon.setScale(sc);
+    // icon quad must START at iconX: its content begins at +g.x*sc from
+    // here, so the visible cat sits at [iconContentX, iconContentX+g.w*sc]
+    // — exactly the left span (same quad-origin trick as the fill).
+    icon.setPosition(iconX, bg.y + 0.8);
+    bg.setVisible(false);
+    fill.setVisible(false);
+    icon.setVisible(false);
+    z.container.add([bg, fill, icon]);
+    z.hpBg = bg;
+    z.hpFill = fill;
+    z.hpIcon = icon;
+  }
+
   /** Cut one animation cell from a mob sheet. Cell size comes from the
    * MOB_SHEETS registry (Kaetram sprites.json) — sheets are NOT all 32px
    * (skeleton 48, spider 35, bat 32x48), so a hard-coded 32 mis-cropped
@@ -3645,19 +3819,23 @@ export class WorldScene extends Phaser.Scene {
         }
         // No emoji label under mobs (user request): the sprite + hp bar are
         // enough; the container still needs a placeholder for typing.
-        const label = this.add.text(0, 24, "", {});
-        // HP bar hovers just above the VISIBLE art (artH), not the raw cell
-        // top — the bear's verbatim cell is 2 tiles tall, mostly transparent;
-        // a cell-anchored bar floated a tile above its back.
+        const label = this.add.text(0, 24, "");
+        // ANTIHERO HP BAR: created lazily by the per-frame pass once the
+        // bundled PNGs have loaded (see ensureAntiBar). Hovers just above
+        // the VISIBLE art (artH), not the raw cell top — the bear's
+        // verbatim cell is 2 tiles tall, mostly transparent; a cell-anchored
+        // bar floated a tile above its back.
         const barH = sheet.artH ?? sheet.size;
-        const barY = bodyY + sheet.size / 2 - barH - 5;
-        const hpBg = this.add.rectangle(0, barY, 28, 4, 0x000000, 0.6);
-        const hpFill = this.add.rectangle(0, barY, 28, 4, 0x6fe26f).setOrigin(0.5);
-        container.add([body as Phaser.GameObjects.GameObject, label, hpBg, hpFill]);
+        const barY = bodyY + sheet.size / 2 - barH - 9;
+        const disp = sheet.disposition ?? MOB_DISPOSITION[kindKey] ?? "hostile";
+        container.add([body as Phaser.GameObjects.GameObject, label]);
         container.setDepth(5);
         this.zombieLayer.add(container);
         z = {
-          container, body, label, hpBg, hpFill,
+          container, body, label,
+          hpBg: null, hpFill: null, hpIcon: null,
+          disp, barY,
+          hpLast: hp, hpShownAt: 0, hpRatio: 1,
           buf: [], lastX: x * this.tilePx, lastY: y * this.tilePx,
           anim: anim ?? "idle", animT0: performance.now(),
           serverAnimT: animT ?? 0,
@@ -3709,8 +3887,13 @@ export class WorldScene extends Phaser.Scene {
         z.frameT0 = now;
       }
       const ratio = Math.max(0, Math.min(1, maxHp > 0 ? hp / maxHp : 0));
-      z.hpFill.setSize(28 * ratio, 4);
-      z.hpFill.setFillStyle(ratio > 0.5 ? 0x6fe26f : ratio > 0.25 ? 0xf2c14e : 0xe5484d);
+      z.hpRatio = ratio;
+      // Kaetram behaviour: the bar only shows after a hp CHANGE (hit) and
+      // auto-hides a few seconds later — full-hp mobs stay clean.
+      if (hp !== z.hpLast) {
+        z.hpLast = hp;
+        z.hpShownAt = performance.now();
+      }
     }
     for (const [id, z] of this.zombies) {
       if (!seen.has(id) && z.dieT0 === 0) {
