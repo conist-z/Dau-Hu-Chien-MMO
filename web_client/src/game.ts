@@ -3378,7 +3378,12 @@ export class WorldScene extends Phaser.Scene {
 
   /** Gid the resource image was cropped from ("res-<gid>" texture). */
   private gidOf(img: Phaser.GameObjects.Image): number {
-    const m = /^res-(\d+)$/.exec(img.texture.key);
+    // textureForGid keys crops per-map ("res-<map.id>-<gid>", user 25/09
+    // fix) so the gid sits AFTER THE LAST HYPHEN — the old ^res-(\d+)$
+    // regex matched nothing, every tile read as gid 0, and the walk-through
+    // parity (FORAGE_GIDS) never fired: all decor blocked movement ("cỏ hoa
+    // bị box chặn"). Parse the numeric tail after the last '-' instead.
+    const m = /-(\d+)$/.exec(img.texture.key);
     return m ? Number(m[1]) : 0;
   }
 
