@@ -16,6 +16,28 @@
 
 import type { InventoryPayload, RecipePayload } from "./protocol";
 
+/** Status-effect tooltip copy — mirrors game/status_effects.py EFFECTS
+ *  (names + mechanics). Keys are effect ids used by ui/hud/status/*.png;
+ *  ids missing here simply get NO tooltip (rail stays hover-inert). */
+const STATUS_EFFECT_INFO: Record<string, { name: string; desc: string; kind: "debuff" }> = {
+  infection: {
+    name: "Thối Rửa",
+    desc: "5 sát thương mỗi 2 giây trong 20s. Chặn hồi máu tự nhiên và hồi máu bằng đồ ăn (thuốc vẫn dùng được). Tốn thể lực x1.5.",
+    kind: "debuff",
+  },
+  poison: {
+    name: "Độc",
+    desc: "5 sát thương mỗi 2 giây trong 20s. Chặn hồi máu tự nhiên.",
+    kind: "debuff",
+  },
+  // poison2 = Độc cường hóa (spider L2): 10 dmg / 1 s, cắt 20% hồi máu.
+  poison2: {
+    name: "Độc",
+    desc: "10 sát thương mỗi 1 giây trong 20s. Giảm 20% hiệu quả hồi máu từ mọi nguồn (đồ ăn + thuốc).",
+    kind: "debuff",
+  },
+};
+
 /** Purse currencies — must mirror game/purse.py CURRENCY_ITEM_IDS. */
 const CURRENCY_IDS = new Set(["coin", "crystal"]);
 const isCurrency = (id: string) => CURRENCY_IDS.has(id);
@@ -2257,11 +2279,64 @@ export class Hud {
       s.className = "secs";
       s.textContent = String(Math.max(0, Math.floor(secs)));
       d.appendChild(s);
+      // HOVER TOOLTIP: a mini box (name + icon + description + remaining
+      // time) that follows the hovered icon. Icons must accept pointer
+      // events for this — the rail itself re-enables them per-icon (the
+      // rail container stays pointer-events:none for map clicks).
+      const info = STATUS_EFFECT_INFO[effectId];
+      if (info) {
+        d.classList.add("hoverable");
+        d.addEventListener("pointerenter", () => {
+          this.showStatusTooltip(d, effectId, info, lvl, secs);
+        });
+        d.addEventListener("pointerleave", () => this.hideStatusTooltip());
+      }
       d.addEventListener("animationend", () => d.classList.remove("stamp-in"),
         { once: true });
       rail.appendChild(d);
     }
     this.statusRailPrev = now;
+  }
+
+  /** One shared tooltip element for the status rail (created lazily).
+   *  Anchored above the hovered icon, clamped to the viewport. */
+  private statusTooltipEl: HTMLDivElement | null = null;
+
+  private showStatusTooltip(
+    anchor: HTMLElement, effectId: string,
+    info: { name: string; desc: string; kind: "debuff" },
+    lvl: number | undefined, secs: number,
+  ): void {
+    let tip = this.statusTooltipEl;
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "status-tooltip";
+      document.body.appendChild(tip);
+      this.statusTooltipEl = tip;
+    }
+    const lv = lvl !== undefined && lvl >= 2 ? ` ${lvl}` : "";
+    const mins = Math.floor(Math.max(0, secs) / 60);
+    const rem = mins > 0 ? `${mins}p ${Math.floor(Math.max(0, secs) % 60)}s` : `${Math.max(0, Math.floor(secs))}s`;
+    tip.innerHTML =
+      `<div class="st-head"><img src="ui/hud/status/${effectId}.png" alt="">` +
+      `<span class="st-name">${info.name}${lv}</span>` +
+      `<span class="st-kind">${info.kind === "debuff" ? "Debuff" : "Buff"}</span></div>` +
+      `<div class="st-desc">${info.desc}</div>` +
+      `<div class="st-time">Còn ${rem}</div>`;
+    tip.classList.add("visible");
+    // Position: above the icon, horizontally centred; clamp to viewport.
+    const r = anchor.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let x = r.left + r.width / 2 - tw / 2;
+    x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
+    let y = r.top - th - 8;
+    if (y < 8) y = r.bottom + 8; // flip below when there is no room above
+    tip.style.left = `${Math.round(x)}px`;
+    tip.style.top = `${Math.round(y)}px`;
+  }
+
+  private hideStatusTooltip(): void {
+    this.statusTooltipEl?.classList.remove("visible");
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,
