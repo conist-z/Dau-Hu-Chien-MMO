@@ -960,58 +960,27 @@ export class WorldScene extends Phaser.Scene {
     this.inputVec.dx = dx;
     this.inputVec.dy = dy;
     this.inputVec.running = running;
-    // DIRECTION-REVERSAL GUARD (user 23/09: "chạy lên rồi chạy xuống liền
-    // kề nhau — cảm giác bị dịch chuyển 1 khoảng thay vì quay mặt lại"):
-    // a 180° flip with the previous axis still held arrives at the server
-    // as ~1 tick (≤50 ms) of the OLD direction. That stale half-step
-    // integrates into a 1-tile sliver ABOVE us; the snapshot replay then
-    // re-integrates it and the avatar LEAPS that tile instantly. Mirror the
-    // server's own leash: drop ≤1-tile slivers against the held direction.
-    // The body may still be ≤1 tile above us (the stale half-step we just
-    // dropped) — applying the NEW axis latches us onto the live server
-    // command immediately (see applySnapshot), instead of teleporting back.
-    //
-    // REVERSAL-SPAM GUARD (user 26/09: joystick spam 2 hướng đối nghịch khi
-    // CHẠY NHANH — player cảm giác bị DỊCH đi 1 khoảng thay vì chỉ quay
-    // mặt): mỗi cú lật khiến server body TỤT LẠI phía cũ (latency × run
-    // speed ≈ 1+ ô) = vị trí server nằm TRƯỚC mặt theo trục MỚI. Với một
-    // cú lật đơn lẻ, latch về server pos là đúng (vị trí thật). Nhưng spam
-    // liên tục thì MỖI cú lật đều latch/replay cứng một cú về phía sau rồi
-    // chạy tới lại — cộng dồn thành cảm giác dịch chuyển. Chỉ áp dụng latch
-    // cho cú lật ĐẦU TIÊN sau ≥350 ms ổn định; các cú lật dồn dập sau đó
-    // được bỏ qua (prediction tự nhiên mượt vì nó chính là truth source,
-    // server sẽ converge tới report của nó). applySnapshot cũng đứng ngoài
-    // rewind trong cửa sổ 400 ms sau cú lật (xem applySnapshot).
+    // DIRECTION-REVERSAL handling (user 26/09 v2 — PC Shift + mobile alike:
+    // "giữ Shift đi về 2 hướng trái ngược liên tục = dịch đi 1 khoảng thay
+    // vì quay mặt lại"). ROOT CAUSE FOUND: the old "FULL latch" here
+    // TELEPORTED the avatar to selfServerPos on every 180° flip — and in
+    // the client-authoritative model the server body structurally TRAILS
+    // the prediction by latency × speed (~1 tile at run speed) BEHIND the
+    // old run direction, i.e. exactly where the flip turns us away from.
+    // Latching = a visible ~1-tile displacement per flip (walk speed's
+    // ~0.6-tile trail is small enough to read as "ok"). The latch was a
+    // relic of the server-integration era; with the server converging to
+    // our reports there is nothing to correct — the ONLY correct action on
+    // a flip is to DO NOTHING positionally and let the replay-stand-down
+    // window in applySnapshot (lastReversalAt) suppress the one-shot
+    // rewind+replay jump for ~450 ms. So: record the flip timestamp, touch
+    // nothing else.
     const nowRev = performance.now();
-    const flipX =
-      this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx);
-    const flipY =
-      this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy);
-    if (flipX || flipY) {
-      const spam = nowRev - this.lastReversalAt < 350;
+    if (
+      (this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx)) ||
+      (this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy))
+    ) {
       this.lastReversalAt = nowRev;
-      if (!spam) {
-        if (flipX) {
-          const d = Math.hypot(this.selfX - this.selfServerPos.x, 0);
-          const behind = (this.selfServerPos.x - this.selfX) * dx > 0.02;
-          if (d > 0.02 && d <= 1.2 && behind) {
-            // FULL latch, same rationale as the vertical branch below.
-            this.selfX = this.selfServerPos.x;
-          }
-        }
-        if (flipY) {
-          const d = Math.hypot(0, this.selfY - this.selfServerPos.y);
-          const behind = (this.selfServerPos.y - this.selfY) * dy > 0.02;
-          if (d > 0.02 && d <= 1.2 && behind) {
-            // FULL latch (was 0.6 partial — the leftover residue kept replaying
-            // and snapped later, the "spam lên xuống xong quay ra chỗ khác là
-            // bị dịch chuyển" report): we KNOW the residual is the stale
-            // half-step (behind + ≤1.2 tiles), so drop it completely and stand
-            // exactly on the server's live command position.
-            this.selfY = this.selfServerPos.y;
-          }
-        }
-      }
     }
     // Keep the 8-way facing label in sync with the raw input (used by
     // getSelfDir for actions); rendering blends the vector separately.
@@ -4298,15 +4267,16 @@ export class WorldScene extends Phaser.Scene {
           const v = this.inputVec;
           const moving = v.dx !== 0 || v.dy !== 0;
           // REVERSAL-WINDOW stand-down: right after a 180° flip the server
-          // body structurally sits AHEAD along the NEW axis (it is where we
-          // just ran FROM) — the srvAhead test misreads that echo as an
-          // error and rewinds, so every joystick flip-spam tick yanked the
-          // avatar back a tile ("spam lên xuống khi chạy = dịch 1 khoảng",
-          // only at run speed: the echo is latency × speed). For ~400 ms
-          // after a flip the residual is EXPECTED echo: pred stays put and
-          // the server converges forward on its own. Real errors (jump > 4,
-          // portal/death) still hard-snap below.
-          const inReversalWindow = performance.now() - this.lastReversalAt < 400;
+          // body sits ~latency × speed BEHIND the old run direction — which
+          // reads as "AHEAD along the NEW axis" here, so the srvAhead test
+          // misreads that echo as an error and rewinds + replays, instantly
+          // displacing the avatar ~1 tile (the exact "spam 2 hướng khi chạy
+          // nhanh = dịch 1 khoảng" bug, PC Shift and mobile alike; only at
+          // run speed: walk's ~0.6-tile trail stays under the 0.75 drift
+          // gate). For ~450 ms after a flip the residual is EXPECTED echo:
+          // pred stays put and the server converges forward on its own.
+          // Real errors (jump > 4, portal/death) still hard-snap below.
+          const inReversalWindow = performance.now() - this.lastReversalAt < 450;
           const srvAhead = moving && !inReversalWindow
             ? ((this.selfServerPos.x - this.selfX) * v.dx +
                (this.selfServerPos.y - this.selfY) * v.dy) /
