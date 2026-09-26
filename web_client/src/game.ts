@@ -391,10 +391,19 @@ export class WorldScene extends Phaser.Scene {
   /** Wall-clock time of the last update() frame — feeds pendingDt. */
   private lastFrameT = 0;
   /** performance.now() of the last 180° input reversal (setLocalInput).
-   *  Feeds the reversal-SPAM guard: a second flip within 350 ms is joystick
-   *  spam — the latches and the reconcile rewind both stand down for it
-   *  (the "spam lên xuống khi chạy nhanh = dịch đi 1 khoảng" bug). */
+   *  Feeds the reconcile stand-down window in applySnapshot: for ~450 ms
+   *  after a flip the server-echo residual is expected, never an error
+   *  (the "đảo chiều khi chạy nhanh = dịch đi 1 khoảng" bug). */
   private lastReversalAt = -1e9;
+  /** Last NON-ZERO input sign per axis (0 = none yet). Flip detection must
+   *  compare against THESE, not the previous sample: on keyboard a W→S
+   *  alternation passes through a cancelling (0,0) sample (both keys held)
+   *  or a zero gap (released before pressing) — comparing with the previous
+   *  sample never sees a sign change there, the reversal window never arms,
+   *  and the reconcile keeps rewinding on PC (the "PC Shift cũng bị" half
+   *  of the bug). Sign history survives the zero gap by design. */
+  private lastNonzeroDxSign = 0;
+  private lastNonzeroDySign = 0;
 
   /** CLIENT-AUTHORITATIVE position reporting: the web client is the truth
    *  source for its own body position (the user asked for this model — no
@@ -960,27 +969,30 @@ export class WorldScene extends Phaser.Scene {
     this.inputVec.dx = dx;
     this.inputVec.dy = dy;
     this.inputVec.running = running;
-    // DIRECTION-REVERSAL handling (user 26/09 v2 — PC Shift + mobile alike:
+    // DIRECTION-REVERSAL handling (user 26/09 v3 — PC Shift + mobile alike:
     // "giữ Shift đi về 2 hướng trái ngược liên tục = dịch đi 1 khoảng thay
-    // vì quay mặt lại"). ROOT CAUSE FOUND: the old "FULL latch" here
-    // TELEPORTED the avatar to selfServerPos on every 180° flip — and in
-    // the client-authoritative model the server body structurally TRAILS
-    // the prediction by latency × speed (~1 tile at run speed) BEHIND the
-    // old run direction, i.e. exactly where the flip turns us away from.
-    // Latching = a visible ~1-tile displacement per flip (walk speed's
-    // ~0.6-tile trail is small enough to read as "ok"). The latch was a
-    // relic of the server-integration era; with the server converging to
-    // our reports there is nothing to correct — the ONLY correct action on
-    // a flip is to DO NOTHING positionally and let the replay-stand-down
-    // window in applySnapshot (lastReversalAt) suppress the one-shot
-    // rewind+replay jump for ~450 ms. So: record the flip timestamp, touch
-    // nothing else.
+    // vì quay mặt lại"). Position-wise we do NOTHING on a flip (the old
+    // latch teleport and the spam-guard latch were both removed): stamp
+    // lastReversalAt so applySnapshot's stand-down window suppresses the
+    // rewind+replay echo jump for ~450 ms, and let the server converge to
+    // our reports as usual. DETECTION compares each axis's sign against the
+    // last NON-ZERO sign on that axis (see the field docs): W→S on keyboard
+    // emits a cancelling (0,0) / zero-gap sample in between, and a
+    // previous-sample comparison missed it — the window never armed on PC.
     const nowRev = performance.now();
-    if (
-      (this.prevInputVec.dx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(this.prevInputVec.dx)) ||
-      (this.prevInputVec.dy !== 0 && dy !== 0 && Math.sign(dy) !== Math.sign(this.prevInputVec.dy))
-    ) {
-      this.lastReversalAt = nowRev;
+    if (dx !== 0) {
+      const sx = Math.sign(dx);
+      if (this.lastNonzeroDxSign !== 0 && sx !== this.lastNonzeroDxSign) {
+        this.lastReversalAt = nowRev;
+      }
+      this.lastNonzeroDxSign = sx;
+    }
+    if (dy !== 0) {
+      const sy = Math.sign(dy);
+      if (this.lastNonzeroDySign !== 0 && sy !== this.lastNonzeroDySign) {
+        this.lastReversalAt = nowRev;
+      }
+      this.lastNonzeroDySign = sy;
     }
     // Keep the 8-way facing label in sync with the raw input (used by
     // getSelfDir for actions); rendering blends the vector separately.
