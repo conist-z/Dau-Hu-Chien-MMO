@@ -200,7 +200,13 @@ const BLOCK_HEAL_RATE = 1.0;
 // Field-forage resource gids (bigmap nấm/cỏ/hoa layers): these SHATTER into
 // sand grains when felled instead of the tree tip-over fall (mirrors
 // game/resources.py TILE_NODE_PARTS one-hit forage nodes).
-const FORAGE_GIDS = new Set([49, 50, 52, 53, 54, 55, 56, 57, 58]);
+const FORAGE_GIDS = new Set([49, 50, 52, 53, 54, 55, 56, 57, 58,
+  // Lobbytrade map update art (game/resources.py TILE_NODE_PARTS): grass /
+  // flower / mushroom variants the walk-through parity must ALSO cover —
+  // missing any of these made the client treat that decor as a standing
+  // node and block movement the server allowed ("bị box chặn").
+  621, 625, 626, 629, 630, 640, 641, 642, 643, 648,
+]);
 // Station blocks the E-prompt/hover/click interact flow targets (mirrors
 // game/crafting.py STATION_BLOCK_IDS).
 const STATION_BLOCK_IDS = new Set(["crafting_table", "furnace"]);
