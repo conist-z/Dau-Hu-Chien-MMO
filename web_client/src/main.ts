@@ -442,7 +442,18 @@ const net = new Net({
     // gesture chain where the browser allows it.
     void (window as unknown as { __lockLandscape?: () => Promise<void> })
       .__lockLandscape?.();
-    scene.buildWorld(frame, (name) => net.fetchAsset(name));
+    // DEFER THE HEAVY BAKE until the travel veil is fully black (or idle).
+    // buildWorld bakes the full-map canvas synchronously — a multi-hundred-ms
+    // main-thread freeze that, when it landed DURING the iris-close tween
+    // (portal step into bigmap), froze the tween mid-way: the user saw the
+    // game flash, then the loading screen (user: "open — animation trước
+    // loading — bị đơ khi ra bigmap"). Deferring costs nothing: the veil is
+    // either already solid black (video playing) or not present at all.
+    if (travelVeil.busy) {
+      travelVeil.whenBlack(() => scene.buildWorld(frame, (name) => net.fetchAsset(name)));
+    } else {
+      scene.buildWorld(frame, (name) => net.fetchAsset(name));
+    }
     // Map-switch input hygiene (both halves): scene.buildWorld clears its
     // own prediction mirror on a different-map welcome; here we zero the
     // NET-layer pending vector + the mobile stick mirror, or the next 16 ms

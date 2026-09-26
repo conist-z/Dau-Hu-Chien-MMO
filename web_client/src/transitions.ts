@@ -135,6 +135,34 @@ export class TravelVeil {
    *  playback — see header); kept as no-ops for call-site stability. */
   noteLoadTotal(_total: number): void {}
 
+  /** Run `fn` once the screen is SOLID BLACK (iris close finished / snap
+   *  path) — the heavy map bake is then invisible to the player, and the
+   *  compositor-driven loading video keeps animating through the freeze.
+   *  If the veil is somehow idle the callback runs immediately (caller
+   *  fallback already handles that case; this is belt-and-braces). */
+  whenBlack(fn: () => void): void {
+    if (this.state === "loading" || this.state === "reversing") {
+      fn();
+      return;
+    }
+    if (this.state === "idle") {
+      fn();
+      return;
+    }
+    // state === "closing": poll until enterLoading flips the state. 25ms
+    // granularity is far below human perception on a black screen; the
+    // 8s force timer bounds a pathological miss.
+    const t0 = performance.now();
+    const poll = () => {
+      if (this.state !== "closing" || performance.now() - t0 > 8000) {
+        fn();
+        return;
+      }
+      window.setTimeout(poll, 25);
+    };
+    window.setTimeout(poll, 25);
+  }
+
   noteAssetDone(): void {}
 
   /** First snapshot of the NEW map: truth = 100% (latched). May land during
@@ -290,20 +318,18 @@ export class TravelVeil {
     this.applyIris(0);
     this.iris.style.transition = "none";
     void this.iris.offsetWidth;
-    // WAIT FOR 2 SERVICED rAF TICKS before the tween starts. The screen is
-    // solid black here, so this hand-off is invisible — but it lets the new
-    // map's first paint/texture-upload burst drain BEFORE the first tween
-    // frame, which is what read as "open chậm hơn screen" when leaving
-    // cave→bigmap (the burst hogged the main thread mid-animation and the
-    // layout-driven transition froze then jumped).
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        if (this.state !== "opening") return; // force-timer/skip raced us
-        this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
-          if (this.state === "opening") this.finish();
-        });
-      }),
-    );
+    // The screen is SOLID BLACK here, so waiting is invisible. The new
+    // map's first-render burst (bigmap tile streaming) hogs the main
+    // thread for far longer than a fixed 2-frame wait — starting the tween
+    // inside that burst froze it mid-way (user: "open từ khu vực khác ra
+    // bigmap bị đơ"). Instead, START ONLY WHEN THE MAIN THREAD SETTLES:
+    // the tween then runs end-to-end on a responsive thread.
+    this.waitMainThreadIdle(() => {
+      if (this.state !== "opening") return; // force-timer/skip raced us
+      this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
+        if (this.state === "opening") this.finish();
+      });
+    });
   }
 
   private finish(): void {
@@ -377,6 +403,42 @@ export class TravelVeil {
     this.iris.style.width = `${d}px`;
     this.iris.style.height = `${d}px`;
     this.iris.style.margin = `${-d / 2}px 0 0 ${-d / 2}px`;
+  }
+
+  /** Resolve when the main thread is IDLE ENOUGH to run a smooth tween:
+   *  N consecutive rAF frames each serviced within FRAME_BUDGET_MS. A
+   *  frame slower than the budget = still inside the map-bake burst →
+   *  reset the counter and keep waiting. Hard cap keeps a pathological
+   *  stall from trapping the player: after MAX_WAIT the tween starts
+   *  regardless (a janky iris beats an eternal black screen). The screen
+   *  is solid black the whole time, so a longer settle is invisible. */
+  private static readonly IDLE_FRAMES_NEEDED = 3;
+  private static readonly FRAME_BUDGET_MS = 28; // <2 missed frames @60Hz
+  private static readonly IDLE_MAX_WAIT_MS = 2500;
+
+  private waitMainThreadIdle(onIdle: () => void): void {
+    const t0 = performance.now();
+    let good = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      if (this.state !== "opening") return; // raced: force-timer/skip
+      const dt = now - last;
+      last = now;
+      if (dt <= TravelVeil.FRAME_BUDGET_MS) {
+        good++;
+      } else {
+        good = 0; // a slow frame = the burst is still running
+      }
+      if (
+        good >= TravelVeil.IDLE_FRAMES_NEEDED ||
+        now - t0 >= TravelVeil.IDLE_MAX_WAIT_MS
+      ) {
+        onIdle();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
   /** Size the black shadow ONCE per travel to just cover the viewport: the
