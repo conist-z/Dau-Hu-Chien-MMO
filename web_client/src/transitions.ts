@@ -91,7 +91,8 @@ export class TravelVeil {
       });
       this.video = vid;
     }
-    this.applyIris(0); // r=0: shadow alone = FULLY black, no clamp needed
+    this.syncIrisBase();
+    this.applyIris(this.clampR()); // reset: pinpoint + full shadow coverage
   }
 
   /** True while the veil is on screen. */
@@ -121,7 +122,8 @@ export class TravelVeil {
     this.deathMode = false;
     this.truth = 0;
     this.iris.style.transition = "none"; // no animation — snap
-    this.applyIris(0); // fully black THIS frame
+    this.syncIrisBase();
+    this.applyIris(this.clampR()); // visually fully black THIS frame
     this.showVideo(true);
     this.setLabel("");
     this.root.classList.remove("hidden");
@@ -180,9 +182,11 @@ export class TravelVeil {
     this.truth = 0;
     // IRIS CLOSE (the user's "hình tròn kéo về tâm siêu nhỏ"): the hole
     // starts at the INSCRIBED radius — the four corners are already black
-    // on the first frame — and shrinks to r=0 (FULLY black: the fixed
-    // spread shadow covers every corner at every radius — no clamp, no
-    // rubber-band, no hand-off flash).
+    // on the first frame — and shrinks to the CLAMP radius (~a 20px
+    // pinpoint): the corner-safe scale clamp keeps the scaled shadow over
+    // every corner, so the screen is visually fully black at the clamp —
+    // no rubber-band, no hand-off flash (the opaque video swaps in there).
+    this.syncIrisBase();
     this.iris.style.transition = "none";
     this.applyIris(this.inscribedR());
     this.root.classList.remove("hidden");
@@ -190,7 +194,7 @@ export class TravelVeil {
     this.setLabel("");
     void this.iris.offsetWidth; // flush the start state before animating
     this.state = "closing";
-    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
+    this.animateIris(this.clampR(), TravelVeil.IRIS_CLOSE_MS, () => {
       if (this.state === "closing") this.enterLoading();
     });
     this.armForceTimer();
@@ -283,9 +287,9 @@ export class TravelVeil {
   private beginOpening(): void {
     this.state = "opening";
     this.showVideo(false);
-    // Grow the hole from a pinpoint (fully black) past the corners for a
-    // full reveal — the shadow stays pinned to every corner throughout.
-    this.applyIris(0);
+    // Grow the hole from the clamp pinpoint (visually fully black — see
+    // startTravel) past the corners for a full reveal; scale-only tween.
+    this.applyIris(this.clampR());
     this.iris.style.transition = "none";
     void this.iris.offsetWidth;
     this.animateIris(this.maxR(), TravelVeil.IRIS_OPEN_MS, () => {
@@ -299,7 +303,8 @@ export class TravelVeil {
     this.truth = 0;
     this.setLabel("");
     this.iris.style.transition = "none";
-    this.applyIris(0); // reset: fully black, ready for the next close
+    this.syncIrisBase();
+    this.applyIris(this.clampR()); // reset: pinpoint + full shadow coverage
     this.clearForceTimer();
     this.cancelDrivers();
   }
@@ -336,7 +341,7 @@ export class TravelVeil {
     this.applyIris(fromR);
     void this.iris.offsetWidth; // flush the start state
     this.iris.style.transition =
-      `width ${ms}ms cubic-bezier(0.65, 0, 0.35, 1), height ${ms}ms cubic-bezier(0.65, 0, 0.35, 1), margin ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
+      `--tv-s ${ms}ms cubic-bezier(0.65, 0, 0.35, 1)`;
     this.applyIris(toR);
     this.iris.addEventListener("transitionend", done);
     this.irisTimer = window.setTimeout(done, ms + 150);
@@ -351,15 +356,36 @@ export class TravelVeil {
     this.heartbeat = window.setInterval(() => fn(performance.now()), 50);
   }
 
-  /** Hole radius in px → element size. The element IS the see-through
-   *  hole (transparent circle); its box-shadow (fixed 12000px spread) is
-   *  the black outside. Animating the REAL size (not transform:scale)
-   *  keeps the shadow's coverage absolute at every radius — scale shrank
-   *  the shadow with the hole and uncovered the corners for one frame
-   *  (user: "không thật sự lấp đầy / cọng thun" + the 1-frame flash). */
+  /** Must match the CSS box-shadow spread on .tv-iris. */
+  private static readonly SHADOW_SPREAD = 20000;
+
+  /** Hole radius in px → GPU scale factor (scale 1 = hole touches the
+   *  screen edges). transform-only: zero repaints per frame, so the open
+   *  stays smooth even while the bigmap's first render hogs the main
+   *  thread (the width/height version repainted a 20000px shadow every
+   *  frame and janked — user's "iris open bị lag").
+   *  SCALE COVERS THE SHADOW TOO, so the scale is clamped from below by
+   *  exact geometry: the scaled shadow reaches s×(base+SPREAD) from the
+   *  center and must still clear the screen corner (diag/2):
+   *      s_min = (diag/2) / (base + SPREAD)
+   *  At the clamp the hole is only ~20px (a center pinpoint — the user's
+   *  "tâm siêu nhỏ") while the black still swallows every corner: no gap
+   *  frame, no rubber-band look (the old fixed MIN_SCALE=0.06 clamp was
+   *  NOT corner-safe — that was the 1-frame flash). */
   private applyIris(r: number): void {
     this.r = r;
-    const d = Math.max(0, r * 2);
+    const base = this.inscribedR(); // = the element's unscaled hole radius
+    if (base <= 0) return;
+    const sMin = this.maxR() / (base + TravelVeil.SHADOW_SPREAD);
+    const s = Math.max(sMin, r / base);
+    this.iris.style.setProperty("--tv-s", s.toFixed(5));
+  }
+
+  /** The element's UNSCALED diameter = the inscribed-circle diameter:
+   *  scale 1 makes the hole exactly touch all four screen edges. Set once
+   *  per travel (cheap layout write, not per-frame). */
+  private syncIrisBase(): void {
+    const d = Math.min(window.innerWidth, window.innerHeight) * 2;
     this.iris.style.width = `${d}px`;
     this.iris.style.height = `${d}px`;
     this.iris.style.margin = `${-d / 2}px 0 0 ${-d / 2}px`;
@@ -368,6 +394,15 @@ export class TravelVeil {
   /** Radius that clears every corner of the viewport (+ a margin). */
   private maxR(): number {
     return Math.hypot(window.innerWidth, window.innerHeight) / 2 + 40;
+  }
+
+  /** Hole radius that still shows a pinpoint of world at the scale clamp.
+   *  Closing animates down TO this and hands over to the opaque video; the
+   *  clamp guarantees the scaled shadow covers every corner even here. */
+  private clampR(): number {
+    const base = this.inscribedR();
+    if (base <= 0) return 0;
+    return this.maxR() / (base + TravelVeil.SHADOW_SPREAD) * base;
   }
 
   /** Inscribed-circle radius: a hole this size touches the screen edges —
