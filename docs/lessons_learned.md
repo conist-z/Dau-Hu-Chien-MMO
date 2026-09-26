@@ -27,6 +27,26 @@
 5. **Một triệu chứng có thể là 2 bug.** "Animation loop + thiếu ore" cùng
    đứng từ một root cause duy nhất (tick không chạy). Tìm điểm chung trước khi
    vá từng triệu chứng.
+6. **Sửa lỗi sinh lỗi khác = sai quy trình, rollback là bạn.** Session iris
+   travel veil: đổi cơ chế hình học (width/height → scale → @property) chỉ để
+   xử lý lag, mỗi lần sinh lại lỗi flash cũ dưới dạng khác; user phải nhắc
+   rollback. Bài học: khi cơ chế đã ĐÚNG và user đã ưng, chỉ tối ưu XUNG QUANH
+   (defer work nặng, đo nhịp rAF) — đừng thay hình học. Và khi user chụp được
+   frame lỗi: đối chiếu chính xác ảnh đó với cơ chế trước khi kết luận.
+7. **Định nghĩa pha từ MIỆNG user trước khi debug.** "Open bị đơ" suốt mấy
+   vòng vì agent tưởng open = mở iris sau loading, trong khi user gọi "open" =
+   iris khép TRƯỚC loading. Một câu hỏi làm rõ định hướng đúng root cause ngay
+   lập tức (bake map giữa tween) — đừng fix mò khi định nghĩa sự kiện còn lệch.
+8. **Parity client↔server là hai đường collision song song.** Server probe
+   sạch 100% KHÔNG có nghĩa người chơi đi được — client prediction tự tính va
+   chạm riêng (`solidAt`/`FORAGE_GIDS`). Lỗi "cỏ hoa bị chặn" là lệch parity
+   (gidOf parse key texture + thiếu gid mới), không phải server. Khi báo
+   "server sạch", phải đối chiếu luôn chuỗi client.
+9. **Đổi scheme key/định dạng phải rà mọi chỗ parse ngược.** Đổi key texture
+   `res-<gid>` → `res-<map.id>-<gid>` mà quên hàm đọc ngược gid từ key → logic
+   nuốt gid=0 âm thầm. Regex parse key phải theo "số ở cuối chuỗi" thay vì
+   neo cứng đầu chuỗi, và tìm toàn bộ `regex`/`split` đọc key đó trước khi
+   commit.
 
 ## Case 1 — Meteor: scheduler không chạy trên production (2026-09)
 
@@ -77,3 +97,5 @@
 - [ ] Client an toàn với state kẹt (stale eta/pos quá lâu → tự hủy)?
 - [ ] Đã test cả preview VÀ một vòng thật trên cloud (Restart trước)?
 - [ ] Node/resource mới: contract hiển thị đa tile thống nhất cả 2 renderer?
+- [ ] Gid art mới: thêm vào CẢ server TILE_NODE_PARTS VÀ client FORAGE_GIDS?
+- [ ] Đổi key/format: rà hết chỗ parse ngược (gidOf, keyOf, regex) đã?

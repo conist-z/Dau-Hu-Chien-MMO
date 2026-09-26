@@ -731,6 +731,91 @@ ngưng build tiếp.** Mọi tính năng UI mới chỉ làm trên **web client*
 (`web_client/`). Phía bot giữ nguyên hiện trạng: chỉ sửa bug nghiêm trọng,
 không thêm tính năng mới.
 
+## 10b. 🎬 TRAVEL VEIL — màn hình loading chuyển map (session 26–27/09)
+
+**Video IS the loading screen**: `web_client/public/ui/travel_wipe.webm`
+(5.1s, VP9, 25KB, 550×280, nền đen dark-ratio 0.97) object-fit:cover full
+screen. Video TỰ chứa bar fill + "LOADING..." → KHÔNG xếp thêm UI %/bar HTML.
+Lớp `#travel-root` (styles.css) z-index **6000**, pointer-events:auto khi hiện.
+
+### Luồng cơ chế (web_client/src/transitions.ts — class TravelVeil)
+- **Open (vào map, TRƯỚC loading):** iris khép — 4 góc đen ngay → lỗ tròn co
+  về tâm (450ms) → loading video. **Exit (sau loading):** video fade → iris nở
+  từ tâm ra (550ms) → map mới lộ.
+- **Hình học iris — BÀI HỌC ĐỐT 3 LẦN:**
+  1. `transform: scale()` co CẢ box-shadow đen theo element → scale nhỏ = bóng
+     không chạm góc → lộ game quanh "hình chữ nhật đen" ("cọng thun"). SAI.
+  2. Animate `width/height/margin` thật + shadow spread cố định: hình học ĐÚNG
+     100% (r=0 = đen tuyệt đối) NHƯNG là layout properties → re-layout + repaint
+     shadow 12000px mỗi frame → ĐỨNG TIM MAIN THREAD khi bigmap đang bake/stream
+     → iris open GIẬT (bị đơ đúng lúc ra bigmap).
+  3. **BẢN CUỐI (commit `90b7072` + `5c73bae`):** quay lại `transform: scale`
+     GPU-composited (0 repaint) NHƯNG clamp scale ĐỘNG theo công thức hình học
+     `s_min = (diag/2)/(base+SPREAD)` — shadow co đến đâu VẪN chạm mọi góc,
+     lỗ tại clamp chỉ còn ~14px (tâm siêu nhỏ thật). **`@property --tv-s`
+     phải đăng ký trong CSS + transition trên chính biến** — Chromium KHÔNG
+     interpolate custom property chưa đăng ký (probe bắt được scale nhảy
+     1→0.03 trong 1 frame). KHÔNG ĐỔI CƠ CHẾ HÌNH HỌC NỮA — 3 lần thử đều sinh
+     lỗi mới; fix hiệu năng phải quanh hình học (đo nhịp rAF, defer bake).
+- **Chống-đơ khi open (đúng nguyên nhân nhờ user làm rõ: open = TRƯỚC loading):**
+  iris khép chạy ĐÚNG lúc welcome map mới đến → `scene.buildWorld()` bake full
+  map canvas ĐỒNG BỘ (hàng trăm ms) NGAY GIỮA tween → main thread đóng băng.
+  Fix (commit `5c73bae`): **hoãn bake tới khi màn đen hẳn** —
+  `travelVeil.whenBlack(callback)`; video loading phát bằng compositor (miễn
+  nhiễm đơ) nên bake lúc này vô hình hoàn toàn. Khi veil idle → chạy ngay như cũ.
+- **Chống-đơ khi exit (open-sau-loading):** đo nhịp rAF — chỉ bắt đầu tween mở
+  khi main thread rảnh (3 frame liên tiếp nhanh), màn đang đen nên khoảng chờ
+  vô hình; cap 2.5s không giam người chơi.
+- **Server hook:** `travel_begin {map_name}` frame gửi TRƯỚC move+welcome
+  (`web_api/protocol.py` MSG_TRAVEL_BEGIN; `web_api/core.py` push theo user_id;
+  `game/manager.py` `_web_travel_begin` gọi trong `_teleport_through_link`,
+  `web_travel_portal`, `web_travel_trade`). Client không nhận → `onMapSwitch`
+  tự startLoading (server cũ vẫn sống). Video scrub theo % thật:
+  truth = 0.04 + 0.86×(done/total blocking assets), `noteReady()` = snapshot
+  đầu map mới; MIN_LOAD_MS=1400; safety force-hide 8s.
+- **Probe preview hay lừa:** root `display:none` → mọi đo getComputedStyle đều
+  0/`none` (không phải bug). Screenshot không kịp animation 450ms → đóng băng
+  trạng thái bằng tay rồi chụp.
+
+## 10c. 🌿 LỖI "CỎ HOA BỊ BOX CHẶN" — BÀI HỌC PARITY CLIENT↔SERVER (27/09)
+
+**Triệu chứng:** cỏ/hoa/nấm không đi xuyên qua được nữa (trước vẫn đi được +
+tương tác được). Server probe sạch 100% — blocker nằm ở CLIENT.
+
+### Chuỗi nguyên nhân (2 lớp, phải sửa CẢ HAI)
+1. **`gidOf` parse sai key texture (GỐC RỄ — commit `12e950b`):**
+   25/09 fix "map art hiển thị sai" đổi key crop texture sang
+   **`res-<map.id>-<gid>`** (vd `res-lobbytrade-621`) để tránh cache art nhầm
+   giữa các map. NHƯNG `gidOf()` vẫn regex cũ `^res-(\d+)$` → KHÔNG khớp →
+   mọi resource tile đọc gid = 0 → `FORAGE_GIDS` không match → prediction
+   coi TẤT CẢ decor là node đứng chặn. **LUẬT: đổi scheme key texture PHẢI
+   rà mọi chỗ parse ngược key đó** (`gidOf`, keyOf, ...).
+2. **`FORAGE_GIDS` client thiếu gid art mới (commit `0464b11`):** map chợ
+   (lobbytrade) update art cỏ/hoa/nấm bằng gid mới 621–648 — server
+   `TILE_NODE_PARTS` đã có, client hard-list thì KHÔNG. **LUẬT: thêm gid art
+   mới vào map = thêm vào CẢ `game/resources.py TILE_NODE_PARTS` VÀ
+   `web_client/src/game.ts FORAGE_GIDS`** (hai danh sách phải luôn khớp).
+3. **Server mask guard (commit trên `game/map_loader.py`):** tile được carve
+   walkable (forage/stairs/cửa) có thể còn dính sub-tile mask build từ sprite
+   trên layer blocking → `tile_masks.correct()` đẩy box ra khỏi pixel đục của
+   decor = chặn giữa tile đi được. Fix: sau build mask, tile
+   `collision[y][x]==0` → `row[x] = None` (mask chỉ được REFINE tile chặn,
+   không được biến tile đi được thành chặn). Probe xác nhận trước: lobbytrade
+   189 tile mask-on-walkable, 5 tile chặn hẳn.
+
+### Kỹ thuật debug đã hiệu quả (dùng lại)
+- **Probe mô phỏng di chuyển thật trên server:** dựng `Collision` đúng cấu
+  hình runtime (`Collision(md, blocks, resources=ResourceGrid.from_map(md))`)
+  rồi `can_move_float` từ ô kề vào từng tile nghi ngờ. Probe SAI CHIỀU (đặt
+  box vào tile rồi đo ngược) cho kết quả vô nghĩa — phải đi TỪ ô walkable kề
+  vào đích.
+- **Đối chiếu chuỗi đầy đủ cả 2 đầu:** grid server → Collision → mask →
+  prediction client (`solidAt`/`maskPassable`/`freeX`/`freeY`) → art gid. Đừng
+  dừng ở "server sạch" — client prediction là đường collision THỨ HAI song
+  song, lệch parity một chữ là chặn người chơi.
+- **`load_map` cần `Path` object + `-X utf8`** khi chạy script probe trên
+  Windows (cp1252 nuốt tên layer tiếng Việt).
+
 ## 10. Hub bar dọc Kaetram (web client) — kiến trúc + sprite data
 
 **Đổi hướng 18/09: phase 1 (bar tự viết, page tự render đơn giản) bị
