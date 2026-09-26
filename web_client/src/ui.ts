@@ -2751,9 +2751,20 @@ export class Hud {
 
   // ----- chat + toasts -----
 
-  chatLine(text: string): void {
+  /** Chat line colour kinds — CSS classes .line.kind-<k> in styles.css:
+   *  system       = hệ thống chung (vào map, hướng dẫn)        -> vàng
+   *  system-priv  = hệ thống CHỈ MÌNH nhìn thấy (kết quả lệnh)  -> vàng đậm
+   *  world-1/2/3  = thông báo thế giới, tím đậm dần theo tier:
+   *                 1 = thường (thời tiết đổi, ai đó vào map),
+   *                 2 = quan trọng (thiên thạch đang rơi),
+   *                 3 = khẩn cấp (boss spawn, sự kiện lớn)
+   *  combat       = kết quả chiến đấu / loot                    -> đỏ nhạt
+   *  death        = cái chết / nguy hiểm tính mạng               -> đỏ đậm
+   *  trade        = giao dịch / cửa hàng / kho                  -> xanh lá nhạt
+   *  info         = mặc định (trắng mờ) */
+  chatLine(text: string, kind?: string): void {
     const div = document.createElement("div");
-    div.className = "line";
+    div.className = kind ? `line kind-${kind}` : "line";
     div.textContent = text;
     this.chatLog.appendChild(div);
     while (this.chatLog.children.length > 50) {

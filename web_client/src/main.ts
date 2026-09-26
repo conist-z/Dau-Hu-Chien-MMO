@@ -488,7 +488,7 @@ const net = new Net({
     weatherFx.setWeather(null);
     if (perf.daynight) dayNightPhaser.setClock(12 * 3600); // prime: noon (no tint) until first snapshot
     hud.setWeather("sun_clouds");
-    hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`);
+    hud.chatLine(`Đã vào ${frame.map.name}. WASD để đi, E túi đồ, F tấn công.`, "system");
   },
   onSnapshot: (frame) => {
     lastSnapshotAt = performance.now();
@@ -619,7 +619,20 @@ const net = new Net({
     // inventory_delta's craft_result fragment (setCraftResult). Never clear
     // it here: the output must STAY in the result slot until collected.
   },
-  onPush: (message, _kind) => {
+  onPush: (message, kind) => {
+    // Server-tagged pushes land in the CHAT LOG with their colour kind
+    // (world-3 = khẩn cấp tím đậm nhất, system-priv = vàng đậm chỉ mình
+    // thấy...). kind mapping mirrors web_api/core.py PUSH_KIND. The toast
+    // stays for quick-glance; the chat line is the persistent record.
+    const chatKind =
+      kind === "world_event" ? "world-2"
+      : kind === "world_event_critical" ? "world-3"
+      : kind === "world_event_minor" ? "world-1"
+      : kind === "system_private" ? "system-priv"
+      : kind === "trade" ? "trade"
+      : kind === "death" ? "death"
+      : undefined;
+    if (chatKind) hud.chatLine(message, chatKind);
     // NOTE: the danger banner (kind === "danger") is DISABLED per user
     // request — pushes always show as the plain toast. Re-enable by
     // routing to hud.dangerAlert when the user picks a final style.
@@ -769,7 +782,7 @@ const net = new Net({
         scene.spawnSplat(frame.tx, frame.ty, frame.damage ?? 0, !!frame.critical, !!frame.missed);
         if (frame.drops.length > 0) {
           const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
-          hud.chatLine(`Hạ zombie! Nhặt: ${loot}`);
+          hud.chatLine(`Hạ zombie! Nhặt: ${loot}`, "combat");
         }
       } else if (frame.missed) {
         // Whiff on a live target still shows MISS over the zombie tile.
@@ -780,7 +793,7 @@ const net = new Net({
     if (frame.ok) {
       if (frame.name === "chop" && frame.drops.length > 0) {
         const loot = frame.drops.map(([id, qty]) => `${id}×${qty}`).join(", ");
-        hud.chatLine(`Đã hạ! Nhặt: ${loot}`);
+        hud.chatLine(`Đã hạ! Nhặt: ${loot}`, "combat");
       }
       return;
     }

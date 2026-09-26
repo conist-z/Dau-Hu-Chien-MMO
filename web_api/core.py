@@ -43,6 +43,7 @@ from web_api.protocol import (
     MSG_PONG,
     MSG_PUSH,
     MSG_CHAT,
+    MSG_TRAVEL_BEGIN,
     MSG_WELCOME,
     SessionRegistry,
     WebSession,
@@ -94,6 +95,24 @@ class WebHub:
         # portal kept the source map's layers + collision and desynced
         # forever while snapshots carried the new coordinates.
         manager.web_map_change_hook = self.send_map_welcome
+        # TRAVEL-BEGIN (iris transition): the manager fires this BEFORE a
+        # portal/trade move so the client can close its veil while the
+        # destination world is prepared ("chống dịch chuyển chậm"). Sync
+        # call from the game tick — schedule the async send as a task.
+        manager.web_travel_begin_hook = self.send_travel_begin
+
+    async def send_travel_begin(self, map_name: str, user_id: int) -> None:
+        """Push a lightweight travel_begin frame to every live connection of
+        ``user_id``. Identity matching uses the stable facts (user_id), not
+        session object identity (see send_map_welcome's identity trap)."""
+        for conn in self.connections.values():
+            sess = conn.session
+            if (sess is not None and conn.joined
+                    and sess.user_id == user_id):
+                await self.send_to_client(conn.cid, {
+                    "type": MSG_TRAVEL_BEGIN,
+                    "map_name": map_name,
+                })
 
     async def send_map_welcome(self, rt, user_id: int) -> None:
         """Re-send the full world payload to a player whose map just changed.
@@ -1037,7 +1056,7 @@ class WebHub:
                 sess.channel_id, sess.user_id, dest,
             )
             await self.send_to_client_conn(sess, {
-                "type": MSG_PUSH, "message": message,
+                "type": MSG_PUSH, "message": message, "kind": "system_private",
             })
             if rt is not None:
                 await self._maybe_teleport_welcome(sess, rt)
@@ -1052,7 +1071,7 @@ class WebHub:
                 sess.channel_id, sess.user_id, action
             )
             await self.send_to_client_conn(sess, {
-                "type": MSG_PUSH, "message": message,
+                "type": MSG_PUSH, "message": message, "kind": "trade",
             })
             if rt is not None:
                 await self._maybe_teleport_welcome(sess, rt)
@@ -1089,6 +1108,7 @@ class WebHub:
             key = rt.weather_key if rt is not None else "?"
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": f"Thời tiết hiện tại: {key}",
+                "kind": "system_private",
             })
         elif cmd == "setweather":
             await self._cmd_setweather(sess, args)
@@ -1190,6 +1210,7 @@ class WebHub:
         label = f"{it.name} x{qty}" if it is not None else f"{item_id} x{qty}"
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"🎁 Đã nhận {label} vào túi.",
+            "kind": "system_private",
         })
 
     _TIME_PRESETS = {
@@ -1419,6 +1440,7 @@ class WebHub:
         if not await self._is_web_admin(sess):
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH, "message": "Chỉ admin mới được gọi thiên thạch.",
+                "kind": "system_private",
             })
             return
         rt = self.manager.get_runtime(sess.channel_id)
@@ -1460,6 +1482,7 @@ class WebHub:
                 f"☄️ Thiên thạch sắp rơi ({m.tx},{m.ty}) sau 8 giây!"
                 + (" (random)" if near_random else "")
             ),
+            "kind": "world_event",
         })
 
     async def _cmd_meteorinfo(self, sess: WebSession) -> None:

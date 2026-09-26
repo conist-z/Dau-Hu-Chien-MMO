@@ -365,6 +365,69 @@ html, body {
   font-size: 12px;
 }
 #chat-log .line { opacity: 0.9; }
+/* ---- Chat line colour kinds (ui.ts chatLine(text, kind)) ----------------
+   system       hệ thống chung           -> vàng nhạt
+   system-priv  hệ thống chỉ mình thấy   -> vàng đậm (amber mạnh hơn)
+   world-1/2/3  thông báo thế giới       -> tím, đậm dần theo độ quan trọng
+                 1 = thường (đổi thời tiết, người vào map...)
+                 2 = quan trọng (thiên thạch sắp rơi...)
+                 3 = khẩn cấp (boss, sự kiện lớn) — tím rực + glow
+   combat       kết quả đánh/quái/loot   -> đỏ nhạt
+   death        cái chết/tử vong         -> đỏ đậm
+   trade        giao dịch/kho/cửa hàng   -> xanh lá nhạt */
+#chat-log .line.kind-system {
+  color: #ffd75e;              /* vàng nhạt */
+}
+#chat-log .line.kind-system-priv {
+  color: #ffb02e;              /* vàng đậm hơn — chỉ mình nhìn thấy */
+}
+#chat-log .line.kind-world-1 {
+  color: #b98fe0;              /* tím nhạt — thông tin thế giới thường */
+}
+#chat-log .line.kind-world-2 {
+  color: #a05ce0;              /* tím — sự kiện quan trọng */
+  font-weight: 600;
+}
+#chat-log .line.kind-world-3 {
+  color: #c86bff;              /* tím rực — khẩn cấp */
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(200, 107, 255, 0.55), 0 1px 2px rgba(0,0,0,.8);
+}
+#chat-log .line.kind-combat {
+  color: #ff9a8a;              /* đỏ nhạt — loot/kết quả đánh */
+}
+#chat-log .line.kind-death {
+  color: #ff4d40;              /* đỏ đậm — chết/tử vong */
+  font-weight: 600;
+}
+#chat-log .line.kind-trade {
+  color: #7fd98a;              /* xanh lá nhạt — giao dịch/kho */
+}
+/* ---- Flat auto-hide scrollbar (fleUI style): a small dim thumb that only
+   appears while hovering/scrolling the log, never a big native bar. */
+#chat-log {
+  scrollbar-width: thin;                       /* Firefox: narrow by default */
+  scrollbar-color: transparent transparent;    /* hidden until hover */
+}
+#chat-log:hover {
+  scrollbar-color: rgba(150, 165, 190, 0.35) transparent;
+}
+#chat-log::-webkit-scrollbar {
+  width: 6px;                                  /* slim rail, always reserved */
+}
+#chat-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+#chat-log::-webkit-scrollbar-thumb {
+  background: transparent;                     /* invisible until hover */
+  border-radius: 3px;
+}
+#chat-log:hover::-webkit-scrollbar-thumb {
+  background: rgba(150, 165, 190, 0.35);       /* small dim pill on hover */
+}
+#chat-log::-webkit-scrollbar-thumb:hover {
+  background: rgba(170, 185, 210, 0.55);
+}
 #chat-form { display: flex; }
 #chat-input {
   flex: 1;
