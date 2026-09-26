@@ -945,3 +945,98 @@ trên khung chat + lề phải màn hình.
   xử lý (inventory/chat, không mở container), `false` = render trang vào
   `#hub-page`.
 - Đóng trang: nút X, hoặc bấm lại đúng nút đang active, hoặc mở nút khác.
+
+## 10e. 🩸 HP BAR MOB — antihero pack (session 27/09, ĐÃ DEPLOY)
+
+**Kết quả:** mob bị đánh → bar nổi trên đầu (icon mèo đè mép trái + slab tối +
+fill ĐỎ rụt theo % máu), tự fade sau 5s. **Mob FULL HP = KHÔNG có gì trên đầu**
+(Kaetram rule — user đã xác nhận hành vi này; đừng "sửa" thành bar luôn hiện).
+
+### Assets (web_client/public/ui/bars/)
+- Nguồn: pack `antihero-healthbar` (user cung cấp). Mọi file là **frame 60×20
+  chung**, cắt bằng `setCrop`:
+  - `antihero-bg.png` — slab: crop x=7..53 (W=46), y=5..15 (H=10)
+  - `antihero-fill-red.png` — fill: crop x=13..39 (W=26), y=9..13 (H=4). Bản gốc
+    TÍM đã hue-shift HSV → ĐỎ bằng PIL (user yêu cầu máu đỏ); `antihero-fill.png`
+    (tím) giữ làm backup
+  - Icon theo disposition: `antihero-icon-white.png` = thân thiện (prey),
+    `antihero-icon-horn.png` = đánh lại khi bị đánh (neutral),
+    `antihero-icon-black.png` = thù địch (melee/ambush/ranged/swarm)
+- Icon bbox THẬT (đo numpy, đừng crop rộng hơn — đuôi trong suốt làm icon "tách
+  rời" bar): white {x:4,y:2,w:10,h:14}, horn {x:3,y:3,w:11,h:13}, black {x:4,y:2,w:10,h:14}
+- **Icon ĐÈ LÊN mép slab 7px** (ANTI_BAR.OVERLAP=7) — layout gốc của pack; icon
+  add SAU CÙNG trong container để nằm trên fill
+
+### Toạ độ học (SAI 3 LẦN MỚI ĐÚNG — đọc trước khi đụng)
+Mọi mảnh là **cùng 1 quad 60×20** crop khác nhau. Với `origin(0,0)` +
+`setCrop(x,y,w,h)` + `setScale(sc)`: **NỘI DUNG hiển thị bắt đầu tại
+`pos + cropX*sc`**, KHÔNG phải tại `pos`. Đặt nội dung vào vị trí muốn:
+`quad.pos = desiredContentX - cropX*sc`. Công thức trong `ensureAntiBar`
+(game.ts): `iconContentX = -spanW/2` (span = g.w + BAR_W − OVERLAP, scale 0.8),
+`bgX = iconContentX + (g.w − OVERLAP)*sc − BAR_X*sc`, fill CHIA SẺ quad-origin
+của bg. **Đừng cộng crop delta 2 lần** — chính là bug "fill lệch 5px phải" và
+"icon tách xa bar" ban đầu (user phải báo 2 lần).
+
+### Cơ chế (game.ts — ANTI_BAR + ensureAntiBar + updateAntiBar)
+- Bar CHỈ hiện khi hp thay đổi (`hpLast !== hp` → `hpShownAt = now`); fade:
+  alpha = (SHOW_MS − age)/FADE_MS clamp 0..1 (SHOW 5000, FADE 350)
+- **Fill rụt: `setCrop(FILL_X, FILL_Y, FILL_W*ratio, FILL_H)` MỖI FRAME trong
+  updateAntiBar** — crop lúc tạo chỉ là spawn state; quên = fill đứng yên
+  (bug user báo lần 2: "chỉ đổi màu không rụt")
+- Tint theo ratio: >0.5 trắng / >0.25 0xd89090 / dưới 0x909088
+- Texture lazy-load (antiBarTexturesReady, one-shot loader guard); bar tạo lười
+  (ensureAntiBar) khi textures sẵn + mob đã bị đánh; fallback placeholder rect
+  khi texture chưa tới
+- `MOB_DISPOSITION` (game.ts) mirror game/mob_profiles.MOB_BEHAVIORS; sửa
+  disposition của mob mới = sửa cả 2 nơi nếu thêm kind
+- State trên zombie entry: hpLast/hpShownAt/hpRatio (syncZombies); kill/fade
+  không đụng chỗ khác
+
+### Deploy: build + relay/dist + commit + push (Railway). PNG mới phải
+`git add web_client/public/ui/bars/`. Demo verify nhanh: page-interval pin
+hpShownAt + hpRatio rồi screenshot (đừng đuổi theo mob — mất token vô ích).
+
+## 10f. 💬 STATUS TOOLTIP + DIFF RAIL (session 27/09, ĐÃ DEPLOY)
+
+### Tooltip hover (ui.ts)
+- `STATUS_EFFECT_INFO` (đầu ui.ts): copy TV cho infection/poison/poison2, mirror
+  game/status_effects.py EFFECTS. **Id không có trong map = icon KHÔNG hover**
+  (không gắn listener) — thêm effect mới phải thêm entry này
+- 1 element `.status-tooltip` dùng chung (tạo lười, append body). Title colour
+  theo **level tier** (class lvl-2/3/4 trên tooltip): vàng #ffd75e / đỏ #ff5a48 /
+  tím #c86bff — KHỚP màu số cấp trên icon corner (user yêu cầu riêng)
+- Position: trên icon, clamp viewport, flip xuống khi thiếu chỗ; pointer-events
+  none trên tooltip
+- Bug đã fix: **effect hết hạn lúc đang hover → tooltip treo vĩnh viễn** (anchor
+  bị xoá không kịp fire pointerleave). Fix: hideStatusTooltip() khi remove
+  expired element trong renderStatusRail
+
+### ⚠️ RAIL PHẢI DIFF-BASED — ĐỪNG REBUILD MỖI SNAPSHOT (bug "lag/khó mượt" đã fix)
+`renderStatusRail` cũ phá/dựng lại toàn bộ DOM ở **20 Hz** → element mới bị
+destroy 50 ms sau khi stamp-in 300 ms bắt đầu → animation giật trên web thật.
+**Preview demo mượt vì tick 1 Hz — không phải bằng chứng logic đúng** (user:
+"trên web thực tế bị lag/quá nhanh, không mượt như preview"). Hiện tại:
+`statusRailEls = Map<effectId, {el, secs, info, lvl, effectId}>` — element tạo
+1 lần (stamp-in chơi trọn), secs/lvl update TẠI CHỖ, expired mới remove,
+reorder newest-last bằng re-append khi order đổi. setDemoStatusEffects(null)
+phải clear map. **Mọi HUD update 20 Hz cần cùng pattern này — đừng tái sinh
+full-rebuild.**
+
+## 10g. 🎨 CHAT MÀU THEO KIND + SCROLLBAR FLEUI (session 27/09, ĐÃ DEPLOY)
+
+- `chatLine(text, kind?)` (ui.ts) — kind → class `.line.kind-<k>` (styles.css):
+  `system` vàng nhạt #ffd75e (vào map, hướng dẫn) / `system-priv` vàng đậm
+  #ffb02e (kết quả lệnh — CHỈ MÌNH thấy) / `world-1|2|3` tím nhạt→đậm→rực+glow
+  (#b98fe0 → #a05ce0 → #c86bff — tier theo độ quan trọng, user bắt "thay đổi đủ
+  rõ để player hiểu") / `combat` #ff9a8a / `death` #ff4d40 / `trade` #7fd98a /
+  không kind = trắng mờ mặc định
+- Server gắn `kind` vào MSG_PUSH frame (web_api/core.py): `world_event` (meteor),
+  `system_private` (/travel, /weather, /give, admin-only), `trade` (kho đổi).
+  Client map trong `onPush` (main.ts) → hud.chatLine(message, chatKind); toast
+  vẫn song song. Push KHÔNG kind = chỉ toast, không vào chat log
+- Call-site kinds: welcome → system, kill loot → combat
+- **Scrollbar fleUI** cho #chat-log: rail 6px, thumb trong suốt, chỉ hiện khi
+  hover (CSS scrollbar-color + ::-webkit-scrollbar trong styles.css) — pattern
+  tái dùng cho panel khác
+- Verify nhanh: hud.chatLine(...) với từng kind từ preview_evaluate, screenshot
+  — đừng đuổi theo mob thật
