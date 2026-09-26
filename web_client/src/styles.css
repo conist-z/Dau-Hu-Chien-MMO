@@ -1219,9 +1219,14 @@ body.mobile-ui #mc-actions.mc-hidden {
   top: 50%;
   border-radius: 50%;
   background: transparent;
+  /* HUGE FIXED spread: the element IS the see-through hole; the shadow is
+   * the black everything-else. Size is animated by JS (width/height/margin
+   * — NEVER transform:scale, which scaled the shadow down with the hole
+   * and left the corners uncovered for one visible frame — the user's
+   * "không thật sự lấp đầy / cọng thun" + the 1-frame game flash at the
+   * end of close/open). With a fixed spread the black reaches every
+   * corner at EVERY radius, including r=0 (fully black). */
   box-shadow: 0 0 0 12000px #000;
-  transform: scale(var(--tv-s, 1));
-  will-change: transform;
   pointer-events: none;
 }
 /* Solid-black filler ABOVE the iris, BELOW the video: covers the tiny
