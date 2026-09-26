@@ -2257,6 +2257,11 @@ export class Hud {
   private renderStatusRail(effects: Array<[string, number, number?]>): void {
     const rail = document.getElementById("hud-status");
     if (!rail) return;
+    // The rebuild DESTROYS the hovered icon element without firing its
+    // pointerleave (an expiring effect while hovered left the tooltip stuck
+    // on screen forever). Any re-render simply closes the tooltip — the
+    // user can re-hover the remaining icons.
+    this.hideStatusTooltip();
     rail.textContent = "";
     const now = new Set<string>();
     for (const [effectId, secs, lvl] of effects) {
