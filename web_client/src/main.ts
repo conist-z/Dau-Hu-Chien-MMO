@@ -1548,6 +1548,9 @@ game.events.once("ready", () => {
   // hover-box tile) forwards as a server "turn" action so remote players
   // see the same direction (throttled inside the scene).
   scene.onSelfTurn = (dir) => net.turn(dir);
+  // EQUIPMENT tab: the worn paperdoll slots mirror the scene's armor echo
+  // (welcome/snapshot "armor") so both views show the same server truth.
+  scene.onSelfArmorChanged = (armor) => hud.setWornArmor(armor);
   // Station interact pipeline. TOGGLE: if the station window is already
   // open, E closes it (bubble fades back); otherwise open + suppress the
   // bubble. The explosion only plays on the OPEN press.

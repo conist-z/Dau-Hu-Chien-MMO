@@ -1016,8 +1016,22 @@ export class WorldScene extends Phaser.Scene {
     }
     // Keep the 8-way facing label in sync with the raw input (used by
     // getSelfDir for actions); rendering blends the vector separately.
+    // MOUSE-FACING PRIORITY (user 28/09 "fix lại cho target arrow box thôi"):
+    // while a valid hover/aim tile exists (NOT the tile we stand on) the box
+    // is the ONLY facing authority — setLocalInput must NOT re-stamp
+    // selfDir from the movement vector, or the two writers fight every
+    // frame and the avatar twitches between cursor-facing and move-facing
+    // (the reported "lúc đây lúc kia" jitter). Movement facing only wins
+    // when there is no box target at all.
     if (dx !== 0 || dy !== 0) {
-      this.selfDir = this.dominantDir(dx, dy);
+      const dir = this.dominantDir(dx, dy);
+      const aimTile = this.mobileAimTile ?? this.mouseTile;
+      const boxOwnsFacing = !!aimTile &&
+        (aimTile.x !== Math.floor(this.selfX) ||
+         aimTile.y !== Math.floor(this.selfY));
+      if (!boxOwnsFacing) {
+        this.selfDir = dir;
+      }
     }
   }
 
@@ -1791,7 +1805,13 @@ export class WorldScene extends Phaser.Scene {
   setSelfArmor(equipped: Record<string, string> | null | undefined): void {
     this.selfArmor = equipped ?? null;
     this.selfDoll?.setArmor(this.selfArmor);
+    // Mirror into the DOM equipment tab (worn slots) — same payload the
+    // paperdoll consumes, so both views always agree.
+    this.onSelfArmorChanged?.(this.selfArmor);
   }
+
+  /** Set by main.ts: repaint the DOM EQUIPMENT tab's worn slots (hud UI). */
+  onSelfArmorChanged: ((armor: Record<string, string> | null) => void) | null = null;
 
   /** Update the SELF hand from the local hotbar (instant, no server wait). */
   setSelfHeldFromHotbar(hotbar: (string | null)[], slot: number): void {
