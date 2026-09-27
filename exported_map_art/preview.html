@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Map art export — xem trước</title>
+<style>
+  body { background:#1a1c23; color:#dde; font-family:system-ui,sans-serif; padding:20px; margin:0; }
+  h1 { font-size:20px; margin:8px 0; }
+  p { color:#99a; font-size:13px; margin:4px 0 16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; }
+  .card { background:#22252e; border-radius:10px; padding:12px; }
+  .card img { width:100%; height:220px; object-fit:contain; background:
+    repeating-conic-gradient(#2a2d38 0% 25%, #20232c 0% 50%) 50% / 20px 20px; border-radius:6px; }
+  .card .name { font-size:13px; margin-top:8px; color:#cde; word-break:break-all; }
+  .card .size { font-size:11px; color:#889; margin-top:2px; }
+</style>
+</head>
+<body>
+<h1>Map art export — ảnh nền của minimap (hub phải)</h1>
+<p>Đây là canvas "map-bake" render offline từ tileset Tiled — đúng ảnh mà trang Map trong hub bar dùng làm minimap. Kéo thả file PNG trong thư mục này vào ChatGPT để làm mẫu.</p>
+<div class="grid" id="grid"></div>
+<script>
+const maps = [
+  ["bigmap.png", "5760×3840"],
+  ["lobbytrade.png", "1920×1920"],
+  ["montertradebase.png", ""],
+  ["test-map.png", ""],
+  ["ekonia/overworld.png", "4352×3328"],
+  ["ekonia/cave_area1.png", "1648×896"],
+  ["ekonia/dungeon.png", ""],
+  ["ekonia/dungeon_entrance.png", ""],
+  ["ekonia/forest.png", ""],
+  ["ekonia/arena_1.png", ""],
+  ["ekonia/castle_outside_building.png", ""],
+  ["ekonia/goblin_shaman_house.png", ""],
+  ["ekonia/guild_arena_1.png", ""],
+  ["ekonia/guild_arena_2.png", ""],
+  ["ekonia/guild_arena_3.png", ""],
+  ["ekonia/guild_house_inside_map.png", ""],
+  ["ekonia/guild_house_outside_building.png", ""],
+  ["ekonia/guild_outpost_base_inside_map.png", ""],
+  ["ekonia/guild_outpost_base_outside_building.png", ""],
+  ["ekonia/jail_room.png", "384×224"],
+  ["ekonia/mining_vending.png", "144×128"],
+  ["ekonia/misc_buildings_house.png", "176×224"],
+  ["ekonia/misc_buildings_house_1.png", "352×256"],
+  ["ekonia/smith_house_inside_map.png", "480×288"],
+  ["ekonia/smith_house_outside_building.png", "192×160"],
+  ["ekonia/spar_house_inside_map.png", "1728×592"],
+  ["ekonia/spar_house_outside_building.png", "288×224"],
+  ["ekonia/trade_house_inside_map.png", "560×560"],
+  ["ekonia/trade_house_outside_building.png", "272×256"],
+];
+const grid = document.getElementById("grid");
+for (const [f, size] of maps) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<img src="${f}" loading="lazy" onerror="this.replaceWith('(không có ảnh)')">
+    <div class="name">${f}</div><div class="size">${size || "&nbsp;"}</div>`;
+  grid.appendChild(card);
+}
+</script>
+</body>
+</html>
