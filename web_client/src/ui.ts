@@ -47,7 +47,7 @@ import {
   CRAFT_QUICK_GRID,
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
   CRAFT_TITLE, EQUIP_CHAR_RING, EQUIP_CHAR_SLOTS, EQUIP_CHAR_TRINKET,
-  EQUIP_MANNEQUIN, EQUIP_SLOT_ATOM, EQUIPMENT_GRID, EQUIPMENT_PANEL,
+  EQUIP_MANNEQUIN, EQUIPMENT_GRID, EQUIPMENT_PANEL,
   EQUIPMENT_TITLE, EQUIP_WORN_SLOTS, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
   PURSE_COIN_X, PURSE_CRYSTAL_X, PURSE_DIGIT,
@@ -552,8 +552,21 @@ export class Hud {
     const craftActive = this.craftTab.classList.contains("active");
     const equipActive = this.equipTab.classList.contains("active");
     if (equipActive) {
-      scan(this.invEquipWrap, "worn");
-      scan(this.invEquipWrap, "bag");
+      // ONE scan over the equip panel — each cell's data-slot prefix (w<i>
+      // = worn, plain <i> = bag) decides its drop type. Scanning the same
+      // wrap twice pushed every cell as BOTH worn AND bag hits; the closer
+      // one won the sort, so bag->worn drops landed back in the bag (the
+      // "kéo vật phẩm trong inv của trang bị không được" bug).
+      this.invEquipWrap.querySelectorAll<HTMLElement>(".slot-pix").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const dx = x - (r.left + r.width / 2);
+        const dy = y - (r.top + r.height / 2);
+        const d = Math.hypot(dx, dy);
+        const idx = el.dataset.slot;
+        if (d > RADIUS || idx === undefined) return;
+        if (idx.startsWith("w")) hits.push({ from: "worn", index: Number(idx.slice(1)), d });
+        else hits.push({ from: "bag", index: Number(idx), d });
+      });
     } else if (craftActive) {
       scan(this.invCraftWrap, "mat");
       scan(this.invItemsCraftWrap, "bag");
@@ -944,7 +957,9 @@ export class Hud {
     for (let i = 0; i < cells; i++) {
       const [x, y] = slotXY(g, i);
       const st = this.inventory.bag[i] ?? null;
-      const slot = makeSlot(g.slotW, x, y, EQUIP_SLOT_ATOM, {
+      // Same DARK cell atom as the inventory panel (user: "box của inv
+      // trang bị nên không trong suốt, y như inv túi đồ").
+      const slot = makeSlot(g.slotW, x, y, INV_SLOT, {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
         qty: st && st.qty > 1 ? String(st.qty) : "",
