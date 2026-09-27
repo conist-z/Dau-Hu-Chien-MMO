@@ -10,8 +10,8 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-cMQFCsjm.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-C4eBJz0W.css">
+    <script type="module" crossorigin src="./assets/index-gT2TzH7U.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-D-oWkDLD.css">
   </head>
   <body>
     <!-- Landscape lock (mobile): covers the screen when a touch device is
@@ -477,16 +477,11 @@
             <button class="panel-close" data-panel="inv" type="button" title="Đóng túi đồ"></button>
           </div>
           <!-- EQUIPMENT (V5 Equipment.json frame_01): 148×85 — mannequin+
-               worn armor sockets on the left, 4×4 carried pieces on the
-               right. Drag bag↔slot↔slot like craft materials. -->
+               worn armor sockets on the left, the FULL 5×4 BAG on the
+               right (same cells as the inventory panel). -->
           <div id="inv-equip-wrap" class="panel-wrap hidden">
             <img class="panel" src="ui/v5/layers/equip_frame.png" alt="" draggable="false">
             <button class="panel-close" data-panel="equip" type="button" title="Đóng trang bị"></button>
-          </div>
-          <!-- Inventory panel is ALSO visible on the equip tab (drag partner) -->
-          <div id="inv-items-equip" class="panel-wrap hidden">
-            <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
-            <button class="panel-close" data-panel="inv" type="button" title="Đóng túi đồ"></button>
           </div>
           <!-- Selected recipe detail (inputs → output, needs-table hint) -->
           <div id="craft-detail" class="hidden"></div>

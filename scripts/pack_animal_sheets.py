@@ -38,9 +38,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 # Minifolks art faces RIGHT natively (wolf ears / bunny ears / deer head sit
 # on the RIGHT of the body; atk thrusts extend +7px RIGHT) — NO mirror needed:
-# the client flips the sheet itself for W/NW/SW facing. The bird is the one
-# LEFT-facing exception — flip ONLY it so every sheet is right-facing.
-FLIP_ONLY = {"bird"}
+# the client flips the sheet itself for W/NW/SW facing.
+# NOTE (user 28/09 "con chim bay ngược"): an earlier revision flipped the
+# BIRD here because MiniBird art faces left — but that made the client's
+# own flipX double-mirror it, so the bird flew backwards while moving.
+# The bird ships UNFLIPPED (left-facing native); the client's
+# zombieRowFacing maps E->"right row" and flipX mirrors correctly.
+FLIP_ONLY: set = set()  # no per-kind sheet mirroring anymore
 
 # Per-kind ART fill (fraction of the 32px cell the animal's height covers):
 # one blanket 88% turned the bunny into a giant — small critters must stay

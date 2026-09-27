@@ -80,7 +80,10 @@ MOB_PROFILES: Dict[str, dict] = {
 # wolf is HOSTILE day AND night (user choice: "ngày đêm như nhau") but rides
 # the ambient pool so its population is independent of the night-mob cap.
 AMBIENT_DEFAULTS = {
-    "ambient_max": 6,
+    # USER 28/09: "số lượng khá thưa thớt" — modest bump (6 -> 10 / 5 -> 8)
+    # + flock cohesion in the wander steering (same-kind animals drift
+    # toward each other and share heading) instead of adding many more mobs.
+    "ambient_max": 10,
     "ambient_chance": 0.30,
     "ambient_day_scale": 1.0,
     "ambient_night_scale": 0.35,
@@ -88,15 +91,15 @@ AMBIENT_DEFAULTS = {
 
 MOB_PROFILES["bigmap"].update({
     "ambient_kinds": {
-        "bunny": 34, "deer": 20, "bird": 14, "fox": 12,
+        "bunny": 30, "deer": 18, "bird": 16, "fox": 10,
         "boar": 12, "deer2": 5, "wolf": 6, "bear": 2,
     },
 })
 MOB_PROFILES["ekonia/forest"].update({
     "ambient_kinds": {
-        "bunny": 40, "deer": 24, "bird": 16, "fox": 12, "boar": 8,
+        "bunny": 36, "deer": 22, "bird": 18, "fox": 10, "boar": 8,
     },
-    "ambient_max": 5,
+    "ambient_max": 8,
 })
 # ekonia/cave_area1: NO ambient key — a cave has no daytime wildlife.
 # TRADE ZONES (user 28/09: "chợ không nên có động vật bên trong"): the
@@ -279,6 +282,10 @@ MOB_BEHAVIORS: Dict[str, dict] = {
     # docs hồ sơ: theHunter CotW alert/flight-initiation, Minecraft fox
     # sneak-parity, Valheim boar warn-charge, boids scatter, wolf kung-fu
     # circle).
+    # FLOCKING (user 28/09: "tương tác bầy đàn"): flock_r = cohesion radius
+    # (same-kind animals drift toward the group centroid + share heading);
+    # flock_w = blend weight of the cohesion pull (0 = lone wolf behavior).
+    "flock_r": 7.0, "flock_w": 0.35,
     # prey: never attacks; ALERT stand (alert_s) THEN flees, and keeps
     # running to panic_overrun x flee_vision before calming down.
     "bunny":     dict(style="prey", flee_vision=11.25, flee_mult=1.35,

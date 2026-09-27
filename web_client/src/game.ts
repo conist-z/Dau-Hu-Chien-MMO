@@ -31,6 +31,8 @@ interface MobSheetInfo {
   /** Minifolks wildlife: ONE facing per sheet — never pick up/down rows,
    * flipX only for leftward facing. */
   singleFacing?: boolean;
+  /** Left-facing native art (the bird): flipX when facing RIGHT instead. */
+  flipFacing?: boolean;
   /** Displayed ART height (px): the verbatim pack cell is mostly
    * transparent around the animal — the HP bar anchors to this, not `size`. */
   artH?: number;
@@ -149,7 +151,9 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   bird: {
-    texKey: "mob-bird", size: 32, artH: 14, cellW: 32, cellH: 32, singleFacing: true,
+    // LEFT-facing native art (MiniBird beak points left) — everything else
+    // in this pack faces right. flipFacing flips the convention below.
+    texKey: "mob-bird", size: 24, artH: 11, cellW: 32, cellH: 32, singleFacing: true, flipFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
   },
   boar: {
@@ -3794,7 +3798,11 @@ export class WorldScene extends Phaser.Scene {
   private zombieFlipX(facing: string, kind?: string): boolean {
     const f = (facing || "S").toUpperCase();
     const left = f === "W" || f === "NW" || f === "SW";
-    if (kind && MOB_SHEETS[kind]?.singleFacing) return left;
+    const sheet = kind ? MOB_SHEETS[kind] : undefined;
+    // Left-facing native art (bird): mirror when moving RIGHT, not left —
+    // the old sheet-side flip double-mirrored and the bird flew backwards.
+    if (sheet?.flipFacing) return !left;
+    if (sheet?.singleFacing) return left;
     return left;
   }
 

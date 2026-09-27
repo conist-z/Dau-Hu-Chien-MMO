@@ -58,7 +58,8 @@ MOB_KINDS: Dict[str, dict] = {
     "spectre":   dict(hp=135, dmg=9,  speed=1.8, cooldown=2.4, weight=3),   # lvl32/HP270 ghost, RANGED
     "goblin":    dict(hp=45,  dmg=4,  speed=2.4, cooldown=2.0, weight=3),   # lvl7/HP90 weak nuisance
     "hobgoblin": dict(hp=130, dmg=13, speed=2.2, cooldown=1.8, weight=4),   # lvl42/HP260 aggressive bruiser
-    # ---- daytime wildlife (Minifolks Forest Animals; ambient pool, no    # hostile-weight 0 means they only spawn via the ambient roster) -------
+    # ---- daytime wildlife (Minifolks Forest Animals; ambient pool, no
+    # hostile-weight 0 means they only spawn via the ambient roster) -------
     # Prey flee before fighting, so their dmg only matters when cornered.
     "bunny":  dict(hp=8,  dmg=2,  speed=2.4, cooldown=2.0, weight=0),  # flee mult 1.35 -> ~3.2 real
     "deer":   dict(hp=22, dmg=4,  speed=2.3, cooldown=2.2, weight=0),  # big meat sack
@@ -1210,25 +1211,73 @@ def _web_ambient_move(state, collision, players, now_mono: float, dt: float,
                             result.changed = True
             else:
                 z.aggro_until = 0.0
-                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                _web_ambient_wander(z, rng, collision, step, now_mono, result, state=state)
             continue
         # neutral / others: calm wander (aggro never persists into the day
         # gate for these because the day gate only runs this function).
-        _web_ambient_wander(z, rng, collision, step, now_mono, result)
+        _web_ambient_wander(z, rng, collision, step, now_mono, result, state=state)
 
 
 def _web_ambient_wander(z, rng, collision, step, now_mono: float,
-                        result: "ZombieTurnResult") -> None:
-    """Calm wander with a PERSISTENT heading: walk one direction 1.5-4 s at
-    ~35% speed, then stand 1-3 s, then pick again. The long walk windows
-    keep the server anim stable ("walk" for seconds) so the client's frame
-    timer actually advances — no more frozen-looking walkers."""
+                        result: "ZombieTurnResult", state=None) -> None:
+    """Calm wander with a PERSISTENT heading + FLOCK COHESION (user 28/09
+    "tương tác bầy đàn"): same-kind animals within flock_r blend their
+    heading toward the group's average (Reynolds alignment/cohesion, light
+    touch) so deer cluster into loose herds and birds into flocks instead
+    of scattering like random NPCs. Solo animals wander exactly as before.
+    Walk one direction 1.5-4 s at ~35% speed, then stand 1-3 s, then pick
+    again."""
     if now_mono >= getattr(z, "wander_until", 0.0):
         import math as _math
 
         if rng.random() < 0.6:  # 60% stroll, 40% graze
             ang = rng.uniform(0, 2 * _math.pi)
             z.recover_dx, z.recover_dy = _math.cos(ang), _math.sin(ang)
+            # FLOCK BIAS: blend the fresh heading toward same-kind neighbors
+            # within flock_r (cheap local pass — animal counts are tiny).
+            try:
+                from game.mob_profiles import behavior_of as _beh
+
+                beh = _beh(z.kind)
+                flock_r = float(beh.get("flock_r", 0.0))
+                flock_w = float(beh.get("flock_w", 0.0))
+            except Exception:  # noqa: BLE001 — flocking must never break the tick
+                flock_r = flock_w = 0.0
+            if flock_r > 0.0 and flock_w > 0.0 and state is not None:
+                mates = [
+                    o for o in _web_zombies(state)
+                    if o is not z and getattr(o, "ambient", False)
+                    and o.kind == z.kind and _web_dist(o, z) <= flock_r
+                ]
+                if mates:
+                    # Cohesion: toward the centroid; Alignment: average of
+                    # the mates' current headings (unit-weighted).
+                    cx = sum(o.x_f for o in mates) / len(mates)
+                    cy = sum(o.y_f for o in mates) / len(mates)
+                    hx = sum(o.recover_dx for o in mates) / len(mates)
+                    hy = sum(o.recover_dy for o in mates) / len(mates)
+                    coh = _math.hypot(cx - z.x_f, cy - z.y_f)
+                    if coh > 1e-3:
+                        ux, uy = (cx - z.x_f) / coh, (cy - z.y_f) / coh
+                    else:
+                        ux, uy = z.recover_dx, z.recover_dy
+                    hl = _math.hypot(hx, hy)
+                    if hl > 1e-3:
+                        ux += (hx / hl) * 0.6
+                        uy += (hy / hl) * 0.6
+                    ul = _math.hypot(ux, uy)
+                    if ul > 1e-3:
+                        ux, uy = ux / ul, uy / ul
+                        z.recover_dx = (
+                            z.recover_dx * (1.0 - flock_w) + ux * flock_w
+                        )
+                        z.recover_dy = (
+                            z.recover_dy * (1.0 - flock_w) + uy * flock_w
+                        )
+                        # Re-normalize the blended heading.
+                        bl = _math.hypot(z.recover_dx, z.recover_dy) or 1.0
+                        z.recover_dx /= bl
+                        z.recover_dy /= bl
             z.wander_walking = True
             z.wander_until = now_mono + rng.uniform(1.5, 4.0)
         else:
@@ -1481,7 +1530,7 @@ def web_tick(
             # Calm again: clear clocks, wander on.
             z.panic_until = 0.0
             z.aggro_until = 0.0
-            _web_ambient_wander(z, rng, collision, step, now_mono, result)
+            _web_ambient_wander(z, rng, collision, step, now_mono, result, state=state)
             continue
 
         # ---- NEUTRAL (boar/bear): wanders calmly; fights back ONLY while
@@ -1490,7 +1539,7 @@ def web_tick(
             if now_mono >= getattr(z, "aggro_until", 0.0):
                 z.boar_warned = False
                 z.aggro_origin = None
-                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                _web_ambient_wander(z, rng, collision, step, now_mono, result, state=state)
                 continue
             # O4c/O5c DEFENSIVE LEASH: pursuit is capped around the spot
             # where the aggro began (Vintage Story boar / bear endurance).
@@ -1504,7 +1553,7 @@ def web_tick(
                     # off (bear) — no map-spanning chases.
                     z.aggro_until = 0.0
                     z.aggro_origin = None
-                    _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                    _web_ambient_wander(z, rng, collision, step, now_mono, result, state=state)
                     continue
             # BOAR O4a warn-charge (user 28/09: "con lợn đâu thấy có gì khác
             # đâu" — the old version's warning was a stand-still blip; now):
