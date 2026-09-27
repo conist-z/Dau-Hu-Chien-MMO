@@ -46,7 +46,9 @@ import {
   CRAFT_MAT_GRID, CRAFT_MAT_GRID_SMALL, CRAFT_PANEL, CRAFT_QUICK_CELL,
   CRAFT_QUICK_GRID,
   CRAFT_RESULT, CRAFT_RESULT_ATOM, CRAFT_TABS,
-  CRAFT_TITLE, INV_COIN, INV_CRYSTAL,
+  CRAFT_TITLE, EQUIP_CHAR_RING, EQUIP_CHAR_SLOTS, EQUIP_CHAR_TRINKET,
+  EQUIP_MANNEQUIN, EQUIP_SLOT_ATOM, EQUIPMENT_GRID, EQUIPMENT_PANEL,
+  EQUIPMENT_TITLE, EQUIP_WORN_SLOTS, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
   PURSE_COIN_X, PURSE_CRYSTAL_X, PURSE_DIGIT,
   itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
@@ -103,6 +105,7 @@ const DAYNIGHT_NAMES: Record<string, string> = {
 // Hotbar slot icons: bundled Twemoji codepoints are a SERVER-side concern;
 // on web we render emoji glyphs directly (zero asset dependency).
 const ITEM_EMOJI: Record<string, string> = {
+  leatherhelmet: "🪖", leatherchest: "🥋", leatherleggings: "👖",
   wood: "🪵", plank: "🟫", stone: "🪨", dirt: "🟤", stick: "🥢",
   grass: "🌿", sand: "🏖️", coin: "🪙", rotten_flesh: "🍖",
   crafting_table: "🛠️", furnace: "🔥",   wood_axe: "🪓", wood_pickaxe: "⛏️", wood_sword: "🗡️", wood_shovel: "🥄",
@@ -145,10 +148,15 @@ function fmtClock(secondsOfDay: number): string {
 /** One stack living in a grid (bag slot or craft material slot). */
 interface Stack { id: string; qty: number }
 
+/** Armor item ids (client mirror of game/items.py armor registry). Must
+ *  match the server's armor_slot_of coverage — the equipment panel's 4x4
+ *  carried grid filters the bag down to exactly these. */
+const ARMOR_IDS = new Set(["leatherhelmet", "leatherchest", "leatherleggings"]);
+
 /** Drag payload: which grid a drag started from + the stack. */
 interface DragSrc {
-  from: "bag" | "mat" | "result";
-  index: number;
+  from: "bag" | "mat" | "result" | "worn";
+  index: number; // "worn": slot index into EQUIP_WORN_SLOTS
   stack: Stack;
 }
 
@@ -190,9 +198,12 @@ export class Hud {
   private invItemsWrap = document.getElementById("inv-items-wrap")!;
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
   private invItemsCraftWrap = document.getElementById("inv-items-craft")!;
+  private invEquipWrap = document.getElementById("inv-equip-wrap") as HTMLElement;
+  private invItemsEquipWrap = document.getElementById("inv-items-equip") as HTMLElement;
   private craftDetail = document.getElementById("craft-detail")!;
   private craftTab: HTMLElement;
   private itemsTab: HTMLElement;
+  private equipTab: HTMLElement;
   private selectedQuick: number | null = null; // quick-craft catalog index
   private nearTable = false; // updated from snapshots (server truth)
 
@@ -229,6 +240,11 @@ export class Hud {
   private lastTabClick: { group: string; at: number } | null = null;
 
   private inventory: InventoryPayload = { bag: [], hotbar: [] };
+  // EQUIPMENT tab: worn paperdoll slots (server truth via welcome/snapshot
+  // "armor") mirrored locally for instant painting. Armor items carried in
+  // the bag render in the 4x4 grid straight from this.inventory.bag —
+  // filtering happens at paint time (armor_slot_of), NOT by reordering.
+  private wornArmor: Record<string, string> = {};
   // Server-driven emoji map (welcome.item_emojis): every item the player has
   // EVER received gets its proper icon; the static fallback below only
   // covers the bootstrap moment before welcome arrives.
@@ -283,6 +299,8 @@ export class Hud {
       inRect(this.invItemsWrap) ||
       inRect(this.invCraftWrap) ||
       inRect(this.invItemsCraftWrap) ||
+      inRect(this.invEquipWrap) ||
+      inRect(this.invItemsEquipWrap) ||
       inRect(this.hotbarEl) || // release over the hotbar = move/cancel, NEVER a throw
       inRect(this.invPanel)
     );
@@ -314,7 +332,8 @@ export class Hud {
     // Tab switching
     this.itemsTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=items]")!;
     this.craftTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=craft]")!;
-    [this.itemsTab, this.craftTab].forEach((tab) => {
+    this.equipTab = document.querySelector<HTMLElement>(".inv-tab[data-tab=equip]")!;
+    [this.itemsTab, this.craftTab, this.equipTab].forEach((tab) => {
       tab.addEventListener("click", () => {
         // Tab click while fully closed reopens BOTH panels (reset state).
         if (this.invPanel.classList.contains("hidden")) {
@@ -338,18 +357,27 @@ export class Hud {
     document.querySelectorAll<HTMLButtonElement>(".panel-close").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.closePanel(btn.dataset.panel as "inv" | "craft");
+        this.closePanel(btn.dataset.panel as "inv" | "craft" | "equip");
       });
     });
     // Panel geometry once at boot (V5: integer scale, exact local bboxes).
     sizePanel(this.invItemsWrap, INVENTORY_PANEL);
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
     sizePanel(this.invItemsCraftWrap, INVENTORY_PANEL);
+    sizePanel(this.invEquipWrap, EQUIPMENT_PANEL);
+    sizePanel(this.invItemsEquipWrap, INVENTORY_PANEL);
     this.attachCraftScrollHandler();
     // Static kit layers — placed once, exact bboxes.
     this.invItemsWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invItemsCraftWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
     this.invCraftWrap.append(makeLayer(CRAFT_TITLE), ...CRAFT_LAYERS.map((l) => makeLayer(l)));
+    // Equipment panel: title + mannequin + socket/trinket art (the worn
+    // slots and the 4x4 carried grid render per-frame in renderEquipPanel).
+    this.invEquipWrap.append(
+      makeLayer(EQUIPMENT_TITLE), makeLayer(EQUIP_CHAR_SLOTS),
+      makeLayer(EQUIP_MANNEQUIN), makeLayer(EQUIP_CHAR_TRINKET),
+      makeLayer(EQUIP_CHAR_RING),
+    );
     // PURSE: the coin/crystal icons are drag sources — mousedown starts a
     // purse drag (ghost of the icon), release OUTSIDE the panel withdraws
     // exactly ONE unit into the bag (server op purse_withdraw).
@@ -420,7 +448,7 @@ export class Hud {
           this.cancelDrag();
           return;
         }
-        this.dropOn(t.from as "bag" | "mat", t.index);
+        this.dropOn(t.from as "bag" | "mat" | "worn", t.index);
         return;
       }
       // DRAG OUT + RELEASE outside every panel = throw the stack into the
@@ -479,7 +507,7 @@ export class Hud {
       const t = this.nearestDropTarget(e.clientX, e.clientY);
       if (t) {
         if (t.from === "result") { this.cancelDrag(); return; }
-        this.dropOn(t.from as "bag" | "mat", t.index);
+        this.dropOn(t.from as "bag" | "mat" | "worn", t.index);
         return;
       }
       if (!this.pointInPanels(e.clientX, e.clientY) && this.onThrow) {
@@ -498,10 +526,10 @@ export class Hud {
    *  started from a hotbar div needs this to move BETWEEN hotbar slots —
    *  previously only the exact-cell mouseup path accepted a hotbar drop,
    *  near-misses sprang back and the drag felt broken on touch). */
-  private nearestDropTarget(x: number, y: number): { from: "bag" | "mat" | "result"; index: number } | null {
+  private nearestDropTarget(x: number, y: number): { from: "bag" | "mat" | "result" | "worn"; index: number } | null {
     const RADIUS = 26; // px — generous snap (slot is 42px at scale 3)
-    const hits: { from: "bag" | "mat" | "result"; index: number; d: number }[] = [];
-    const scan = (wrap: HTMLElement, from: "bag" | "mat") => {
+    const hits: { from: "bag" | "mat" | "result" | "worn"; index: number; d: number }[] = [];
+    const scan = (wrap: HTMLElement, from: "bag" | "mat" | "worn") => {
       wrap.querySelectorAll<HTMLElement>(".slot-pix").forEach((el) => {
         const r = el.getBoundingClientRect();
         const dx = x - (r.left + r.width / 2);
@@ -509,7 +537,7 @@ export class Hud {
         const d = Math.hypot(dx, dy);
         const idx = el.dataset.slot;
         if (d <= RADIUS && idx !== undefined) {
-          hits.push({ from, index: Number(idx), d });
+          hits.push({ from, index: Number(idx.replace(/^w/, "")), d });
         }
       });
     };
@@ -530,7 +558,11 @@ export class Hud {
       if (d <= RADIUS) hits.push({ from: "result", index: 0, d });
     }
     const craftActive = this.craftTab.classList.contains("active");
-    if (craftActive) {
+    const equipActive = this.equipTab.classList.contains("active");
+    if (equipActive) {
+      scan(this.invEquipWrap, "worn");
+      scan(this.invItemsEquipWrap, "bag");
+    } else if (craftActive) {
       scan(this.invCraftWrap, "mat");
       scan(this.invItemsCraftWrap, "bag");
     } else {
@@ -728,15 +760,27 @@ export class Hud {
    *  visibility. Called on every tab click / X press. */
   private applyTabLayout(slideInv = false): void {
     const craftActive = this.craftTab.classList.contains("active");
+    const equipActive = this.equipTab.classList.contains("active");
     // Tab strip: hide the tabs entirely only when BOTH panels are closed.
     const tabsEl = this.craftTab.parentElement;
     if (tabsEl) {
       tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
     }
-    if (craftActive) {
+    if (equipActive) {
+      // EQUIP tab: the equipment panel + its own bag drag partner.
+      const showEquip = this.visiblyShow(this.invEquipWrap, this.craftClosed);
+      const showBag = this.visiblyShow(this.invItemsEquipWrap, this.invClosed);
+      this.invItemsWrap.classList.add("hidden");
+      this.invCraftWrap.classList.add("hidden");
+      this.invItemsCraftWrap.classList.add("hidden");
+      if (showEquip) this.playTabIn(this.invEquipWrap);
+      if (showBag) this.playTabIn(this.invItemsEquipWrap);
+    } else if (craftActive) {
       const showCraft = this.visiblyShow(this.invCraftWrap, this.craftClosed);
       const showBag = this.visiblyShow(this.invItemsCraftWrap, this.invClosed);
       this.invItemsWrap.classList.add("hidden");
+      this.invEquipWrap.classList.add("hidden");
+      this.invItemsEquipWrap.classList.add("hidden");
       // Tab-swap entrance animation on whichever wrap(s) just appeared.
       if (showCraft) this.playTabIn(this.invCraftWrap);
       if (showBag) this.playTabIn(this.invItemsCraftWrap);
@@ -744,6 +788,8 @@ export class Hud {
       const showBag = this.visiblyShow(this.invItemsWrap, this.invClosed);
       this.invCraftWrap.classList.add("hidden");
       this.invItemsCraftWrap.classList.add("hidden");
+      this.invEquipWrap.classList.add("hidden");
+      this.invItemsEquipWrap.classList.add("hidden");
       if (showBag) this.playTabIn(this.invItemsWrap);
     }
     if (slideInv && !this.invClosed) {
@@ -769,11 +815,12 @@ export class Hud {
 
   /** A panel X was pressed: close THAT panel only (user rule), keep the
    *  other one, and sync the tab strip highlight. */
-  private closePanel(which: "inv" | "craft"): void {
+  private closePanel(which: "inv" | "craft" | "equip"): void {
     if (which === "inv") {
       this.invClosed = true;
       // On the items tab the inv panel is the only one: whole window goes.
-      if (!this.craftTab.classList.contains("active")) {
+      if (!this.craftTab.classList.contains("active") &&
+          !this.equipTab.classList.contains("active")) {
         this.stationOpen = false;
         this.animateHide(this.invPanel);
         this.onPanelWindowClosed?.();
@@ -781,6 +828,16 @@ export class Hud {
       }
       this.applyTabLayout();
       this.renderInventory();
+    } else if (which === "equip") {
+      // Equip X: same per-panel rule as craft — panel hides, bag stays.
+      this.craftClosed = true;
+      this.applyTabLayout(true);
+      if (this.invClosed) {
+        this.stationOpen = false;
+        this.animateHide(this.invPanel);
+        this.onPanelWindowClosed?.();
+        return;
+      }
     } else {
       this.craftClosed = true;
       // Craft X on the craft tab: craft hides, the bag slides up. The tab
@@ -815,20 +872,123 @@ export class Hud {
     const tableFlipped = this.nearTable !== this.lastNearTable;
     const bagSig = JSON.stringify(this.inventory.bag);
     const craftActive = this.craftTab.classList.contains("active");
+    const equipActive = this.equipTab.classList.contains("active");
     const purseSig = `${this.purseCoins}:${this.purseCrystals}`;
     const sig = bagSig + "|" + (craftActive ? "craft" : "items") +
+      "|" + (equipActive ? "equip" : "-") +
       "|" + (this.nearTable ? 1 : 0) +
       "|" + (this.parkedResult ? this.parkedResult.id + this.parkedResult.qty : "-") +
-      "|" + purseSig;
+      "|" + purseSig +
+      "|" + JSON.stringify(this.wornArmor);
     if (sig === this.lastBagSig && this.drag === null && !tableFlipped) return;
     this.lastBagSig = sig;
     this.lastNearTable = this.nearTable;
     this.renderPurse(craftActive);
-    if (craftActive) {
+    if (equipActive) {
+      this.renderBagGrid(this.invItemsEquipWrap); // equip tab: drag partner
+      this.renderEquipPanel();
+    } else if (craftActive) {
       this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
       this.renderCraftPanel();
     } else {
       this.renderBagGrid(this.invItemsWrap);
+    }
+  }
+
+  // ===== RENDER: equipment tab =====
+
+  /** Equipment panel: worn paperdoll slots (left) + 4x4 carried armor
+   *  grid (right). Drag sources: any WORN piece, any bag stack. Drops:
+   *  worn slots (server validates slot match), bag cells (unequip/swap).
+   *  The carried grid lists ONLY armor items — a read-only FILTERED view
+   *  of the bag (indices map to real bag cells), so moving a sword never
+   *  gets eaten by this panel. */
+  private renderEquipPanel(): void {
+    this.invEquipWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
+    // --- WORN slots (left, over the mannequin sockets) ---
+    for (const w of EQUIP_WORN_SLOTS) {
+      const stem = this.wornArmor[w.slot] ?? null;
+      const itemId = stem === this.wornArmor[w.slot] && stem ? stem : stem;
+      // stem IS the item id (leatherhelmet etc.) — the manifest armor keys
+      // equal the item ids by design.
+      const slot = makeSlot(14, w.x, w.y, EQUIP_SLOT_ATOM, {
+        iconUrl: stem ? itemIconUrl(stem) : undefined,
+        emoji: stem ? iconFor(stem, this.itemEmojis) : "",
+        title: stem ? itemId : undefined,
+      });
+      // Drop-target addressing: nearestDropTarget scans .slot-pix elements
+      // by data-slot — worn cells carry "w<i>" (i = EQUIP_WORN_SLOTS index).
+      slot.dataset.slot = `w${EQUIP_WORN_SLOTS.indexOf(w)}`;
+      if (stem) {
+        slot.classList.add("has-item");
+        slot.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          this.startDrag({ from: "worn", index: EQUIP_WORN_SLOTS.indexOf(w), stack: { id: stem, qty: 1 } }, e);
+        });
+        slot.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return;
+          e.preventDefault();
+          try { slot.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+          this.startDrag({ from: "worn", index: EQUIP_WORN_SLOTS.indexOf(w), stack: { id: stem, qty: 1 } }, e);
+        });
+        // Plain click on a worn piece = UNEQUIP (server op; lands in bag).
+        slot.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.onArmorEquipCb?.("unequip", w.slot, null);
+        });
+      } else {
+        slot.title = `Ô ${w.slot}`;
+      }
+      this.invEquipWrap.appendChild(slot);
+    }
+    // --- Carried armor (right 4x4): filtered bag view ---
+    const armorBag: { bagIndex: number; stack: Stack }[] = [];
+    for (const b of this.inventory.bag) {
+      if (b && ARMOR_IDS.has(b.id)) armorBag.push({ bagIndex: this.inventory.bag.indexOf(b), stack: b });
+    }
+    const g = EQUIPMENT_GRID;
+    const cells = g.cols * g.rows;
+    for (let i = 0; i < cells; i++) {
+      const [x, y] = slotXY(g, i);
+      const entry = armorBag[i] ?? null;
+      const slot = makeSlot(g.slotW, x, y, EQUIP_SLOT_ATOM, {
+        iconUrl: entry ? itemIconUrl(entry.stack.id) : undefined,
+        emoji: entry ? iconFor(entry.stack.id, this.itemEmojis) : "",
+        qty: entry && entry.stack.qty > 1 ? String(entry.stack.qty) : "",
+        title: entry ? entry.stack.id : undefined,
+      });
+      if (entry) {
+        slot.classList.add("has-item");
+        slot.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          this.startDrag({ from: "bag", index: entry.bagIndex, stack: { ...entry.stack } }, e);
+        });
+        slot.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return;
+          e.preventDefault();
+          try { slot.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+          this.startDrag({ from: "bag", index: entry.bagIndex, stack: { ...entry.stack } }, e);
+        });
+      }
+      this.invEquipWrap.appendChild(slot);
+    }
+  }
+
+  /** Set by main.ts: armor equip/unequip server op. */
+  private onArmorEquipCb: ((action: "equip" | "unequip", slot: string, itemId: string | null) => void) | null = null;
+  onArmorEquip(cb: (action: "equip" | "unequip", slot: string, itemId: string | null) => void): void {
+    this.onArmorEquipCb = cb;
+  }
+
+  /** Server echo (welcome/snapshot armor payload) → repaint when open. */
+  setWornArmor(armor: Record<string, string> | null | undefined): void {
+    const next = armor ?? {};
+    if (JSON.stringify(next) === JSON.stringify(this.wornArmor)) return;
+    this.wornArmor = next;
+    if (this.inventoryOpen && this.equipTab.classList.contains("active")) {
+      this.renderEquipPanel();
     }
   }
 
@@ -988,7 +1148,7 @@ export class Hud {
     this.dragGhost.style.top = `${y - 16}px`;
   }
 
-  private dropOn(target: "bag" | "mat", index: number): void {
+  private dropOn(target: "bag" | "mat" | "worn", index: number): void {
     const d = this.drag;
     this.endDrag();
     if (!d || (d.from === target && d.index === index)) return;
@@ -1005,9 +1165,21 @@ export class Hud {
       this.matToBag(d.index, index);
     } else if (d.from === "result" && target === "bag") {
       this.resultToBag(index);
+    } else if (d.from === "bag" && target === "worn") {
+      // Bag armor → worn slot: the server validates the slot match and
+      // swaps the previous piece back into the bag (armor_equip op).
+      this.onArmorEquipCb?.("equip", EQUIP_WORN_SLOTS[index]?.slot ?? "", d.stack.id);
+    } else if (d.from === "worn" && target === "worn") {
+      // Worn → worn (helmet onto chest etc.): server refuses (bad_slot),
+      // so just spring back — no optimistic swap to unwind.
+      this.onArmorEquipCb?.("equip", EQUIP_WORN_SLOTS[index]?.slot ?? "", d.stack.id);
     }
-    // result → mat stays deliberately unsupported: the output is server
-    // truth and belongs in the bag (or back on the result slot).
+    // worn → bag: handled via the worn-slot CLICK (unequip) and the
+    // nearestDropTarget worn→bag path below — dragging onto a bag cell
+    // from a worn slot is the unequip gesture.
+    if (d.from === "worn" && target === "bag") {
+      this.onArmorEquipCb?.("unequip", EQUIP_WORN_SLOTS[d.index]?.slot ?? "", null);
+    }
   }
 
   private endDrag(): void {

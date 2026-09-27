@@ -441,6 +441,7 @@
           <div class="inv-tabs">
             <button class="inv-tab active" data-tab="items" type="button">Túi đồ</button>
             <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
+            <button class="inv-tab" data-tab="equip" type="button">Trang bị</button>
             <button class="inv-close" id="inv-close" type="button">✕</button>
           </div>
           <!-- INVENTORY (V5 frame_01): 98×101 frame, 20 slots 5×4 at
@@ -458,6 +459,18 @@
           </div>
           <!-- Inventory panel is ALSO visible on the craft tab (drag source) -->
           <div id="inv-items-craft" class="panel-wrap hidden">
+            <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
+            <button class="panel-close" data-panel="inv" type="button" title="Đóng túi đồ"></button>
+          </div>
+          <!-- EQUIPMENT (V5 Equipment.json frame_01): 148×85 — mannequin+
+               worn armor sockets on the left, 4×4 carried pieces on the
+               right. Drag bag↔slot↔slot like craft materials. -->
+          <div id="inv-equip-wrap" class="panel-wrap hidden">
+            <img class="panel" src="ui/v5/layers/equip_frame.png" alt="" draggable="false">
+            <button class="panel-close" data-panel="equip" type="button" title="Đóng trang bị"></button>
+          </div>
+          <!-- Inventory panel is ALSO visible on the equip tab (drag partner) -->
+          <div id="inv-items-equip" class="panel-wrap hidden">
             <img class="panel" src="ui/v5/layers/inv_frame.png" alt="" draggable="false">
             <button class="panel-close" data-panel="inv" type="button" title="Đóng túi đồ"></button>
           </div>

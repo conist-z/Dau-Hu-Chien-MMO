@@ -803,6 +803,8 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
   }
   body.mobile-ui #inv-panel .inv-tabs { flex: 1 1 100%; }
   body.mobile-ui #inv-panel #inv-items-craft,
+  body.mobile-ui #inv-panel #inv-equip-wrap,
+  body.mobile-ui #inv-panel #inv-items-equip,
   body.mobile-ui #inv-panel #craft-detail { position: relative; }
 }
 /* HIDE the mobile atk/inv buttons while a panel window is open (user:
@@ -894,6 +896,9 @@ body.mobile-ui #mc-actions.mc-hidden {
 #inv-items-wrap .panel-close { left: 261px; top: 9px; }
 #inv-craft-wrap .panel-close { left: 360px; top: 9px; }
 #inv-items-craft .panel-close { left: 261px; top: 9px; }
+/* Equipment panel (148 kit px wide => X at ~137*3=411px) + its bag partner. */
+#inv-equip-wrap .panel-close { left: 411px; top: 9px; }
+#inv-items-equip .panel-close { left: 261px; top: 9px; }
 
 /* Tab-content swap animation: the wrap entering the layout slides in
    (fade + slight rise); the leaving one just disappears (display:none). */

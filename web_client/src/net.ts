@@ -363,8 +363,8 @@ export class Net {
     this.send({ type: "action", name: "turn", dir });
   }
 
-  inventoryOp(op: "move_to" | "use" | "split" | "reorder" | "throw" | "purse_withdraw" | "purse_deposit",
-              payload: { item_id?: string; slot?: number; qty?: number; order?: { id: string; qty: number }[]; direction?: string }): void {
+  inventoryOp(op: "move_to" | "use" | "split" | "reorder" | "throw" | "purse_withdraw" | "purse_deposit" | "armor_equip",
+              payload: { item_id?: string | null; slot?: number | string; qty?: number; order?: { id: string; qty: number }[]; direction?: string; action?: "equip" | "unequip" }): void {
     this.send({ type: MSG_INV_OP, op, ...payload });
   }
 

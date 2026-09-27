@@ -473,6 +473,9 @@ const net = new Net({
     // recreated server-side and defaults to slot 0. Self hand shows the
     // server echo at once (welcome.held), hotbar may still be resolving.
     scene.setSelfHeld(frame.held ?? null);
+    // Worn armor echo (welcome) — equipment panel + paperdoll layers.
+    hud.setWornArmor(frame.armor ?? null);
+    scene.setSelfArmor(frame.armor ?? null);
     net.selectSlot(hud.currentSlot);
     hud.setItemEmojis(frame.item_emojis ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
@@ -529,6 +532,13 @@ const net = new Net({
       keep.forEach((k) => seenDamageKeys.add(k));
     }
     scene.applySnapshot(frame);
+    // Worn armor echo (20 Hz): equipment panel + paperdoll converge to the
+    // server truth after every equip/unequip op (frame.self.armor rides
+    // every snapshot from web_api/snapshots.py).
+    const snapArmor = (frame.self as { armor?: Record<string, string> }).armor;
+    if (snapArmor !== undefined) {
+      hud.setWornArmor(snapArmor ?? null);
+    }
     // Meteor shower events (night bigmap): the FX lane syncs its warning
     // rings / falls / impacts with the server timeline from these rows.
     meteorFx.attach(scene as unknown as Phaser.Scene);
@@ -960,6 +970,13 @@ hud.setBagSync(
 );
 // Result slot click: collect the crafted output into the bag (server op).
 hud.onCollectResult((slot) => net.craftCollect(slot));
+
+// EQUIPMENT panel: armor equip/unequip drags (server validates the slot
+// match and swaps the old piece back into the bag via the inventory delta).
+hud.onArmorEquip((action, slot, itemId) => {
+  if (!slot) return;
+  net.inventoryOp("armor_equip", { action, slot, item_id: itemId });
+});
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held
 // tool only. Silent on purpose: no chat spam. The self hand updates

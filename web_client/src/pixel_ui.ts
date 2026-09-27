@@ -158,6 +158,38 @@ export const CRAFT_TABS: {
 export const CRAFT_QUICK_CELL = "ui/v5/atoms/craft_input_cell.png";
 export const CRAFT_MAT_CELL = "ui/v5/atoms/craft_output_cell.png";
 
+// ---- Equipment panel — EXACT V5 Equipment.json frame_01 composition ----
+// Panel-local geometry straight from panels/Equipment.json (V5 handoff):
+// 148x85 frame; LEFT character zone (10,17,46,62) = the 7 mannequin slots
+// (paperdoll sockets) + decorative ring/trinket; RIGHT 4x4 equipment grid
+// origin [74,17] pitch 16, slot 14x14; nav arrows at (69,44)/(137,44).
+// Character-slot bboxes (sells_character_012 decomposition):
+//   helmet [26,17] chest [26,33] legs [26,49] feet... weapon [42,33]
+//   ring [10,33] trinket [10,65]. Our game has 3 armor slots only:
+//   helmet/chest/legs — the other 4 sockets render as inert kit art.
+export const EQUIPMENT_PANEL = {
+  w: 148, h: 85,
+  frame: "ui/v5/layers/equip_frame.png",
+};
+export const EQUIPMENT_TITLE = { x: 79, y: 3, w: 55, h: 8, file: "ui/v5/layers/equip_title.png" };
+export const EQUIP_MANNEQUIN = { x: 11, y: 16, w: 43, h: 46, file: "ui/v5/layers/equip_mannequin.png" };
+// The 7 socket surfaces composited in place (empty slot art on the torso).
+export const EQUIP_CHAR_SLOTS = { x: 10, y: 17, w: 46, h: 62, file: "ui/v5/layers/equip_char_slots.png" };
+export const EQUIP_CHAR_TRINKET = { x: 44, y: 65, w: 10, h: 13, file: "ui/v5/layers/equip_char_trinket.png" };
+export const EQUIP_CHAR_RING = { x: 12, y: 66, w: 11, h: 12, file: "ui/v5/layers/equip_char_ring.png" };
+// RIGHT 4x4 bag-of-equippables grid (player's armor pieces carried).
+export const EQUIPMENT_GRID: GridLayout = {
+  firstX: 74, firstY: 17, stepX: 16, stepY: 16,
+  cols: 4, rows: 4, slotW: 14, slotH: 14,
+};
+export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
+// Paperdoll SLOTS (left, worn): slot keys + their kit-local cell bboxes.
+export const EQUIP_WORN_SLOTS: { slot: "helmet" | "chest" | "legs"; x: number; y: number }[] = [
+  { slot: "helmet", x: 26, y: 17 },
+  { slot: "chest", x: 26, y: 33 },
+  { slot: "legs", x: 26, y: 49 },
+];
+
 // ---- Item icons: the generated Kaetram icon set (assets/gui/icons/<id>.png,
 // built by scripts/make_item_icons.py — pixel art served from public/ui/icons/)
 // — zero emoji-font dependency, so machines without an emoji font render the
@@ -167,7 +199,8 @@ export const ITEM_ICONS: Record<string, string> = Object.fromEntries(
     "apple", "charcoal", "coal", "coin", "cooked_meat", "crafting_table",
     "dirt", "floor", "furnace", "gold_axe", "gold_ingot", "gold_ore",
     "gold_pickaxe", "gold_sword", "iron_axe", "iron_ingot", "iron_ore",
-    "iron_pickaxe", "iron_sword", "key_stone", "leaves", "mushroom_brown",
+    "iron_pickaxe", "iron_sword", "key_stone", "leatherchest", "leatherhelmet",
+    "leatherleggings", "leaves", "mushroom_brown",
     "mushroom_purple", "plank", "potion_hp", "potion_mp", "raw_meat",
     "rotten_flesh", "seed", "steel_axe", "steel_ingot", "steel_pickaxe",
     "steel_sword", "stick", "stone", "stone_axe", "stone_pickaxe",
