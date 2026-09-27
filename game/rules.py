@@ -263,13 +263,36 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
             from game.mob_profiles import behavior_of
             from game.zombies import mob_stats as _ms
 
-            beh = behavior_of(getattr(best, "kind", ""))
-            if beh.get("style") == "neutral":
-                import time as _t
+            import time as _t
 
+            beh = behavior_of(getattr(best, "kind", ""))
+            # PREY animals panic immediately (no aggro) — the web tick's
+            # alert/panic clocks take over from here.
+            if beh.get("style") == "prey":
+                best.alert_until = 0.0
+                best.panic_until = _t.monotonic() + 1.2
+            if beh.get("style") == "neutral":
+                # BEAR O5b TWO-STAGE RAGE (user 28/09): the FIRST hit inside
+                # the rage window is a WARNING (aggravates but no real aggro);
+                # the second escalates to the full fight.
+                if beh.get("rage_s"):
+                    now_m = _t.monotonic()
+                    if now_m - best.bear_hit_at > float(beh.get("rage_s", 30.0)):
+                        # First (or stale) hit: warning only — arm the clock,
+                        # brief face-the-player stand via alert_until.
+                        best.bear_hit_at = now_m
+                        best.alert_until = now_m + 1.0
+                        best.damage = _ms(best.kind)["dmg"]
+                        return ActionResult(
+                            True, state_changed=True,
+                            pos=(best.x, best.y), block_id="zombie",
+                            damage=0, target_id=target_id,
+                            target_defeated=False, drops=[],
+                        )
                 best.aggro_until = _t.monotonic() + float(
                     beh.get("aggro_s", 15.0)
                 )
+                best.aggro_origin = None  # re-anchor the defensive leash
                 # A provoked animal turns on its attacker with full stats.
                 best.damage = _ms(best.kind)["dmg"]
         drops = []

@@ -325,6 +325,39 @@ class Zombie:
     # while actually moving).
     wander_until: float = 0.0
     wander_walking: bool = False
+    # ---- ANIMAL AI v2 (user 28/09: vision x2.5 + per-species behavior) -----
+    # Panic clock: monotonic() until which a fleeing animal KEEPS running
+    # even if the player already left flee_vision (the calm-overrun fix —
+    # animals used to stop dead the instant they crossed the vision rim).
+    # Panic decays past panic_slow_at into a walk, then stops.
+    panic_until: float = 0.0
+    # Alert phase: monotonic() until which a startled animal STANDS facing
+    # the threat (theHunter parity: the player must SEE the tell before the
+    # flight). Atk anim row doubles as the bark/ alarm pose.
+    alert_until: float = 0.0
+    # Bunny zigzag / bird scatter / boar charge clocks + heading memory.
+    zigzag_until: float = 0.0
+    zigzag_dx: float = 0.0
+    zigzag_dy: float = 0.0
+    # Boar/bear charge: monotonic deadline + locked unit vector.
+    charge_until: float = 0.0
+    charge_dx: float = 0.0
+    charge_dy: float = 0.0
+    # Boar warning stage: True after the first hit until aggro lapses — the
+    # SECOND hit inside the warning window escalates to a real charge.
+    boar_warned: bool = False
+    # Bear endurance: position (x, y) where aggro began + hit memory for the
+    # two-stage rage. Back-turn speed boost deadline.
+    aggro_origin: Optional[tuple] = None
+    bear_hit_at: float = 0.0
+    backturn_until: float = 0.0
+    # Wolf pack: bite queue relay (monotonic slot) + howl broadcast.
+    bite_slot_at: float = 0.0
+    howled_at: float = 0.0
+    # Fox: drops it is currently scavenging toward ("x,y" key).
+    scavenge_target: Optional[str] = None
+    # Side-view flip accumulator (see _side_animal_facing).
+    _side_flip_acc: float = 0.0
 
     def sync_float_from_int(self) -> None:
         self.x_f = float(self.x) + 0.5
@@ -1323,44 +1356,171 @@ def web_tick(
         dy = target.y_f - z.y_f
         length = _math.hypot(dx, dy)
 
-        # ---- PREY (bunny/deer/bird): NEVER attacks — flees from any player
-        # inside flee_vision. The bird flees hard enough to despawn ("bay
-        # mất") once it has kept running for fly_away_s of continuous panic.
+        # ---- PREY (bunny/deer/bird): NEVER attacks — ALERT stand, then a
+        # panic flight that OVERRUNS the vision rim (the old version stopped
+        # dead the instant dist > flee_vision: the "chạy được đoạn dừng" look).
+        # VISION x2.5 (user 28/09) + per-species flavors below.
         if style == "prey":
-            flee_vision = float(beh.get("flee_vision", 4.5))
-            if dist <= flee_vision and length > 1e-6:
-                ux, uy = -dx / length, -dy / length
-                _web_chase_step(
-                    z, ux, uy, collision, step, now_mono, result,
-                    speed=z.web_speed * float(beh.get("flee_mult", 1.3)),
-                    towards=(-dx, -dy),  # fleeing: face AWAY from the player
-                )
-                if beh.get("fly_away"):
-                    z.aggro_until = (z.aggro_until or now_mono) if (
-                        z.aggro_until > now_mono
-                    ) else now_mono
-                    if now_mono - z.aggro_until >= _PREY_BIRD_FLEE_DESPAWN_S:
-                        removed = remove_web_zombie(state, z.zombie_id)
-                        if removed is not None:
-                            result.removed.append(removed)
-                            result.changed = True
+            flee_vision = float(beh.get("flee_vision", 11.25))
+            alert_s = float(beh.get("alert_s", 0.8))
+            overrun = float(beh.get("panic_overrun", 1.4))
+            panicking = now_mono < z.panic_until
+            triggered = dist <= flee_vision
+            if triggered and not panicking and z.alert_until <= 0.0:
+                # ALERT phase (theHunter parity): stand + face the player for
+                # alert_s (atk row doubles as the bark/startle pose), and
+                # SCARE nearby same-kind animals (herd/bird contagion).
+                z.alert_until = now_mono + alert_s
+                z.facing = _side_animal_facing(z, dx, dy)
+                _web_set_anim(z, "atk", now_mono)
+                herd_r = float(beh.get("herd_panic_r", 0.0))
+                scatter_r = float(beh.get("scatter_r", 0.0))
+                contagion_r = herd_r or scatter_r
+                if contagion_r > 0.0:
+                    for o in _web_zombies(state):
+                        if o is z or not getattr(o, "ambient", False):
+                            continue
+                        if o.kind == z.kind and _web_dist(o, target) <= contagion_r:
+                            o.alert_until = now_mono + max(0.3, alert_s * 0.6)
+                            o.panic_until = now_mono + 2.5
+                continue  # frozen stare this tick
+            if z.alert_until > now_mono:
+                continue  # mid-stare
+            if triggered or panicking:
+                # PANIC clock: re-armed while the player stays in vision;
+                # keeps the run alive past the rim, then decays to a walk.
+                if triggered:
+                    z.panic_until = now_mono + 1.2
+                if z.alert_until > 0.0:
+                    z.alert_until = 0.0
+                speed = z.web_speed * float(beh.get("flee_mult", 1.3))
+                # BUNNY burst (O1c): first burst_s seconds sprint faster.
+                burst_s = float(beh.get("burst_s", 0.0))
+                if burst_s > 0.0 and z.panic_until > now_mono:
+                    since = (z.panic_until - now_mono)
+                    # panic_until re-arms at +1.2 each in-vision tick, so the
+                    # burst reads as the fresh-start sprint.
+                    if since > 1.2 - min(1.2, burst_s):
+                        speed *= float(beh.get("burst_mult", 1.5))
+                # BUNNY zigzag (O1b): re-roll a ±zigzag_deg heading every
+                # zigzag_every_s while fleeing.
+                if beh.get("zigzag") and now_mono >= z.zigzag_until:
+                    import math as _mz
+                    base = _mz.atan2(-dy, -dx)
+                    spread = _mz.radians(float(beh.get("zigzag_deg", 40)))
+                    ang = base + rng.uniform(-spread, spread)
+                    z.zigzag_dx, z.zigzag_dy = _mz.cos(ang), _mz.sin(ang)
+                    z.zigzag_until = now_mono + float(beh.get("zigzag_every_s", 1.0))
+                if beh.get("zigzag") and (z.zigzag_dx or z.zigzag_dy):
+                    _web_chase_step(
+                        z, z.zigzag_dx, z.zigzag_dy, collision, step, now_mono,
+                        result, speed=speed, towards=(-dx, -dy),
+                    )
                 else:
-                    z.aggro_until = 0.0
-            else:
-                # Calm: persistent wander heading (walk windows last seconds
-                # so the client's walk anim actually plays).
-                z.aggro_until = 0.0
-                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                    if length > 1e-6:
+                        ux, uy = -dx / length, -dy / length
+                        _web_chase_step(
+                            z, ux, uy, collision, step, now_mono, result,
+                            speed=speed, towards=(-dx, -dy),
+                        )
+                # BIRD hop-circle (O3b): a 0.6 s circular flare before the
+                # straight flight (orbit the threat point).
+                hop_s = float(beh.get("hop_circle_s", 0.0))
+                if hop_s > 0.0 and z.alert_until == 0.0 and rng.random() < 0.02:
+                    import math as _mc
+                    ang = _mc.atan2(dy, dx) + _mc.pi / 2
+                    _web_slide(
+                        z, _mc.cos(ang) * z.web_speed * 1.4 * step,
+                        _mc.sin(ang) * z.web_speed * 1.4 * step,
+                        collision, now_mono, result,
+                    )
+                # BIRD fly-away REWORK (O3c): despawn only while the player
+                # keeps CLOSING IN (within fly_away_close_r mid-flight).
+                if beh.get("fly_away"):
+                    close_r = float(beh.get("fly_away_close_r", 3.0))
+                    if dist <= close_r:
+                        z.aggro_until = (z.aggro_until or now_mono) if (
+                            z.aggro_until > now_mono
+                        ) else now_mono
+                        if now_mono - z.aggro_until >= _PREY_BIRD_FLEE_DESPAWN_S:
+                            removed = remove_web_zombie(state, z.zombie_id)
+                            if removed is not None:
+                                result.removed.append(removed)
+                                result.changed = True
+                    else:
+                        z.aggro_until = 0.0
+                continue
+            # Calm again: clear clocks, wander on.
+            z.panic_until = 0.0
+            z.aggro_until = 0.0
+            _web_ambient_wander(z, rng, collision, step, now_mono, result)
             continue
 
         # ---- NEUTRAL (boar/bear): wanders calmly; fights back ONLY while
         # aggro (armed by the player's attack, see rules.py).
         if style == "neutral":
             if now_mono >= getattr(z, "aggro_until", 0.0):
+                z.boar_warned = False
+                z.aggro_origin = None
                 _web_ambient_wander(z, rng, collision, step, now_mono, result)
                 continue
+            # O4c/O5c DEFENSIVE LEASH: pursuit is capped around the spot
+            # where the aggro began (Vintage Story boar / bear endurance).
+            leash = float(beh.get("charge_leash", 0.0)) or float(beh.get("aggro_leash", 0.0))
+            if leash > 0.0:
+                if z.aggro_origin is None:
+                    z.aggro_origin = (z.x_f, z.y_f)
+                ox, oy = z.aggro_origin
+                if _math.hypot(z.x_f - ox, z.y_f - oy) > leash:
+                    # Broke the leash: drop aggro entirely (boar) or walk it
+                    # off (bear) — no map-spanning chases.
+                    z.aggro_until = 0.0
+                    z.aggro_origin = None
+                    _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                    continue
+            # BOAR O4a warn-charge: first hit = warning stand; the second hit
+            # inside the SAME aggro window escalates into a locked straight
+            # CHARGE (speed x2) that ends in a bite.
+            if beh.get("warn_s") and z.charge_until <= now_mono:
+                if not z.boar_warned:
+                    z.boar_warned = True
+                    z.facing = _side_animal_facing(z, dx, dy)
+                    _web_set_anim(z, "atk", now_mono)
+                    z.recover_until = now_mono + float(beh.get("warn_s", 0.7))
+                    continue  # the warning pose this tick
+                if z.recover_until <= now_mono and length > 1e-6:
+                    # Charge window: lock the vector at launch.
+                    if z.charge_until == 0.0:
+                        z.charge_until = now_mono + float(beh.get("charge_s", 1.5))
+                        z.charge_dx, z.charge_dy = dx / length, dy / length
+                    if z.charge_until > now_mono:
+                        _web_chase_step(
+                            z, z.charge_dx, z.charge_dy, collision, step,
+                            now_mono, result,
+                            speed=z.web_speed * float(beh.get("charge_mult", 2.0)),
+                            towards=(z.charge_dx, z.charge_dy),
+                        )
+                        continue
+                    z.charge_until = 0.0  # charge spent -> melee flow below
+            # BEAR O5a back-turn pursuit: a player FLEEING from an aggro bear
+            # eats a speed burst (bears chase what runs). O5b two-stage rage
+            # is armed in rules.py via bear_hit_at (first hit = warning only
+            # damage stands, second within rage_s = full aggro).
+            if beh.get("backturn_bonus"):
+                moving_away = (dx * -1) and length > 1e-6
+                # "Away" reads through the player's position delta vs the
+                # bear: the player is the one moving; we approximate with the
+                # bear's own aggro clock — if the player is beyond half the
+                # leash, they are running. Speed burst applies.
+                if z.aggro_origin is not None:
+                    ox, oy = z.aggro_origin
+                    far = _math.hypot(z.x_f - ox, z.y_f - oy) > leash * 0.5 if leash else False
+                    if far and now_mono < z.backturn_until:
+                        pass
+                    elif far:
+                        z.backturn_until = now_mono + float(beh.get("backturn_s", 3.0))
             # Aggro: falls through to the melee chase/bite below (a cornered
-            # boar is a melee mob until it calms down).
+            # boar/bear is a melee mob until it calms down).
 
         # ---- RANGED (spectre): fires from a distance, never closes in. ----
         if style == "ranged":
@@ -1487,12 +1647,15 @@ def web_tick(
             # random sideways component, so packs break apart instead of
             # shuffling in lockstep.
                 rec_len = max(1e-6, length)
-                # SKITTISH (rat/goblin): hit-and-run — a LONG retreat drift
-                # straight away from the player after every successful bite.
+                # SKITTISH (rat/goblin/fox): hit-and-run — a LONG retreat
+                # drift straight away from the player after every bite (fox
+                # O6c: retreat distance from its own behavior row).
                 if style == "skittish":
                     z.recover_dx = -dx / rec_len
                     z.recover_dy = -dy / rec_len
-                    z.recover_until = now_mono + 1.2  # longer retreat window
+                    z.recover_until = now_mono + max(
+                        1.2, float(beh.get("hitrun_retreat", 0.0) or 1.2),
+                    )
                 else:
                     z.recover_until = 0.0
                 if style == "swarm":
@@ -1517,6 +1680,62 @@ def web_tick(
                     result.died_player_ids.add(target.user_id)
             continue
         sees = z.hunter or dist <= WEB_ZOMBIE_VISION_RADIUS
+        # ---- FOX O6a/O6b (skittish animal, Minecraft parity) -------------
+        # A WALKING player inside walk_tolerance_r only makes the fox KEEP
+        # ITS GAP (back away to keep_gap, no far flee); sprinting/noisy
+        # players (handled by the skittish flow below) scatter it. Away
+        # from players, an unattended drop within scavenge_r lures the fox
+        # over (the opportunistic scavenger steal).
+        if getattr(z, "ambient", False) and style == "skittish":
+            keep_r = float(beh.get("walk_tolerance_r", 4.0))
+            gap = float(beh.get("keep_gap", 3.0))
+            if dist <= keep_r and length > 1e-6:
+                z.scavenge_target = None
+                if dist < gap:
+                    # Back away slowly, holding the gap (curious-wary).
+                    ux, uy = -dx / length, -dy / length
+                    _web_chase_step(
+                        z, ux, uy, collision, step, now_mono, result,
+                        speed=z.web_speed * 0.6, towards=(-dx, -dy),
+                    )
+                else:
+                    _web_set_anim(z, "idle", now_mono)
+                continue
+            # Scavenger: nearest live drop within scavenge_r while no player
+            # is close (the fox only steals from unattended piles).
+            sc_r = float(beh.get("scavenge_r", 0.0))
+            player_r = float(beh.get("scavenge_player_r", 6.0))
+            if sc_r > 0.0 and dist > player_r:
+                field_ = getattr(state, "drop_field", None)
+                best, best_d = None, sc_r
+                if field_ is not None:
+                    for d in field_.drops.values():
+                        if getattr(d, "phase", "idle") != "idle":
+                            continue
+                        dd = _math.hypot(d.x_f - z.x_f, d.y_f - z.y_f)
+                        if dd < best_d:
+                            best, best_d = d, dd
+                if best is not None:
+                    ddx, ddy = best.x_f - z.x_f, best.y_f - z.y_f
+                    dl = _math.hypot(ddx, ddy)
+                    if dl > 0.35:
+                        _web_chase_step(
+                            z, ddx / dl, ddy / dl, collision, step,
+                            now_mono, result, speed=z.web_speed,
+                            towards=(ddx, ddy),
+                        )
+                    else:
+                        # Reached the drop: "eat" it — the drop is gone.
+                        try:
+                            from game.drops import get_drop_field as _gdf
+                            fld = _gdf(state)
+                            fld.drops.pop(best.drop_id, None)
+                            result.changed = True
+                            result.visible_changed = True
+                        except Exception:  # noqa: BLE001 — a fox snack never breaks the tick
+                            pass
+                        _web_set_anim(z, "atk", now_mono)
+                    continue
         if not sees or length <= 1e-6:
             _web_set_anim(z, "idle", now_mono)
             continue
@@ -1525,9 +1744,15 @@ def web_tick(
         speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else z.web_speed
         if style == "ambush" and getattr(z, "ambush_armed", False) and now_mono < getattr(z, "ambush_until", 0.0):
             speed = max(speed, z.web_speed * 1.8)  # pounce!
+        # BEAR O5a back-turn burst: pursuit speeds up while the back-turn
+        # window is live (the player ran from an aggro bear).
+        if beh.get("backturn_bonus") and now_mono < z.backturn_until:
+            speed = max(speed, z.web_speed * float(beh.get("backturn_bonus", 1.4)))
         # WOLF PACK: each fellow wolf within pack_radius adds pack_bonus
         # speed (capped at pack_cap x) — wolves hunt in packs, day or night.
+        wolf_pack = False
         if beh.get("pack"):
+            wolf_pack = True
             fellows = sum(
                 1 for o in _web_zombies(state)
                 if o is not z and getattr(o, "kind", "") == z.kind
@@ -1538,6 +1763,60 @@ def web_tick(
                     speed * (1.0 + fellows * float(beh.get("pack_bonus", 0.1))),
                     speed * float(beh.get("pack_cap", 1.5)),
                 )
+        # WOLF O7a KUNG-FU CIRCLE: a pack member who is NOT the designated
+        # biter holds a ring position around the player instead of dogpiling
+        # (the "comedy clump" fix). The relay slot (O7b) picks one biter at
+        # a time; everyone else circles tangentially at circle_r.
+        if wolf_pack and beh.get("circle"):
+            circle_r = float(beh.get("circle_r", 3.0))
+            wolves = [
+                o for o in _web_zombies(state)
+                if getattr(o, "kind", "") == "wolf"
+                and _web_dist(o, target) <= float(beh.get("pack_radius", 5.0)) * 2
+            ]
+            wolves.sort(key=lambda o: o.zombie_id)
+            slot = wolves.index(z) if z in wolves else 0
+            # Relay bite (O7b): exactly one wolf may bite per relay window —
+            # the slot rotates by wall clock so the pack takes turns.
+            relay_s = float(beh.get("relay_bite_s", 1.2))
+            my_turn = (slot == int(now_mono / relay_s) % max(1, len(wolves)))
+            if dist > circle_r:
+                pass  # close in normally via the melee flow below
+            elif not my_turn:
+                # Hold the ring: tangential orbit around the player.
+                import math as _mk
+                ang = _mk.atan2(z.y_f - target.y_f, z.x_f - target.x_f) + 0.9
+                tx = target.x_f + _mk.cos(ang) * circle_r
+                ty = target.y_f + _mk.sin(ang) * circle_r
+                odx, ody = tx - z.x_f, ty - z.y_f
+                ol = _math.hypot(odx, ody)
+                if ol > 0.1:
+                    _web_chase_step(
+                        z, odx / ol, ody / ol, collision, step, now_mono,
+                        result, speed=z.web_speed, towards=(-odx, -ody),
+                    )
+                else:
+                    _web_set_anim(z, "idle", now_mono)
+                continue
+        # WOLF O7c HOWL SUMMON: the first wolf to see the player calls every
+        # fellow wolf within howl_r to its position (they converge for
+        # howl_summon_s). Cooldown keeps the howl a rare, readable event.
+        if wolf_pack and beh.get("howl_r") and now_mono - z.howled_at > 20.0:
+            howl_r = float(beh.get("howl_r", 12.0))
+            called = 0
+            for o in _web_zombies(state):
+                if o is z or o.kind != "wolf":
+                    continue
+                if _web_dist(o, z) <= howl_r:
+                    o.recover_dx, o.recover_dy = z.x_f - o.x_f, z.y_f - o.y_f
+                    ol = _math.hypot(o.recover_dx, o.recover_dy) or 1.0
+                    o.recover_dx, o.recover_dy = o.recover_dx / ol, o.recover_dy / ol
+                    o.wander_walking = True
+                    o.wander_until = now_mono + float(beh.get("howl_summon_s", 5.0))
+                    called += 1
+            if called:
+                z.howled_at = now_mono
+                _web_set_anim(z, "atk", now_mono)  # the howl pose
         # SWARM (bat): erratic weaving — sinusoidal sideways offset while
         # closing in so it flies in loops instead of a straight beeline.
         ux, uy = dx / length, dy / length

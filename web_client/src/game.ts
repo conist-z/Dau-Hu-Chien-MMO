@@ -2340,6 +2340,17 @@ export class WorldScene extends Phaser.Scene {
         }
         this.applyMobCell(z.body, z.frame, row, sheet.size, sheet.cellW, sheet.cellH);
         z.body.setFlipX(fx);
+        // DEER STOTTING (O2b): while walking fast, deer bounce — a subtle
+        // vertical pulse every ~0.3 s reads as the real stotting gait
+        // (leaping mid-run to signal "I see you"). Scale-only: no extra
+        // sprites needed.
+        if ((z.kind === "deer" || z.kind === "deer2") && z.anim === "walk" && z.body instanceof Phaser.GameObjects.Image) {
+          const stot = Math.abs(Math.sin(now / 300)) * 0.06;
+          z.body.setScale(sheet.size / sheet.cellW * (1 + stot), sheet.size / sheet.cellH * (1 - stot * 0.5));
+        } else if (z.body instanceof Phaser.GameObjects.Image) {
+          const base = sheet.size / sheet.cellW;
+          if (z.body.scaleX !== base) z.body.setScale(base, sheet.size / sheet.cellH);
+        }
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
           // SIDE-VIEW animals: NO rotation tween — the lunge tilt reads as a
