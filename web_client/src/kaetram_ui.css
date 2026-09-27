@@ -2372,45 +2372,62 @@
 }
 /* ==== CUSTOM WORLD MAP: warp7-13 extend the Kaetram sprite rules (the
    original sheet block only covered warp0-6); all use mapicons col 0 with
-   the 3-state normal/hover/active rows. Positions come from the user's
-   14 markers (warp_markers.json -> scripts/_gen_warp_css.py). ==== */
-#hud-hub #warp7, #hud-hub #warp8, #hud-hub #warp9, #hud-hub #warp10,
-#hud-hub #warp11, #hud-hub #warp12, #hud-hub #warp13 {
-  width: 2em;
-  height: 2em;
+   the 3-state normal/hover/active rows. ==== */
+/* Icon GEOMETRY IN PX (not em): the hub's inherited font-size varies
+   (mobile/desktop layouts), and 2em there ballooned the icons into huge
+   circles covering the map (user report 28/09). 32px = the intended
+   16px icon at the same 2x scale the frame uses. Positions use % so
+   they stay correct at any frame size. These px rules come AFTER the
+   stock em blocks, so equal-specificity cascade resolves to them. */
+#hud-hub #warp0, #hud-hub #warp1, #hud-hub #warp2, #hud-hub #warp3,
+#hud-hub #warp4, #hud-hub #warp5, #hud-hub #warp6, #hud-hub #warp7,
+#hud-hub #warp8, #hud-hub #warp9, #hud-hub #warp10, #hud-hub #warp11,
+#hud-hub #warp12, #hud-hub #warp13 {
+  width: 32px;
+  height: 32px;
   background-image: url("/ui/kaetram/interface/mapicons.png");
   background-repeat: no-repeat;
-  background-size: 22em 6em;
-  background-position-x: -0em;
+  /* sheet 176x48, cell 16px -> 352px at the 2x icon scale */
+  background-size: 352px 96px;
+  background-position-x: 0;
+  background-position-y: 0;
+  image-rendering: pixelated;
 }
-#hud-hub #warp7:hover, #hud-hub #warp8:hover, #hud-hub #warp9:hover,
-#hud-hub #warp10:hover, #hud-hub #warp11:hover, #hud-hub #warp12:hover,
-#hud-hub #warp13:hover {
-  background-position-y: -2em;
+#hud-hub #warp0:hover, #hud-hub #warp1:hover, #hud-hub #warp2:hover,
+#hud-hub #warp3:hover, #hud-hub #warp4:hover, #hud-hub #warp5:hover,
+#hud-hub #warp6:hover, #hud-hub #warp7:hover, #hud-hub #warp8:hover,
+#hud-hub #warp9:hover, #hud-hub #warp10:hover, #hud-hub #warp11:hover,
+#hud-hub #warp12:hover, #hud-hub #warp13:hover {
+  background-position-y: -32px;
 }
-#hud-hub #warp7:active, #hud-hub #warp7.active, #hud-hub #warp8:active,
-#hud-hub #warp8.active, #hud-hub #warp9:active, #hud-hub #warp9.active,
-#hud-hub #warp10:active, #hud-hub #warp10.active, #hud-hub #warp11:active,
-#hud-hub #warp11.active, #hud-hub #warp12:active, #hud-hub #warp12.active,
-#hud-hub #warp13:active, #hud-hub #warp13.active {
-  background-position-y: -4em;
+#hud-hub #warp0:active, #hud-hub #warp0.active, #hud-hub #warp1:active,
+#hud-hub #warp1.active, #hud-hub #warp2:active, #hud-hub #warp2.active,
+#hud-hub #warp3:active, #hud-hub #warp3.active, #hud-hub #warp4:active,
+#hud-hub #warp4.active, #hud-hub #warp5:active, #hud-hub #warp5.active,
+#hud-hub #warp6:active, #hud-hub #warp6.active, #hud-hub #warp7:active,
+#hud-hub #warp7.active, #hud-hub #warp8:active, #hud-hub #warp8.active,
+#hud-hub #warp9:active, #hud-hub #warp9.active, #hud-hub #warp10:active,
+#hud-hub #warp10.active, #hud-hub #warp11:active, #hud-hub #warp11.active,
+#hud-hub #warp12:active, #hud-hub #warp12.active, #hud-hub #warp13:active,
+#hud-hub #warp13.active {
+  background-position-y: -64px;
 }
 /* OVERRIDE the stock Kaetram warp0-5 positions: our 14 markers replace
-   the original 6-warp layout (positions from warp_markers.json). */
-#hud-hub #warp0 { top: 4.7188em; left: 17.2812em; }
-#hud-hub #warp1 { top: 1.5312em; left: 22.1562em; }
-#hud-hub #warp2 { top: 13.7188em; left: 20.5625em; }
-#hud-hub #warp3 { top: 10.5312em; left: 21.6875em; }
-#hud-hub #warp4 { top: 13.0625em; left: 11.3750em; }
-#hud-hub #warp5 { top: 9.5938em; left: 16.5312em; }
-#hud-hub #warp6 { top: 2.7500em; left: 10.8125em; }
-#hud-hub #warp7 { top: 2.9375em; left: 7.4375em; }
-#hud-hub #warp8 { top: 1.3438em; left: 1.0625em; }
-#hud-hub #warp9 { top: 6.2188em; left: 3.7812em; }
-#hud-hub #warp10 { top: 13.5312em; left: 2.6562em; }
-#hud-hub #warp11 { top: 9.4062em; left: 7.0625em; }
-#hud-hub #warp12 { top: 5.1875em; left: 10.1562em; }
-#hud-hub #warp13 { top: 6.9688em; left: 22.1562em; }
+   the original 6-warp layout. % of the frame -> correct at every size. */
+#hud-hub #warp0 { top: calc(61 / 180 * 100% - 16px); left: calc(195 / 270 * 100% - 16px); }
+#hud-hub #warp1 { top: calc(27 / 180 * 100% - 16px); left: calc(247 / 270 * 100% - 16px); }
+#hud-hub #warp2 { top: calc(157 / 180 * 100% - 16px); left: calc(230 / 270 * 100% - 16px); }
+#hud-hub #warp3 { top: calc(123 / 180 * 100% - 16px); left: calc(242 / 270 * 100% - 16px); }
+#hud-hub #warp4 { top: calc(150 / 180 * 100% - 16px); left: calc(132 / 270 * 100% - 16px); }
+#hud-hub #warp5 { top: calc(113 / 180 * 100% - 16px); left: calc(187 / 270 * 100% - 16px); }
+#hud-hub #warp6 { top: calc(40 / 180 * 100% - 16px); left: calc(126 / 270 * 100% - 16px); }
+#hud-hub #warp7 { top: calc(42 / 180 * 100% - 16px); left: calc(90 / 270 * 100% - 16px); }
+#hud-hub #warp8 { top: calc(25 / 180 * 100% - 16px); left: calc(22 / 270 * 100% - 16px); }
+#hud-hub #warp9 { top: calc(77 / 180 * 100% - 16px); left: calc(51 / 270 * 100% - 16px); }
+#hud-hub #warp10 { top: calc(155 / 180 * 100% - 16px); left: calc(39 / 270 * 100% - 16px); }
+#hud-hub #warp11 { top: calc(111 / 180 * 100% - 16px); left: calc(86 / 270 * 100% - 16px); }
+#hud-hub #warp12 { top: calc(66 / 180 * 100% - 16px); left: calc(119 / 270 * 100% - 16px); }
+#hud-hub #warp13 { top: calc(85 / 180 * 100% - 16px); left: calc(247 / 270 * 100% - 16px); }
 @media (--portrait) {#hud-hub #map-frame {
     font-size: 0.875em;
   }
