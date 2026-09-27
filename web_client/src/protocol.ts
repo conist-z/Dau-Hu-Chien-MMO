@@ -107,6 +107,8 @@ export interface WelcomePayload {
   // Item id currently held by self (hotbar slot -> item). Null = empty hand
   // (the hand dot still renders — plan A — just without a tool icon).
   held: string | null;
+  // Self's equipped Kaetram armor (same shape as players[].armor).
+  armor?: Record<string, string>;
   // Interactive NPCs of this map (emoji tokens; E/click chats). Absent on
   // older servers — client renders nothing extra then.
   npcs?: { id: string; name: string; emoji: string; x: number; y: number }[];
@@ -130,6 +132,10 @@ export interface SheetEntry {
 export interface PlayersManifest {
   base: SheetEntry;
   weapons: Record<string, SheetEntry>;
+  // Kaetram armor layers (helmet/chest/legs): 32x32 sheets that draw
+  // EXACTLY over the base body (same frame grid, same offsets) — absent
+  // on older servers, client just skips the layer.
+  armor?: Record<string, SheetEntry>;
   rows: Record<string, number>;
   frames_per_row: number;
   speeds: Record<string, number>;
@@ -187,9 +193,12 @@ export interface SnapshotPayload {
     y: number;
     dir: string;
     aim: { dx: number; dy: number } | null;
-    // Item id currently held by self (mirrors welcome.held, 20 Hz echo).
-    held: string | null;
-    // Death state (hp 0): the server ignores inputs while dead; the client
+  // Item id currently held by self (mirrors welcome.held, 20 Hz echo).
+  held: string | null;
+  // Equipped Kaetram armor {helmet|chest|legs: stem}. Absent on older
+  // servers — client keeps the current layers.
+  armor?: Record<string, string>;
+  // Death state (hp 0): the server ignores inputs while dead; the client
     // freezes prediction + shows a respawn overlay (Kaetram dead parity).
     dead?: boolean;
     respawn_s?: number;
@@ -238,6 +247,9 @@ export interface PlayerPayload {
   mode: "chat" | "web";
   // Item id currently held (hotbar slot -> item). Null = empty hand.
   held: string | null;
+  // Kaetram armor layers {helmet|chest|legs: stem} — manifest-driven
+  // sprites drawn over the body. Absent on older servers.
+  armor?: Record<string, string>;
   // Permanent role color ("#rrggbb", "" = legacy server): chat name +
   // avatar label color.
   color?: string;

@@ -23,6 +23,17 @@ export class PaperdollBody {
   private manifest: PlayersManifest;
   private base: Phaser.GameObjects.Sprite | null = null;
   private weapon: Phaser.GameObjects.Sprite | null = null;
+  // Kaetram armor layers, drawn in EquipmentRenderOrder back-to-front:
+  // legplates UNDER chestplate UNDER helmet. All three are 32x32 sheets
+  // that overlay the base body exactly (same frame grid, same offsets),
+  // so each one shares the base sprite's position/origin/scale and only
+  // differs in texture — depth just stacks them above the body.
+  private armorLegs: Phaser.GameObjects.Sprite | null = null;
+  private armorChest: Phaser.GameObjects.Sprite | null = null;
+  private armorHelmet: Phaser.GameObjects.Sprite | null = null;
+  private armorStems: { helmet: string | null; chest: string | null; legs: string | null } = {
+    helmet: null, chest: null, legs: null,
+  };
   // Animation clock state.
   private action: "idle" | "walk" | "atk" = "idle";
   private dir = "SOUTH";
@@ -76,6 +87,28 @@ export class PaperdollBody {
     this.ensureWeapon();
   }
 
+  /** Swap the armor layers ({helmet|chest|legs: stem}; null/absent slot =
+   *  bare). Sheets register async (registerArmorSheet) — ensureArmor
+   *  retries every tick like the weapon does. */
+  setArmor(equipped: Record<string, string> | null | undefined): void {
+    const next = {
+      helmet: equipped?.helmet ?? null,
+      chest: equipped?.chest ?? null,
+      legs: equipped?.legs ?? null,
+    };
+    if (
+      next.helmet === this.armorStems.helmet &&
+      next.chest === this.armorStems.chest &&
+      next.legs === this.armorStems.legs
+    ) return;
+    this.armorStems = next;
+    for (const layer of [this.armorLegs, this.armorChest, this.armorHelmet]) {
+      layer?.destroy();
+    }
+    this.armorLegs = this.armorChest = this.armorHelmet = null;
+    this.ensureArmor();
+  }
+
   /** Drive the animation: action + facing + frame clock. Call every tick.
    * `action` is the BASE action (idle/walk) derived from movement — the
    * atk overlay is OWNED by this class: swing() arms a one-shot timer and
@@ -112,8 +145,10 @@ export class PaperdollBody {
     // Walk animates only while the avatar actually moves (caller passes
     // idle when velocity is zero), idle loops, atk runs once via atkEndsAt.
     this.ensureWeapon(); // weapon sheet may have just registered
+    this.ensureArmor(); // armor sheets may have just registered
     this.applyBaseFrame();
     this.syncWeaponFrame();
+    this.syncArmorFrames();
   }
 
   /** True while the one-shot attack animation is playing. */
@@ -135,8 +170,12 @@ export class PaperdollBody {
   destroy(): void {
     this.base?.destroy();
     this.weapon?.destroy();
+    this.armorLegs?.destroy();
+    this.armorChest?.destroy();
+    this.armorHelmet?.destroy();
     this.base = null;
     this.weapon = null;
+    this.armorLegs = this.armorChest = this.armorHelmet = null;
   }
 
   // ---- internals ----
@@ -207,6 +246,58 @@ export class PaperdollBody {
     this.weapon.setFlipX(flip);
     this.weapon.setPosition(this.weaponX(), this.weaponY());
   }
+
+  /** Create the armor layer sprites once their sheet textures register.
+   *  Geometry mirrors Kaetram exactly: armor frames are 32x32 like the
+   *  body and draw at the SAME entity origin (offsets come baked into
+   *  the art), so each layer is a perfect overlay of the base sprite —
+   *  same x/y, same origin (0.5,1), same scale. Only depth differs,
+   *  stacking legs -> chest -> helmet above the body.
+   *  (Kaetram draws weapon 48x48 with its own offsetY — that layer keeps
+   *  its shared-centre geometry below, untouched.) */
+  private ensureArmor(): void {
+    if (!this.base) return;
+    const specs: ["legs" | "chest" | "helmet", Phaser.GameObjects.Sprite | null, number][] = [
+      ["legs", this.armorLegs, this.base.depth + 0.1],
+      ["chest", this.armorChest, this.base.depth + 0.2],
+      ["helmet", this.armorHelmet, this.base.depth + 0.3],
+    ];
+    for (const [slot, layer, depth] of specs) {
+      if (layer || !this.armorStems[slot]) continue;
+      const stem = this.armorStems[slot]!;
+      const entry = this.manifest.armor?.[stem];
+      const key = `pd-armor-${stem}`;
+      if (!entry || !this.scene.textures.exists(key)) continue; // retry next tick
+      const sprite = this.scene.add
+        .sprite(this.base.x, this.base.y, key, 0)
+        .setOrigin(0.5, 1) // feet anchor: same as the base body
+        .setDepth(depth)
+        .setScale(this.scale);
+      this.syncOneArmor(sprite);
+      if (slot === "legs") this.armorLegs = sprite;
+      else if (slot === "chest") this.armorChest = sprite;
+      else this.armorHelmet = sprite;
+    }
+  }
+
+  /** Push the shared animation frame onto every live armor layer. */
+  private syncArmorFrames(): void {
+    if (this.armorLegs) this.syncOneArmor(this.armorLegs);
+    if (this.armorChest) this.syncOneArmor(this.armorChest);
+    if (this.armorHelmet) this.syncOneArmor(this.armorHelmet);
+  }
+
+  private syncOneArmor(sprite: Phaser.GameObjects.Sprite): void {
+    if (!this.base) return;
+    const tex = sprite.texture;
+    if (!tex || !tex.key || tex.key === "__MISSING") return;
+    const idx = this.rowFor() * this.manifest.frames_per_row + this.frame;
+    if (!tex.has(String(idx))) return; // sheet not cut yet — skip this tick
+    const flip = this.dir === "WEST" || this.dir === "NORTH_WEST";
+    sprite.setFrame(idx);
+    sprite.setFlipX(flip);
+    sprite.setPosition(this.base.x, this.base.y);
+  }
 }
 
 /** Keys whose Blob->Image decode is currently IN FLIGHT.
@@ -225,6 +316,7 @@ export function registerPaperdollTextures(
   manifest: PlayersManifest,
   baseBytes: Uint8Array,
   weaponBytes: Record<string, Uint8Array>,
+  armorBytes?: Record<string, Uint8Array>,
 ): void {
   const addSheet = (key: string, bytes: Uint8Array, entry: SheetEntry): void => {
     // Paperdoll sheets are STATIC assets: register each key EXACTLY ONCE.
@@ -258,6 +350,10 @@ export function registerPaperdollTextures(
     const entry = manifest.weapons[stem];
     if (entry) addSheet(`pd-weapon-${stem}`, bytes, entry);
   }
+  for (const [stem, bytes] of Object.entries(armorBytes ?? {})) {
+    const entry = manifest.armor?.[stem];
+    if (entry) addSheet(`pd-armor-${stem}`, bytes, entry);
+  }
 }
 
 /** Register ONE late-arriving weapon sheet (asset pipeline).
@@ -277,6 +373,40 @@ export function registerWeaponSheet(
   if (!entry) return;    const key = `pd-weapon-${stem}`;
     if (scene.textures.exists(key) || pendingSheets.has(key)) return; // static asset: register once
     pendingSheets.add(key);
+  const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    scene.textures.addSpriteSheet(key, img, {
+      frameWidth: entry.frame_w,
+      frameHeight: entry.frame_h,
+    });
+    pendingSheets.delete(key);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => {
+    pendingSheets.delete(key);
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+/** Register ONE late-arriving ARMOR sheet (asset pipeline).
+ *  Same story as registerWeaponSheet: armor sheets stream in after base.png
+ *  and the once-only registration means a re-run would skip them — each
+ *  arrival registers itself directly so setArmor finds its texture.
+ */
+export function registerArmorSheet(
+  scene: Phaser.Scene,
+  manifest: PlayersManifest,
+  stem: string,
+  bytes: Uint8Array,
+): void {
+  const entry = manifest.armor?.[stem];
+  if (!entry) return;
+  const key = `pd-armor-${stem}`;
+  if (scene.textures.exists(key) || pendingSheets.has(key)) return;
+  pendingSheets.add(key);
   const blob = new Blob([bytes.slice().buffer], { type: "image/png" });
   const url = URL.createObjectURL(blob);
   const img = new Image();

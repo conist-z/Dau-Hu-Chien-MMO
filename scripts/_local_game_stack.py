@@ -297,6 +297,31 @@ class LocalStack:
                 else:
                     await self._send(cid, {"type": "push", "message": f"Không biết vật phẩm: {item_id}"})
                 return
+            if cmd == "mac":
+                # Preview parity with web_api/core._cmd_mac: demo-equip the
+                # Kaetram leather armor set on the paperdoll.
+                from web_api.snapshots import _players_manifest_payload
+                rt = self.gm.get_runtime(ch)
+                player = rt.state.get_player(uid) if rt is not None else None
+                if rt is None or player is None:
+                    return
+                armor_catalog = _players_manifest_payload().get("armor", {})
+                sub = (args[0].lower() if args else "leather")
+                if sub == "off":
+                    player.equipped_armor = {}
+                    await self._send(cid, {"type": "push", "message": "Đã THÁO hết giáp."})
+                elif sub == "leather":
+                    player.equipped_armor = {
+                        "helmet": "leatherhelmet",
+                        "chest": "leatherchest",
+                        "legs": "leatherleggings",
+                    }
+                    await self._send(cid, {"type": "push", "message": "Đã mặc BỘ GIÁP DA."})
+                else:
+                    await self._send(cid, {"type": "push", "message":
+                        "Dùng: /mac leather | /mac off | /mac <helmet|chest|legs> <stem>. "
+                        f"Sheet có: {', '.join(sorted(armor_catalog.keys()))}"})
+                return
             await self._send(cid, {"type": "push", "message": f"[preview] Lệnh không hỗ trợ local: {cmd}"})
             return
         await self._send(cid, {"type": "error", "code": "unknown_type", "got": t})
@@ -307,7 +332,7 @@ class LocalStack:
         from config import ASSETS_DIR
 
         safe = Path(name).name
-        if name.startswith("players/weapon/"):
+        if name.startswith("players/weapon/") or name.startswith("players/armor/"):
             safe = Path(name).parts[-2] + "/" + Path(name).parts[-1]
         if not safe.lower().endswith(".png"):
             await self._send(cid, {"type": "asset_data", "name": name, "b64": None})

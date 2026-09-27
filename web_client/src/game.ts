@@ -4,7 +4,7 @@
 
 import Phaser from "phaser";
 import type { DropPayload, PlayerPayload, PlayersManifest, SnapshotPayload, WebZombiePayload, WelcomePayload } from "./protocol";
-import { PaperdollBody, b64ToBytes, registerPaperdollTextures, registerWeaponSheet } from "./paperdoll";
+import { PaperdollBody, b64ToBytes, registerArmorSheet, registerPaperdollTextures, registerWeaponSheet } from "./paperdoll";
 import { WEAPON_SHEETS as WEAPON_SHEET_BY_ITEM, weapon_sheet_for } from "./appearance_client";
 import { ICON_ITEM_IDS } from "./pixel_ui";
 import { perf } from "./perf";
@@ -236,6 +236,9 @@ interface RemotePlayer {
   // Kaetram paperdoll for remote web bodies (spawned when the manifest +
   // base sheet are ready; null while the square placeholder is showing).
   doll: PaperdollBody | null;
+  // Serialized armor payload last applied (skips setArmor on every 20 Hz
+  // snapshot when nothing changed).
+  armorKey?: string;
   // Latest profile payload for the click-popup (kept fresh each snapshot).
   profile: PlayerPayload;
 }
@@ -325,7 +328,8 @@ export class WorldScene extends Phaser.Scene {
   private selfHand: Phaser.GameObjects.Arc | null = null;
   private selfToolIcon: Phaser.GameObjects.Text | Phaser.GameObjects.Image | null = null;
   private selfHeld: string | null = null;
-  // Latest server stamina (snapshot self payload). 0 = tired: prediction
+  // Self's equipped Kaetram armor (mirrors welcome/snapshot "armor").
+  private selfArmor: Record<string, string> | null = null;
   // caps at walk speed, matching the server's run gate.
   private selfStamina = 1.0;
   // Server says self is eating: prediction walks at HALF speed to mirror
@@ -546,6 +550,14 @@ export class WorldScene extends Phaser.Scene {
   private lastMoveX = 0; // last nonzero input (hand points here while idle)
   private lastMoveY = 1;
   private faceVec: { x: number; y: number } | null = null; // smoothed facing
+  // Mouse-facing server sync: forward facing changes as "turn" actions
+  // (throttled) so remote players see the same direction the self doll
+  // renders. Set by main.ts (the scene never touches Net directly).
+  onSelfTurn: ((dir: string) => void) | null = null;
+  private lastSentTurnDir = "";
+  private lastTurnSentAt = 0;
+  private pendingTurnDir: string | null = null;
+  private selfWasMoving = false;
   private hoverSquare: Phaser.GameObjects.Rectangle | null = null;
   private phaserPointerBound = false;
   private aimCursor: { dx: number; dy: number } | null = null;
@@ -809,6 +821,13 @@ export class WorldScene extends Phaser.Scene {
       for (const stem of new Set(Object.values(WEAPON_SHEET_BY_ITEM))) {
         fetchAsset(`players/weapon/${stem}.png`);
       }
+      // Kaetram armor sheets (manifest "armor" section -> assets/players/
+      // armor/<stem>.png): fetch every known stem once — the sheets are
+      // tiny (a few hundred bytes) and only ever render when equipped.
+      for (const stem of Object.keys(welcome.players_manifest.armor ?? {})) {
+        this.armorSheetsAsked.add(stem);
+        fetchAsset(`players/armor/${stem}.png`);
+      }
       // Hand icons: request the Kaetram icon PNG for every known item so
       // hands show pixel art instead of font-dependent emoji glyphs.
       for (const id of ICON_ITEM_IDS) {
@@ -910,6 +929,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.selfDir = welcome.self.dir || "SOUTH";
+    this.lastSentTurnDir = ""; // fresh map: re-announce facing once
     if (!this.faceVec) {
       const v0 = DIR_VECTORS[this.selfDir] ?? DIR_VECTORS.SOUTH;
       this.faceVec = { x: v0[0], y: v0[1] };
@@ -1588,6 +1608,11 @@ export class WorldScene extends Phaser.Scene {
       // means a full re-run would skip them) — register each one directly so
       // setWeapon finds its texture and the item actually shows in hand.
       registerWeaponSheet(this, this.playersManifest, stem, this.pdBytes[stem]);
+    } else if (name.startsWith("players/armor/")) {
+      // Late-arriving armor sheet: register directly (same story as
+      // weapons) so setArmor finds its texture and the layer shows.
+      const stem = name.slice("players/armor/".length).replace(/\.png$/i, "");
+      registerArmorSheet(this, this.playersManifest, stem, b64ToBytes(b64));
     } else {
       return;
     }
@@ -1620,6 +1645,8 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private pdBytes: Record<string, Uint8Array> | null = null;
+  // Armor stems already requested through the asset lane (once per session).
+  private armorSheetsAsked = new Set<string>();
 
   /** Spawn the SELF paperdoll at the predicted position. */
   private spawnSelfDoll(): void {
@@ -1629,6 +1656,7 @@ export class WorldScene extends Phaser.Scene {
     this.selfDoll.spawn(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, 7);
     this.hideSelfHand(); // Kaetram body carries its own weapon layer
     if (this.selfHeld) this.selfDoll.setWeapon(weapon_sheet_for(this.selfHeld));
+    this.selfDoll.setArmor(this.selfArmor);
   }
 
   /** Spawn a remote paperdoll inside its interpolation container. */
@@ -1646,6 +1674,7 @@ export class WorldScene extends Phaser.Scene {
     rp.body.setVisible(true);
     rp.body.setAlpha(0.001);
     if (rp.held) doll.setWeapon(weapon_sheet_for(rp.held));
+    if (rp.armorKey) doll.setArmor(JSON.parse(rp.armorKey));
   }
 
   updateBlocks(blocks: [number, number, string][]): void {
@@ -1667,6 +1696,7 @@ export class WorldScene extends Phaser.Scene {
       this.selfMarker.setPosition(s.x * this.tilePx, s.y * this.tilePx);
       this.ensureSelfHand();
       this.setSelfHeld(welcome.held ?? null);
+      this.setSelfArmor(welcome.armor ?? null);
       return;
     }
     // NOTE: server positions are already TILE-CENTER based (x_f = x + 0.5),
@@ -1690,6 +1720,7 @@ export class WorldScene extends Phaser.Scene {
     }
     this.ensureSelfHand();
     this.setSelfHeld(welcome.held ?? null);
+    this.setSelfArmor(welcome.armor ?? null);
   }
 
   /** Create the self hand dot + tool icon once (world-space siblings). */
@@ -1753,6 +1784,13 @@ export class WorldScene extends Phaser.Scene {
     this.selfHeld = itemId;
     if (this.selfToolIcon) this.selfToolIcon = this.applyHandIcon(this.selfToolIcon, itemId);
     if (this.selfDoll) this.selfDoll.setWeapon(weapon_sheet_for(itemId));
+  }
+
+  /** Swap SELF's armor layers (welcome + 20 Hz snapshot echo). Also called
+   *  from spawnSelfDoll once the doll exists. */
+  setSelfArmor(equipped: Record<string, string> | null | undefined): void {
+    this.selfArmor = equipped ?? null;
+    this.selfDoll?.setArmor(this.selfArmor);
   }
 
   /** Update the SELF hand from the local hotbar (instant, no server wait). */
@@ -1826,6 +1864,13 @@ export class WorldScene extends Phaser.Scene {
       rp.toolIcon = this.applyHandIcon(rp.toolIcon, held);
       const doll = this.remoteDolls.get(p.id);
       if (doll) doll.setWeapon(weapon_sheet_for(held));
+    }
+    // Armor layers: swap whenever the payload differs (server stems are
+    // already manifest-validated, so no further filtering needed here).
+    const armorKey = JSON.stringify(p.armor ?? {});
+    if (armorKey !== (rp.armorKey ?? "")) {
+      rp.armorKey = armorKey;
+      this.remoteDolls.get(p.id)?.setArmor(p.armor ?? null);
     }
   }
 
@@ -2045,6 +2090,14 @@ export class WorldScene extends Phaser.Scene {
       // inputVec.running (Shift only), so plain walking never left the idle
       // row — no leg animation.
       const moving = this.inputVec.dx !== 0 || this.inputVec.dy !== 0;
+      if (moving !== this.selfWasMoving) {
+        // Transition walk<->idle: force the next facing change (or the
+        // current facing) to re-send as a "turn" — the server stamps
+        // movement facing per tick while moving and would otherwise leave
+        // remote players on the last walk direction after we stop.
+        this.selfWasMoving = moving;
+        this.lastSentTurnDir = "";
+      }
       this.selfDoll.animate(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, moving ? "walk" : "idle", this.selfDir, nowMs);
     }
 
@@ -2917,14 +2970,31 @@ export class WorldScene extends Phaser.Scene {
    * "giật 1 phát rồi mới final" bug), and when the server reports a
    * different facing while idle we blend toward it too. The HAND dot reads
    * this vector, so it rotates smoothly with the avatar (no arrow needed).
+   *
+   * MOUSE FACING (user 28/09): the 8-way facing label (`selfDir`, which
+   * drives the paperdoll rows AND `getSelfDir`) follows the blue hover-box
+   * tile (desktop cursor / mobile sticky aim lock) whenever it is live and
+   * NOT the tile we stand on. Legs are untouched — update() picks the
+   * walk/idle row from the movement input alone, so the body can walk
+   * while facing the cursor and stands with idle legs when motionless.
    */
   private updateFacing(): void {
     if (!this.selfMarker) return;
     let targetX = this.lastMoveX;
     let targetY = this.lastMoveY;
     if (this.aimCursor) {
+      // Build-Mode cursor keeps top precedence.
       targetX = this.aimCursor.dx;
       targetY = this.aimCursor.dy;
+    } else {
+      const aimTile = this.mobileAimTile ?? this.mouseTile;
+      if (aimTile &&
+          (aimTile.x !== Math.floor(this.selfX) ||
+           aimTile.y !== Math.floor(this.selfY))) {
+        targetX = aimTile.x + 0.5 - this.selfX;
+        targetY = aimTile.y + 0.5 - this.selfY;
+        this.selfDir = this.dominantDir(targetX, targetY);
+      }
     }
     const targetLen = Math.hypot(targetX, targetY) || 1;
     targetX /= targetLen;
@@ -2935,6 +3005,27 @@ export class WorldScene extends Phaser.Scene {
     const k = 0.25;
     this.faceVec.x += (targetX - this.faceVec.x) * k;
     this.faceVec.y += (targetY - this.faceVec.y) * k;
+    this.syncTurnToServer();
+  }
+
+  /** Forward facing changes to the server ("turn" action, throttled) so
+   *  remote players see the mouse-facing too. The server's web tick
+   *  re-stamps direction from movement EVERY tick while moving, so update()
+   *  resets lastSentTurnDir on the moving->idle transition to converge
+   *  remote bodies onto the final mouse-facing after stopping. */
+  private syncTurnToServer(): void {
+    if (this.selfDead || !this.onSelfTurn) return;
+    const dir = this.selfDir;
+    if (dir === this.lastSentTurnDir && this.pendingTurnDir === null) return;
+    const now = performance.now();
+    if (now - this.lastTurnSentAt < 250) {
+      this.pendingTurnDir = dir; // newest dir wins when the window opens
+      return;
+    }
+    this.lastTurnSentAt = now;
+    this.pendingTurnDir = null;
+    this.lastSentTurnDir = dir;
+    this.onSelfTurn(dir);
   }
 
   /** Extra hand reach (px) for a swing started at t0, sampled at now. */
@@ -4380,6 +4471,10 @@ export class WorldScene extends Phaser.Scene {
     // Self held echo (20 Hz): converges the local instant hand with the
     // server truth (reconnect / bag change from another client / use).
     if (snap.self.held !== undefined) this.setSelfHeld(snap.self.held ?? null);
+    // Armor echo (20 Hz): a /mac assignment shows within one snapshot.
+    if ((snap.self as { armor?: Record<string, string> }).armor !== undefined) {
+      this.setSelfArmor((snap.self as { armor?: Record<string, string> }).armor ?? null);
+    }
     // Build-Mode cursor. Deliberately do NOT take snap.self.dir as the hand
     // target: the server reports the dominant-axis 8-way name (SE -> E),
     // and blending toward it on every key release re-introduced the facing

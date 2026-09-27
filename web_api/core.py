@@ -1041,7 +1041,7 @@ class WebHub:
             stamp = "meteor-fix-4d16382"
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /meteor [rand] (admin — gọi thiên thạch)"
+                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /mac leather|off (mặc giáp da demo), /meteor [rand] (admin — gọi thiên thạch)"
                 + f" — build {stamp} ({_dt.datetime.now().strftime('%H:%M')})",
             })
         elif cmd == "cuahang":
@@ -1120,6 +1120,8 @@ class WebHub:
             await self._cmd_give(sess, args)
         elif cmd == "spawnmob":
             await self._cmd_spawnmob(sess, args)
+        elif cmd == "mac":
+            await self._cmd_mac(sess, args)
         elif cmd == "meteor":
             # /meteor       -> hits the caller's tile exactly
             # /meteor rand  -> hits a tile 6-12 tiles away from the caller
@@ -1211,6 +1213,67 @@ class WebHub:
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"🎁 Đã nhận {label} vào túi.",
             "kind": "system_private",
+        })
+
+    async def _cmd_mac(self, sess: WebSession, args: List[str]) -> None:
+        """Demo equip command for the Kaetram armor paperdoll layers.
+
+        Usage:
+          /mac leather               -> wear the full leather set
+                                        (helmet + chest + legs)
+          /mac <slot> <stem>         -> wear ONE layer
+                                        (slot = helmet|chest|legs,
+                                         stem = a manifest "armor" key)
+          /mac off                   -> strip every layer
+        The assignment lives on player.equipped_armor and rides the
+        snapshots/players payload; the web client draws the layers.
+        """
+        rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
+        if rt is None:
+            return
+        player = rt.state.get_player(sess.user_id)
+        if player is None:
+            return
+        from web_api.snapshots import _players_manifest_payload
+
+        armor_catalog = _players_manifest_payload().get("armor", {})
+        slots = ("helmet", "chest", "legs")
+        if not args or args[0].lower() == "leather":
+            # Full leather set (all three stems exist in the manifest).
+            missing = [s for s in ("leatherhelmet", "leatherchest", "leatherleggings")
+                       if s not in armor_catalog]
+            if missing:
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH,
+                    "message": f"Thiếu sheet trong manifest: {', '.join(missing)}",
+                })
+                return
+            player.equipped_armor = {
+                "helmet": "leatherhelmet",
+                "chest": "leatherchest",
+                "legs": "leatherleggings",
+            }
+            msg = "🛡 Đã mặc BỘ GIÁP DA (mũ + ngực + chân)."
+        elif args[0].lower() == "off":
+            player.equipped_armor = {}
+            msg = "🛡 Đã THÁO hết giáp."
+        else:
+            slot = args[0].lower()
+            stem = (args[1].lower() if len(args) > 1 else "")
+            if slot not in slots or stem not in armor_catalog:
+                known = ", ".join(sorted(armor_catalog.keys()))
+                await self.send_to_client_conn(sess, {
+                    "type": MSG_PUSH,
+                    "message": "Dùng: /mac leather | /mac off | "
+                               f"/mac <helmet|chest|legs> <stem>. Sheet có: {known}",
+                })
+                return
+            player.equipped_armor[slot] = stem
+            msg = f"🛡 Đã mặc {stem} vào {slot}."
+        # Snapshot carries players[].armor + self.armor every 20 Hz — no
+        # explicit push needed; tell the caller what happened.
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH, "message": msg, "kind": "system_private",
         })
 
     _TIME_PRESETS = {
@@ -1577,7 +1640,7 @@ class WebHub:
         # never attach a sword. Traversal is still blocked by the resolved-
         # path confinement check below (defence in depth).
         safe = Path(name).name
-        if name.startswith("players/weapon/"):
+        if name.startswith("players/weapon/") or name.startswith("players/armor/"):
             safe = Path(name).parts[-2] + "/" + Path(name).parts[-1]
         if name.startswith("icons/"):
             # Item icon set (Kaetram-generated, scripts/make_item_icons.py) —

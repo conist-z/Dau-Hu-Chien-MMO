@@ -15,6 +15,7 @@ from game.crafting import RECIPE_REGISTRY, nearest_station
 from game.drops import drops_payload
 from game.manager import ScenarioRuntime
 from game.meteors import snapshot_payload as meteor_snapshot
+from game.status_effects import payload as _status_payload
 from game.zombies import iter_web_zombies
 from rendering.daynight import ingame_seconds
 
@@ -65,6 +66,26 @@ def _held_of(rt: ScenarioRuntime, user_id: int) -> str | None:
         return inv.hotbar().get(max(0, slot))
     except Exception:
         return None
+
+
+def _armor_of(rt: ScenarioRuntime, user_id: int) -> Dict[str, str]:
+    """Equipped ARMOR projection for the paperdoll (Kaetram layers).
+
+    ``p.equipped_armor`` is {slot: stem} with slot in helmet|chest|legs and
+    stem a key of the manifest's "armor" section (assets/players/armor/
+    <stem>.png). Unknown slots/stems are dropped here so a stale assignment
+    can never make the client request a sheet the manifest doesn't know.
+    """
+    player = rt.state.get_player(user_id)
+    if player is None:
+        return {}
+    equipped = getattr(player, "equipped_armor", {}) or {}
+    known = _players_manifest_payload().get("armor", {})
+    out: Dict[str, str] = {}
+    for slot, stem in equipped.items():
+        if slot in ("helmet", "chest", "legs") and stem in known:
+            out[slot] = str(stem)
+    return out
 
 
 def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
@@ -134,8 +155,9 @@ def _players_payload(rt: ScenarioRuntime, exclude_user_id: int = 0) -> List[dict
             # web client renders chat players as round avatar tokens.
             "mode": p.mode,
             "held": _held_of(rt, p.user_id),
-            # Permanent role color ("#rrggbb", empty = not yet minted):
-            # colors the chat name AND the label above the avatar.
+            # Kaetram armor layers {helmet|chest|legs: stem} — the client
+            # draws them as manifest-driven sprites over the body.
+            "armor": _armor_of(rt, p.user_id),
             "color": p.name_color or "",
             # Profile popup stats (click-a-player card).
             "hp": p.hp,
@@ -514,6 +536,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
             ),
             "coins": player.coins if player else 0,
             "crystals": getattr(player, "crystals", 0) if player else 0,
+            # Status effects rail (user 25/09): [effect_id, secs_left, level].
+            "status_effects": _status_payload(player) if player else [],
             "walk_speed": _walk_speed(),
             "run_speed": _run_speed(),
             # Sprint drain rate (config.STAMINA_RUN_DRAIN): the client's
@@ -534,6 +558,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         # client renders its own hand instantly from the local hotbar, but
         # the echo + snapshot copy keep reconnects/welcome in sync.
         "held": _held_of(rt, user_id),
+        # Self's equipped armor (same shape as players[].armor).
+        "armor": _armor_of(rt, user_id),
         # Placeable block catalog (id + emoji + name) for the build UI.
         "blocks_catalog": _blocks_catalog_payload(),
         # Heavy world parts come from the signature cache (rebuilt only when
@@ -705,6 +731,8 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "max_stamina": int(player.max_stamina) if player else _stamina_max(),
             "coins": player.coins if player else 0,
             "crystals": getattr(player, "crystals", 0) if player else 0,
+            # Status effects rail (user 25/09): [effect_id, secs_left, level].
+            "status_effects": _status_payload(player) if player else [],
             "x": round(player.x_f, 3) if player else 0.5,
             "y": round(player.y_f, 3) if player else 0.5,
             # Eating state (chew particles + half speed on the client) + the
@@ -742,6 +770,9 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             # What I hold (echo of the hotbar slot). Remote hands come from
             # each entry of `players[].held`; self uses this (no clone entry).
             "held": _held_of(rt, user_id),
+            # Self's equipped armor (mirrors players[].armor so a /mac
+            # assignment shows up within one 20 Hz snapshot).
+            "armor": _armor_of(rt, user_id),
             # Mode of the controlling client for THIS body ("chat" | "web").
             # For a web connection this is always "web" (the server refuses
             # to attach when another web session holds it), but a future

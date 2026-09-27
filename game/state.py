@@ -180,6 +180,21 @@ class Player:
     # Preferred steps per move press (1/3/5). Persisted so the choice
     # survives a restart — new sessions start at the remembered setting.
     step_size: int = 1
+    # Status effects (debuffs): game/status_effects.py — list of dicts
+    # {id, level, until, next_tick, dmg, interval}, newest LAST. Runtime-only
+    # (never persisted): a restart clears debuffs like dead_until does.
+    status_effects: List[dict] = field(default_factory=list)
+    # WORLD PERSISTENCE: which map this body currently stands in (None = the
+    # channel's main world). Set on every portal/fast-travel teleport and
+    # persisted with the player, so rejoining (or a bot restart) puts the
+    # player back inside the cave/forest instead of the bigmap spawn.
+    world_map: Optional[str] = None
+    # Paperdoll ARMOR (Kaetram equipment layers): stems under
+    # assets/players/armor/<stem>.png resolved through the manifest's
+    # "armor" section. Runtime-only demo state (assigned via /mac until
+    # the equip UI exists): a restart clears it — same lifetime as the
+    # other non-persisted appearance state.
+    equipped_armor: Dict[str, str] = field(default_factory=dict)
 
     @property
     def alive(self) -> bool:
@@ -249,6 +264,10 @@ class GameState:
         self.zombie_seq: int = 0
         self.web_zombies: Dict[str, object] = {}
         self.web_zombie_seq: int = 0
+        # Ambient wildlife share the same web store/ids — they carry
+        # ambient=True + their own pool cap (game/mob_profiles.py), so the
+        # night-mob cap never counts a deer and a deer never counts a zombie.
+        self.web_animal_seq: int = 0
         # Incoming damage feed (hitsplats ON players): (unix_ts, user_id,
         # amount, source). Web snapshots replay entries newer than the
         # client's last-seen cursor so bites show floating numbers exactly

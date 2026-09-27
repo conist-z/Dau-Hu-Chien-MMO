@@ -278,6 +278,134 @@
       "rows": 9,
       "offset_x": -8,
       "offset_y": -24
+    },
+    "charcoal": {
+      "file": "weapon/charcoal.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "dirt": {
+      "file": "weapon/dirt.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "keystone": {
+      "file": "weapon/keystone.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "floor": {
+      "file": "weapon/floor.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "mushroom_brown": {
+      "file": "weapon/mushroom_brown.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "crafting_table": {
+      "file": "weapon/crafting_table.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "seed": {
+      "file": "weapon/seed.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "raw_meat": {
+      "file": "weapon/raw_meat.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "furnace": {
+      "file": "weapon/furnace.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "mushroom_purple": {
+      "file": "weapon/mushroom_purple.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    },
+    "potion_mp": {
+      "file": "weapon/potion_mp.png",
+      "frame_w": 48,
+      "frame_h": 48,
+      "cols": 4,
+      "rows": 9,
+      "offset_x": -8,
+      "offset_y": -24
+    }
+  },
+  "armor": {
+    "leatherhelmet": {
+      "file": "armor/leatherhelmet.png",
+      "frame_w": 32,
+      "frame_h": 32,
+      "cols": 4,
+      "rows": 12,
+      "offset_x": -8,
+      "offset_y": -32
+    },
+    "leatherchest": {
+      "file": "armor/leatherchest.png",
+      "frame_w": 32,
+      "frame_h": 32,
+      "cols": 4,
+      "rows": 12,
+      "offset_x": -8,
+      "offset_y": -32
+    },
+    "leatherleggings": {
+      "file": "armor/leatherleggings.png",
+      "frame_w": 32,
+      "frame_h": 32,
+      "cols": 4,
+      "rows": 12,
+      "offset_x": -8,
+      "offset_y": -32
     }
   },
   "rows": {
@@ -298,5 +426,5 @@
     "atk": 50
   },
   "scale": 2.0,
-  "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 \u00e2\u20ac\u201d see kaetram_extract/_license/ATTRIBUTION.md"
+  "attribution": "Kaetram-Open assets, CC-BY-SA 3.0 â€” see kaetram_extract/_license/ATTRIBUTION.md"
 }
