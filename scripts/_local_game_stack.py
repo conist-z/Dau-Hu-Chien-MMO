@@ -36,6 +36,15 @@ DIST_DIR = ROOT / "web_client" / "relay" / "dist"
 
 PREVIEW_USER = 910000000000000042
 PREVIEW_CHANNEL = PREVIEW_USER ^ 0x5EED000000000000
+# MULTI-SESSION (user 28/09): 2-4 preview tabs run side by side; each tab gets
+# its OWN user_id + channel so it lives in a separate world instance. The ids
+# come from a random 40-bit space hashed into the safe int64 band (> 2^53),
+# far from real Discord snowflakes; collisions across tabs are vanishingly
+# rare and only cost a shared world (same as the old single-session mode).
+def _fresh_preview_user() -> int:
+    import secrets as _s
+
+    return 910000000000000000 + (_s.randbits(40) << 8)
 
 
 def now_ms() -> float:
@@ -126,13 +135,16 @@ class LocalStack:
             return
         if cid not in self.sessions and t not in ("guest_login", "resume_login"):
             # Frame before login (stale reconnect): auto-guest so old clients
-            # never KeyError the handler.
-            self.sessions[cid] = {"user_id": PREVIEW_USER, "name": f"Khach-{PREVIEW_USER % 10000}"}
+            # never KeyError the handler. ISOLATED (user 28/09): a fresh user
+            # per connection — two preview tabs never share a world.
+            uid0 = _fresh_preview_user()
+            self.sessions[cid] = {"user_id": uid0, "name": f"Khach-{uid0 % 10000}"}
         if t == "guest_login" or t == "resume_login":
-            try:
-                user_id = int(frame.get("guest_id") or PREVIEW_USER)
-            except (TypeError, ValueError):
-                user_id = PREVIEW_USER
+            # ISOLATED (user 28/09): ignore any client-sent guest_id and mint a
+            # unique user per TAB. resume_login from a dropped tab gets a new
+            # user too — the old world despawns with the socket, so resuming
+            # into it would spawn a ghost on a dead channel.
+            user_id = _fresh_preview_user()
             self.sessions[cid] = {"user_id": user_id, "name": f"Khach-{user_id % 10000}"}
             await self._send(cid, {
                 "type": "login_result", "ok": True,

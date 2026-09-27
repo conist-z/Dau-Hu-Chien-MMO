@@ -1,13 +1,23 @@
 // Preview panel (DEV/PREVIEW builds only): a floating remote control for the
-// server's REAL mechanics — pin the in-game clock (night gate), summon
-// meteors, force weather, spawn/clear the mob pack, switch preview maps, and
-// read a live status line. Talks to the local preview stack
+// server's REAL mechanics. Talks to the local preview stack
 // (scripts/_preview_stack.py) via preview_cmd frames; the stack answers with
 // push toasts (the log feed) and preview_state dumps (the status line).
 //
+// MULTI-SESSION (user 28/09): every browser tab is its own server-side user
+// (see scripts/_local_game_stack.py) — 2-4 tabs play in separate worlds at
+// once. The panel therefore shows THIS tab's identity in the header and the
+// status line so instances never get confused with each other.
+//
+// OVERHAUL (user 28/09): collapsed sections keep the panel compact —
+// "Thế giới" (clock/meteors/weather), "Quái & Động vật", "Nhân vật"
+// (heal/kill/respawn/status/teleport), "Map" — plus a boxed log. Sections
+// are <details> so the reviewer opens only what they need.
+//
 // Gated by `?preview=1` (or #preview) so production clients never build it.
 
-type Cmd = "clock" | "meteor" | "weather" | "zombies" | "animals" | "map" | "state" | "bite";
+type Cmd =
+  | "clock" | "meteor" | "weather" | "zombies" | "animals" | "map"
+  | "state" | "bite" | "heal" | "kill" | "respawn" | "status" | "tp";
 
 interface PanelHooks {
   send: (frame: Record<string, unknown>) => void;
@@ -31,13 +41,21 @@ const WEATHERS: Array<[string, string]> = [
   ["cloud_shadow", "Mây đen"],
 ];
 
+/** Real server-side debuffs (game.status_effects.EFFECTS). */
+const STATUSES: Array<[string, string]> = [
+  ["infection", "Thối Rửa"],
+  ["poison", "Độc"],
+];
+
+const LS_POS_KEY = "preview-panel-pos";
+const LS_OPEN_KEY = "preview-panel-open";
+
 export class PreviewPanel {
   private root: HTMLDivElement | null = null;
   private log: HTMLDivElement | null = null;
   private status: HTMLDivElement | null = null;
   private hooks: PanelHooks | null = null;
-  private minimized = false;
-  private statusTimer: number | null = null;
+  private demoTimer: number | null = null;
 
   attach(hooks: PanelHooks): void {
     if (this.root || !enabledByQuery()) return;
@@ -55,24 +73,21 @@ export class PreviewPanel {
     root.style.cssText = [
       "position:fixed", "top:52px", "right:8px", "z-index:3000",
       // Translucent so the map/status rail underneath stays readable.
-      "background:rgba(10,12,20,0.55)", "backdrop-filter:blur(2px)",
+      "background:rgba(10,12,20,0.72)", "backdrop-filter:blur(2px)",
       "color:#dfe6ff",
       "border:1px solid #3b4a7a", "border-radius:10px",
-      "font:12px/1.5 monospace", "padding:10px", "width:244px",
+      "font:12px/1.5 monospace", "padding:8px 10px", "width:248px",
+      "max-height:calc(100vh - 70px)", "overflow-y:auto",
       "box-shadow:0 4px 18px rgba(0,0,0,0.5)", "user-select:none",
     ].join(";");
 
     const head = document.createElement("div");
-    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:move";
-    head.innerHTML = `<b style="color:#ffd75e">🧪 PREVIEW</b>`;
+    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;cursor:move";
+    head.innerHTML = `<b style="color:#ffd75e">🧪 PREVIEW <span id="preview-tab-id" style="color:#8fa3d9;font-weight:400"></span></b>`;
     const mini = document.createElement("button");
     mini.textContent = "–";
     mini.style.cssText = btnStyle("#2a3352", "22px");
-    mini.onclick = () => {
-      this.minimized = !this.minimized;
-      body.style.display = this.minimized ? "none" : "block";
-      mini.textContent = this.minimized ? "+" : "–";
-    };
+    mini.onclick = () => this.setMinimized(!this.minimized);
 
     // DRAGGABLE + position memory: drag by the header; the position is
     // remembered in localStorage so EVERY future session starts where the
@@ -83,109 +98,174 @@ export class PreviewPanel {
     root.appendChild(head);
 
     const body = document.createElement("div");
+    body.id = "preview-body";
     root.appendChild(body);
+    this.root = root;
 
-    const section = (label: string): HTMLDivElement => {
+    // ---- helpers ----
+    const details = (label: string, open = false): HTMLDivElement => {
+      const det = document.createElement("details");
+      det.style.cssText = "margin:2px 0;border-top:1px solid #3b4a7a;padding-top:3px";
+      det.open = open;
+      const summary = document.createElement("summary");
+      summary.textContent = label;
+      summary.style.cssText = "cursor:pointer;color:#8fa3d9;list-style:none;user-select:none";
+      det.appendChild(summary);
+      const inner = document.createElement("div");
+      inner.style.cssText = "margin-top:4px";
+      det.appendChild(inner);
+      body.appendChild(det);
+      // Remember open/closed across sessions.
+      det.addEventListener("toggle", () => {
+        try {
+          const openKeys = JSON.parse(localStorage.getItem(LS_OPEN_KEY) || "{}") as Record<string, boolean>;
+          openKeys[label] = det.open;
+          localStorage.setItem(LS_OPEN_KEY, JSON.stringify(openKeys));
+        } catch { /* storage unavailable — fine this session */ }
+      });
+      try {
+        const openKeys = JSON.parse(localStorage.getItem(LS_OPEN_KEY) || "{}") as Record<string, boolean>;
+        det.open = !!openKeys[label];
+      } catch { /* keep default */ }
+      return inner;
+    };
+    const row = (parent: HTMLElement): HTMLDivElement => {
       const d = document.createElement("div");
-      d.style.cssText = "margin:4px 0 2px;color:#8fa3d9";
-      d.textContent = label;
-      body.appendChild(d);
+      d.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px";
+      parent.appendChild(d);
       return d;
     };
-    const row = (): HTMLDivElement => {
-      const d = document.createElement("div");
-      d.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px";
-      body.appendChild(d);
-      return d;
-    };
-    const btn = (label: string, fn: () => void, color = "#2a3352"): void => {
+    const btn = (parent: HTMLElement, label: string, fn: () => void, color = "#2a3352"): void => {
       const b = document.createElement("button");
       b.textContent = label;
       b.style.cssText = btnStyle(color);
       b.onclick = fn;
-      return void body.lastElementChild!.appendChild(b);
+      parent.appendChild(b);
     };
 
-    // ---- clock ----
-    section("⏰ Giờ trong game (gate đêm)");
-    row();
-    btn("☀️ Day", () => this.send("clock", "day"), "#3a3312");
-    btn("🌆 Dusk", () => this.send("clock", "dusk"));
-    btn("🌙 Night", () => this.send("clock", "night"), "#1a2a52");
-    btn("Tự nhiên", () => this.send("clock", "normal"));
-
-    // ---- meteors ----
-    section("☄️ Thiên thạch (bigmap)");
-    row();
-    btn("Tại chỗ", () => this.send("meteor", "here"), "#5a1a1a");
-    btn("Random gần", () => this.send("meteor", "rand"), "#5a1a1a");
-    btn("Auto ON", () => this.send("meteor", "auto"), "#1a3a1a");
-    btn("Auto OFF", () => this.send("meteor", "off"));
-
-    // ---- weather ----
-    section("🌧️ Thời tiết");
-    row();
+    // ---- 🌍 Thế giới: giờ / thiên thạch / thời tiết ----
+    const world = details("🌍 Thế giới", true);
+    row(world);
+    btn(world, "☀️ Ngày", () => this.send("clock", "day"), "#3a3312");
+    btn(world, "🌆 Hoàng hôn", () => this.send("clock", "dusk"));
+    btn(world, "🌙 Đêm", () => this.send("clock", "night"), "#1a2a52");
+    btn(world, "Tự nhiên", () => this.send("clock", "normal"));
+    const timeRow = row(world);
+    const timeInput = document.createElement("input");
+    timeInput.placeholder = "HH:MM (vd 02:30)";
+    timeInput.style.cssText =
+      "flex:1;min-width:90px;background:#0e1424;color:#dfe6ff;border:1px solid #4a5a8a;border-radius:6px;padding:3px 6px;font:11px monospace";
+    timeRow.appendChild(timeInput);
+    const timeBtn = document.createElement("button");
+    timeBtn.textContent = "Đặt giờ";
+    timeBtn.style.cssText = btnStyle("#3a3312");
+    timeBtn.onclick = () => {
+      const v = timeInput.value.trim();
+      if (v) this.send("clock", v);
+    };
+    timeRow.appendChild(timeBtn);
+    row(world);
+    btn(world, "☄️ Tại chỗ", () => this.send("meteor", "here"), "#5a1a1a");
+    btn(world, "☄️ Gần", () => this.send("meteor", "rand"), "#5a1a1a");
+    btn(world, "☄️ Auto ON", () => this.send("meteor", "auto"), "#1a3a1a");
+    btn(world, "☄️ Auto OFF", () => this.send("meteor", "off"));
+    row(world);
     for (const [key, label] of WEATHERS) {
-      btn(label, () => this.send("weather", key));
+      btn(world, label, () => this.send("weather", key));
     }
 
-    // ---- mobs ----
-    section("👾 Quái (spawn theo map)");
-    row();
-    btn("Spawn 10", () => this.send("zombies", "pack"), "#1a3a1a");
-    btn("Dịch sát mặt", () => this.send("bite"), "#5a3a1a");
-    btn("Dọn sạch", () => this.send("zombies", "none"), "#5a1a1a");
+    // ---- 👾 Quái & động vật ----
+    const mobs = details("👾 Quái & động vật", true);
+    row(mobs);
+    btn(mobs, "Spawn 10 quái", () => this.send("zombies", "pack"), "#1a3a1a");
+    btn(mobs, "Cắn -10", () => this.send("bite"), "#5a3a1a");
+    btn(mobs, "Cắn -50", () => this.send("bite", 50), "#5a3a1a");
+    btn(mobs, "Dọn quái", () => this.send("zombies", "none"), "#5a1a1a");
+    row(mobs);
+    btn(mobs, "+1 động vật", () => this.send("animals", "rand"), "#1a3a1a");
+    btn(mobs, "Thỏ", () => this.send("animals", "bunny"), "#1a2a1a");
+    btn(mobs, "Nai", () => this.send("animals", "deer"), "#1a2a1a");
+    btn(mobs, "Heo", () => this.send("animals", "boar"), "#1a2a1a");
+    btn(mobs, "Gấu", () => this.send("animals", "bear"), "#1a2a1a");
+    btn(mobs, "Sói", () => this.send("animals", "wolf"), "#1a2a1a");
+    btn(mobs, "Dọn vật", () => this.send("animals", "none"), "#5a1a1a");
 
-    // ---- wildlife (daytime animals) ----
-    section("🦌 Động vật ban ngày");
-    row();
-    btn("Spawn random", () => this.send("animals", "rand"), "#1a3a1a");
-    btn("Thỏ", () => this.send("animals", "bunny"), "#1a2a1a");
-    btn("Nai", () => this.send("animals", "deer"), "#1a2a1a");
-    btn("Heo", () => this.send("animals", "boar"), "#1a2a1a");
-    btn("Gấu", () => this.send("animals", "bear"), "#1a2a1a");
-    btn("Sói", () => this.send("animals", "wolf"), "#1a2a1a");
-    btn("Dọn", () => this.send("animals", "none"), "#5a1a1a");
+    // ---- 🧍 Nhân vật: heal / kill / respawn / status / teleport ----
+    const me = details("🧍 Nhân vật", true);
+    row(me);
+    btn(me, "Rail demo", () => this.startStatusDemo(), "#2a2a3a");
+    btn(me, "❤️ Hồi full", () => this.send("heal"), "#1a3a1a");
+    btn(me, "☠️ Chết", () => this.send("kill"), "#5a1a1a");
+    btn(me, "✨ Hồi sinh", () => this.send("respawn"), "#1a2a52");
+    row(me);
+    for (const [key, label] of STATUSES) {
+      btn(me, `☣️ ${label}`, () => this.send("status", key), "#1a2a1a");
+    }
+    btn(me, "Xoá hiệu ứng", () => this.send("status", "off"), "#5a1a1a");
+    const tpRow = row(me);
+    const tpInput = document.createElement("input");
+    tpInput.placeholder = "x,y (trống = ngẫu nhiên)";
+    tpInput.style.cssText =
+      "flex:1;min-width:90px;background:#0e1424;color:#dfe6ff;border:1px solid #4a5a8a;border-radius:6px;padding:3px 6px;font:11px monospace";
+    tpRow.appendChild(tpInput);
+    const tpBtn = document.createElement("button");
+    tpBtn.textContent = "🌀 Tới";
+    tpBtn.style.cssText = btnStyle("#33321a");
+    tpBtn.onclick = () => {
+      const v = tpInput.value.trim();
+      this.send("tp", v || "rand");
+    };
+    tpRow.appendChild(tpBtn);
+    row(me);
+    btn(me, "Về spawn", () => this.send("tp", "spawn"), "#33321a");
+    btn(me, "Đi chỗ khác", () => this.send("tp", "rand"), "#33321a");
 
-    // ---- map switch ----
-    section("🗺️ Đổi map preview");
-    row();
+    // ---- 🗺️ Map ----
+    const mapSec = details("🗺️ Đổi map");
+    row(mapSec);
     for (const [id, label] of MAPS) {
-      btn(label, () => this.send("map", id), "#33321a");
+      btn(mapSec, label, () => this.send("map", id), "#33321a");
     }
 
-    // ---- status effects (DEMO — local only, no server frames) ----
-    section("✨ Status effects (demo)");
-    row();
-    btn("ON", () => this.startStatusDemo(), "#1a3a1a");
-    btn("OFF", () => this.stopStatusDemo(), "#5a1a1a");
-
-    // ---- status + log ----
-    section("📡 Trạng thái");
+    // ---- 📡 status + log ----
+    const st = details("📡 Trạng thái & log", true);
     this.status = document.createElement("div");
     this.status.style.cssText = "color:#7fff9f;white-space:pre-wrap;margin-bottom:4px";
     this.status.textContent = "…";
-    body.appendChild(this.status);
+    st.appendChild(this.status);
     const refresh = document.createElement("button");
     refresh.textContent = "↻ Refresh";
     refresh.style.cssText = btnStyle("#2a3352");
     refresh.onclick = () => this.send("state");
-    body.appendChild(refresh);
-
+    st.appendChild(refresh);
     this.log = document.createElement("div");
     this.log.style.cssText =
-      "margin-top:6px;max-height:140px;overflow-y:auto;color:#a9b7e8;white-space:pre-wrap;border-top:1px solid #3b4a7a;padding-top:4px";
-    body.appendChild(this.log);
+      "margin-top:5px;max-height:120px;overflow-y:auto;color:#a9b7e8;white-space:pre-wrap;border-top:1px solid #3b4a7a;padding-top:4px";
+    st.appendChild(this.log);
 
     document.body.appendChild(root);
-    this.root = root;
+    // Auto-refresh the status line every 5s so the reviewer never pokes
+    // Refresh manually to see mob counts / HP after an action.
+    window.setInterval(() => {
+      if (!this.minimized) this.send("state");
+    }, 5000);
     this.send("state");
+  }
+
+  private minimized = false;
+
+  private setMinimized(min: boolean): void {
+    this.minimized = min;
+    const body = document.getElementById("preview-body");
+    const mini = this.root?.querySelector("button");
+    if (body) body.style.display = min ? "none" : "block";
+    if (mini) mini.textContent = min ? "+" : "–";
   }
 
   /** Restore the last-dragged position (every session, same browser). */
   private restorePosition(root: HTMLDivElement): void {
     try {
-      const raw = localStorage.getItem("preview-panel-pos");
+      const raw = localStorage.getItem(LS_POS_KEY);
       if (!raw) return;
       const { x, y } = JSON.parse(raw) as { x: number; y: number };
       if (typeof x !== "number" || typeof y !== "number") return;
@@ -202,7 +282,7 @@ export class PreviewPanel {
       const r = root.getBoundingClientRect();
       try {
         localStorage.setItem(
-          "preview-panel-pos",
+          LS_POS_KEY,
           JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }),
         );
       } catch { /* storage unavailable — drag still works this session */ }
@@ -258,11 +338,43 @@ export class PreviewPanel {
     window.addEventListener("resize", clamp);
   }
 
-  /** DEMO: fake 3 effects with LIVE countdowns and the new LEVEL tier
-   *  (infection L2 gold, poison L3 red, poison2 L4 purple). poison2 expires
-   *  first and the rest slide RIGHT. While the demo runs it OWNS the rail
-   *  (hud.setDemoStatusEffects) so the 20 Hz server snapshots can't wipe it
-   *  between ticks — the old "ON feels dead / counter frozen" bug. */
+  /** push toasts land here too (the preview stack tags them "[preview]"). */
+  feed(message: string): void {
+    if (!this.log) return;
+    const line = document.createElement("div");
+    line.textContent = message;
+    this.log.prepend(line);
+    while (this.log.childElementCount > 40) this.log.lastElementChild!.remove();
+  }
+
+  onState(s: Record<string, unknown>): void {
+    if (!this.status) return;
+    const self = (s.self ?? {}) as {
+      name?: string; hp?: number; max_hp?: number;
+      x?: number; y?: number; dead?: boolean;
+      effects?: Array<[string, number, number]>;
+    };
+    const kinds = Array.isArray(s.mob_kinds) ? (s.mob_kinds as string[]).join(",") : "";
+    const effTxt = (self.effects ?? []).length
+      ? JSON.stringify(self.effects)
+      : "KHÔNG";
+    // Tab identity: the server mints a unique name per connection — two side-
+    // by-side preview tabs can never be confused.
+    const tabId = document.getElementById("preview-tab-id");
+    if (tabId && self.name) tabId.textContent = `· ${self.name}`;
+    this.status.textContent =
+      `map: ${s.map}\n` +
+      `giờ: ${s.clock} (${s.night ? "ĐÊM" : "day"})\n` +
+      `thời tiết: ${s.weather}\n` +
+      `quái: ${s.zombies} [${kinds}] | ☄️: ${s.meteors}\n` +
+      `tôi: ${self.name ?? "?"} ${self.hp ?? "?"}/${self.max_hp ?? "?"} HP` +
+      `${self.dead ? " (CHẾT)" : ""} @ (${self.x ?? "?"},${self.y ?? "?"})\n` +
+      `hiệu ứng: ${effTxt}\n` +
+      `đã rơi đêm nay: ${s.felled_tonight} | auto: ${s.auto_meteor ? "ON" : "OFF"}`;
+  }
+
+  /** DEMO rail (kept for UI tests): fake 3 effects with LIVE countdowns.
+   *  Prefer the REAL server-side status via the "Nhân vật" section. */
   private startStatusDemo(): void {
     this.stopStatusDemo();
     const hud = (window as unknown as {
@@ -279,50 +391,26 @@ export class PreviewPanel {
       effects = effects
         .map(([id, s, l]) => [id, s - 1, l] as [string, number, number?])
         .filter(([, s]) => s > 0);
-      // All effects expired: release the rail + stop instead of spamming an
-      // empty rail forever.
       if (!effects.length) {
         hud.setDemoStatusEffects(null);
-        this.statusTimer = null;
+        this.demoTimer = null;
         return;
       }
-      this.statusTimer = window.setTimeout(tick, 1000);
+      this.demoTimer = window.setTimeout(tick, 1000);
     };
     tick();
   }
 
   private stopStatusDemo(): void {
-    if (this.statusTimer !== null) {
-      clearTimeout(this.statusTimer);
-      this.statusTimer = null;
+    if (this.demoTimer !== null) {
+      clearTimeout(this.demoTimer);
+      this.demoTimer = null;
     }
     (window as unknown as {
       hud?: {
         setDemoStatusEffects(e: Array<[string, number, number?]> | null): void;
       };
     }).hud?.setDemoStatusEffects(null);
-  }
-
-  /** push toasts land here too (the preview stack tags them "[preview]"). */
-  feed(message: string): void {
-    if (!this.log) return;
-    const line = document.createElement("div");
-    line.textContent = message;
-    this.log.prepend(line);
-    while (this.log.childElementCount > 40) this.log.lastElementChild!.remove();
-  }
-
-  onState(s: Record<string, unknown>): void {
-    if (!this.status) return;
-    const status = Array.isArray(s.status) ? (s.status as Array<[string, number, number]>) : [];
-    const kinds = Array.isArray(s.mob_kinds) ? (s.mob_kinds as string[]).join(",") : "";
-    this.status.textContent =
-      `map: ${s.map}\n` +
-      `giờ: ${s.clock} (${s.night ? "ĐÊM" : "day"})\n` +
-      `thời tiết: ${s.weather}\n` +
-      `quái: ${s.zombies} [${kinds}] | ☄️: ${s.meteors}\n` +
-      `status: ${status.length ? JSON.stringify(status) : "KHÔNG"}\n` +
-      `đã rơi đêm nay: ${s.felled_tonight} | auto: ${s.auto_meteor ? "ON" : "OFF"}`;
   }
 }
 
