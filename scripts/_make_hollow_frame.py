@@ -11,16 +11,21 @@ g = ref[:, :, 1].astype(int)
 b = ref[:, :, 2].astype(int)
 a = ref[:, :, 3]
 
-# border ring = red-brown edge + gold accents + the sand rim just inside
+# border ring = red-brown edge + gold accents, LIMITED TO THE EDGE BAND.
+# Unrestricted, is_border_red also matches the OLD map's dark-red region in
+# the middle (127,0,0 fits r 40-180, g<80, b<90) — that baked the old map's
+# red/slate blobs over the user's map (the "layer cũ đè lên" bug). The real
+# frame lives within ~10px of the image edge.
 is_border_red = (a > 100) & (r > 40) & (r < 180) & (g < 80) & (b < 90)
 is_gold = (a > 100) & (r > 200) & (g > 120) & (b < 150)
-
-# NO DILATION: growing the ring inward baked the OLD map's ocean pixels
-# (lighter blue) into the composite edge — the user's map showed a band of
-# the old Kaetram map around its border ("layer map cũ đè lên"). The ring
-# is exactly the red-brown/gold border pixels of the original frame; the
-# custom map shows right up to them.
-ring = is_border_red | is_gold
+H, W = a.shape
+edge_band = np.zeros_like(a, dtype=bool)
+BAND = 10
+edge_band[:BAND, :] = True
+edge_band[-BAND:, :] = True
+edge_band[:, :BAND] = True
+edge_band[:, -BAND:] = True
+ring = (is_border_red | is_gold) & edge_band
 
 out = ref.copy()
 out[:, :, 3] = np.where(ring, a, 0)
