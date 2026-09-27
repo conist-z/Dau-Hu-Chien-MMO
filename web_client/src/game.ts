@@ -670,6 +670,12 @@ export class WorldScene extends Phaser.Scene {
     dieT0: number; // performance.now() when the kill echo landed (0 = alive)
     hunter: boolean;
     kind: string; // mob kind: zombie|skeleton|spider|slime|bat|rat
+    // Wildlife "!" alert marker (Metal-Gear-style spotted tell): created
+    // lazily when the server's alert flag first lands; animated pop + fade
+    // in the per-frame pass.
+    alertMark: Phaser.GameObjects.Text | null;
+    alertOn: boolean;
+    alertBornAt: number; // performance.now() when the current pop started
   }>();
   // Per-kind sheet readiness: kind -> true once its asset arrived.
   private mobTextureReady = new Set<string>();
@@ -2366,6 +2372,30 @@ export class WorldScene extends Phaser.Scene {
           z.body.clearTint();
           z.body.setAngle(0);
         }
+        // WILDLIFE "!" MARKER animation: pops in with a springy overshoot,
+        // bobs once, fades out. Runs on the SAME snapshot flag — while the
+        // server keeps alert=True the marker holds; when it drops, fade.
+        if (z.alertMark) {
+          const mark = z.alertMark;
+          mark.setPosition(0, z.barY - 10 + Math.sin(now / 120) * 1.5);
+          if (z.alertOn) {
+            // Springy pop-in: scale overshoots once then settles at 1.
+            const born = z.alertBornAt || (z.alertBornAt = now);
+            const age = Math.min(1, (now - born) / 180);
+            const pop = 1 + Math.sin(age * Math.PI) * 0.5;
+            mark.setScale(pop);
+            mark.setAlpha(1);
+            mark.setVisible(true);
+          } else {
+            const a = mark.alpha - 0.08;
+            if (a <= 0) {
+              mark.destroy();
+              z.alertMark = null;
+            } else {
+              mark.setAlpha(a);
+            }
+          }
+        }
       } else if (z.body instanceof Phaser.GameObjects.Rectangle) {
         if (z.anim === "atk") z.body.setScale(1.35, 0.85);
         else z.body.setScale(1, 1);
@@ -3919,7 +3949,7 @@ export class WorldScene extends Phaser.Scene {
     // of crashing on this.add (it is undefined pre-boot).
     if (!this.add || !this.scene) return;
     const seen = new Set<string>();
-    for (const [id, x, y, hp, maxHp, kind, hunter, facing, anim, animT] of list) {
+    for (const [id, x, y, hp, maxHp, kind, hunter, facing, anim, animT, alert] of list) {
       seen.add(id);
       const kindKey = MOB_SHEETS[kind] ? kind : "zombie";
       const sheet = MOB_SHEETS[kindKey];
@@ -3970,6 +4000,7 @@ export class WorldScene extends Phaser.Scene {
           frame: 0, frameT0: performance.now(),
           facing: facing ?? "S", dieT0: 0, hunter: hunter === "hunter",
           kind: kindKey,
+          alertMark: null, alertOn: false, alertBornAt: 0,
         };
         this.zombies.set(id, z);
       }
@@ -3978,6 +4009,20 @@ export class WorldScene extends Phaser.Scene {
       if (z.buf.length > 12) z.buf.shift();
       z.hunter = hunter === "hunter";
       z.facing = facing ?? z.facing;
+      // Wildlife "!" marker: the server tells us when an animal entered its
+      // stand-and-stare detection phase; pop the marker in lazily.
+      const alertNow = alert === true;
+      if (alertNow && !z.alertMark && z.disp !== "hostile") {
+        const mark = this.add.text(0, z.barY - 10, "!", {
+          fontFamily: "Verdana, sans-serif", fontSize: "16px",
+          fontStyle: "bold", color: "#ffd23f",
+          stroke: "#1a1208", strokeThickness: 4,
+        }).setOrigin(0.5);
+        mark.setScale(0); // pop-in from zero
+        z.container.add(mark);
+        z.alertMark = mark;
+      }
+      z.alertOn = alertNow;
       // Late-arriving sheet: upgrade the placeholder rect to the sprite.
       if (
         ready &&

@@ -1444,12 +1444,13 @@ def web_tick(
             panicking = now_mono < z.panic_until
             triggered = dist <= flee_vision
             if triggered and not panicking and z.alert_until <= 0.0:
-                # ALERT phase (theHunter parity): stand + face the player for
-                # alert_s (atk row doubles as the bark/startle pose), and
-                # SCARE nearby same-kind animals (herd/bird contagion).
+                # ALERT phase (theHunter parity): FREEZE + face the player for
+                # alert_s — idle anim only (the old atk-pose read as random
+                # leg flailing). The "!" marker on the client (alert=True in
+                # the snapshot) tells the player they've been spotted.
                 z.alert_until = now_mono + alert_s
                 z.facing = _side_animal_facing(z, dx, dy)
-                _web_set_anim(z, "atk", now_mono)
+                _web_set_anim(z, "idle", now_mono)
                 herd_r = float(beh.get("herd_panic_r", 0.0))
                 scatter_r = float(beh.get("scatter_r", 0.0))
                 contagion_r = herd_r or scatter_r

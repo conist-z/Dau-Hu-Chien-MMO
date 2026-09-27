@@ -114,6 +114,14 @@ def _zombies_payload(rt: ScenarioRuntime) -> List[list]:
                 str(getattr(z, "facing", "S")),
                 str(getattr(z, "anim", "idle")),
                 round(float(getattr(z, "anim_t", 0.0)), 3),
+                # ANIMAL ALERT flag (user 28/09): True while the wildlife AI
+                # is in its stand-and-stare detection phase — the client
+                # draws the "!" exclamation over the animal's head instead of
+                # faking it from the atk anim (which read as random leg
+                # flailing). Hostile mobs never set alert_until; absent on
+                # older servers -> the client treats undefined as False.
+                bool(getattr(z, "alert_until", 0.0) > 0.0 and
+                     getattr(z, "alert_until", 0.0) > __import__("time").monotonic()),
             ])
         except Exception:
             continue

@@ -155,6 +155,7 @@ export type WebZombiePayload = [
   string, number, number, number, number, string, string, string,
   string?, // hunter: "hunter" when this mob is a relentless chaser
   number?, // anim_t: server anim start (seconds, monotonic) — re-arms atk
+  boolean?, // alert: wildlife is in its stand-and-stare detection phase ("!")
 ];
 
 // Drop entity ("linh khí"): [id, item_id, qty, x, y, z, phase].
