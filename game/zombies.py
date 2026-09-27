@@ -501,6 +501,30 @@ def _web_players(state) -> List[object]:
     ]
 
 
+# ---- STEALTH APPROACH (user 28/09: "player tiếp cận mà nó không bị giật") --
+# SPRINTING = loud (full flee_vision); WALKING or STANDING = quiet (the
+# animal only notices you at sneak_vision_frac of it). Mirrors real flight-
+# initiation behavior and theHunter's movement-speed detection rules.
+WEB_SNEAK_VISION_FRAC = 0.30
+
+
+def _player_loudness(state, player) -> str:
+    """"loud" when this web player is SPRINTING right now, else "quiet"."""
+    rt = getattr(state, "_rt_ref", None)
+    sess = getattr(rt, "web_sessions", {}).get(getattr(player, "user_id", 0)) if rt else None
+    running = getattr(sess, "running", False)
+    moving = bool(getattr(sess, "dx", 0.0) or getattr(sess, "dy", 0.0))
+    return "loud" if (running and moving) else "quiet"
+
+
+def _effective_flee_vision(state, player, base_vision: float) -> float:
+    """Vision radius for ONE player: sprinters are seen from full range,
+    quiet movers only from the sneak fraction."""
+    if _player_loudness(state, player) == "loud":
+        return base_vision
+    return base_vision * WEB_SNEAK_VISION_FRAC
+
+
 def _inside_xy(x: int, y: int, rect: tuple) -> bool:
     x0, y0, x1, y1 = rect
     return x0 <= x < x1 and y0 <= y < y1
@@ -1360,8 +1384,12 @@ def web_tick(
         # panic flight that OVERRUNS the vision rim (the old version stopped
         # dead the instant dist > flee_vision: the "chạy được đoạn dừng" look).
         # VISION x2.5 (user 28/09) + per-species flavors below.
+        # STEALTH APPROACH: a QUIET player (walking/standing) is only seen at
+        # WEB_SNEAK_VISION_FRAC of the flee radius — sprinting is what makes
+        # the wildlife bolt from across the map.
         if style == "prey":
-            flee_vision = float(beh.get("flee_vision", 11.25))
+            base_vision = float(beh.get("flee_vision", 11.25))
+            flee_vision = _effective_flee_vision(state, target, base_vision)
             alert_s = float(beh.get("alert_s", 0.8))
             overrun = float(beh.get("panic_overrun", 1.4))
             panicking = now_mono < z.panic_until
@@ -1478,16 +1506,26 @@ def web_tick(
                     z.aggro_origin = None
                     _web_ambient_wander(z, rng, collision, step, now_mono, result)
                     continue
-            # BOAR O4a warn-charge: first hit = warning stand; the second hit
-            # inside the SAME aggro window escalates into a locked straight
-            # CHARGE (speed x2) that ends in a bite.
+            # BOAR O4a warn-charge (user 28/09: "con lợn đâu thấy có gì khác
+            # đâu" — the old version's warning was a stand-still blip; now):
+            #   hit 1 -> a short PAWING stand (atk pose) that steps BACK 1 tile
+            #            (real boar threat display: back up before charging),
+            #   hit 2 -> a locked straight CHARGE (x2 speed) that ends in a
+            #            skid past the player's tile + a bite at contact.
             if beh.get("warn_s") and z.charge_until <= now_mono:
                 if not z.boar_warned:
                     z.boar_warned = True
                     z.facing = _side_animal_facing(z, dx, dy)
                     _web_set_anim(z, "atk", now_mono)
+                    # Threat display: back away one step (reads as winding up).
+                    if length > 1e-6:
+                        _web_chase_step(
+                            z, -dx / length, -dy / length, collision, step,
+                            now_mono, result, speed=z.web_speed,
+                            towards=(-dx, -dy),
+                        )
                     z.recover_until = now_mono + float(beh.get("warn_s", 0.7))
-                    continue  # the warning pose this tick
+                    continue  # the winding-up display this tick
                 if z.recover_until <= now_mono and length > 1e-6:
                     # Charge window: lock the vector at launch.
                     if z.charge_until == 0.0:
@@ -1501,7 +1539,11 @@ def web_tick(
                             towards=(z.charge_dx, z.charge_dy),
                         )
                         continue
-                    z.charge_until = 0.0  # charge spent -> melee flow below
+                    # Charge spent: a visible skid stop (atk pose flash) then
+                    # the normal melee flow takes over.
+                    z.charge_until = 0.0
+                    _web_set_anim(z, "atk", now_mono)
+                    z.recover_until = now_mono + WEB_ZOMBIE_RECOVER_S
             # BEAR O5a back-turn pursuit: a player FLEEING from an aggro bear
             # eats a speed burst (bears chase what runs). O5b two-stage rage
             # is armed in rules.py via bear_hit_at (first hit = warning only

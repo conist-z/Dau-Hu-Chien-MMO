@@ -2352,10 +2352,11 @@ export class WorldScene extends Phaser.Scene {
           if (z.body.scaleX !== base) z.body.setScale(base, sheet.size / sheet.cellH);
         }
         if (z.anim === "atk") {
-          z.body.setTint(0xffb0a0);
-          // SIDE-VIEW animals: NO rotation tween — the lunge tilt reads as a
-          // body slam on a 9-way humanoid but as a broken pose on a 1-facing
-          // animal ("đần"). A red tint flash is enough feedback.
+          // Kaetram humanoid mobs flash red on the lunge; SIDE-VIEW animals
+          // don't — a red flash on prey reads as "it's wounded", which was
+          // the "đỏ đỏ người lên rồi cắm đầu chạy" report. The pose alone
+          // (startle/bark/bite) carries the feedback.
+          if (!sheet.singleFacing) z.body.setTint(0xffb0a0);
           if (!sheet.singleFacing) z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
         } else {
           z.body.clearTint();

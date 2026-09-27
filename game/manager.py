@@ -1073,27 +1073,38 @@ class GameManager:
                 # a player STANDING on the door tile get the teleport (they
                 # may have walked on between two flushes); the latch still
                 # prevents bounce-back within one continuous portal contact.
-                if moved_any:
-                    from game.travel import check_portal_after_move, has_portal_config
+                # FIX 28/09 ("hết vào được montertradebase"): the check ALSO
+                # runs while the body is NOT moving. Since the 22/09
+                # "gates are solid walls" change the box rests flush against
+                # the door (can_move_float stops at 26.3 vs the trigger row
+                # 24/25) — holding the key into the door means moved_any
+                # stays False every tick and the old gate-only-when-moved
+                # check never fired. Pressing INTO the door IS the intent to
+                # pass it, so a blocked-but-pressing body must still fire.
+                # The edge latch + cooldown in check_portal_after_move keep
+                # this from double-firing or bouncing.
+                from game.travel import check_portal_after_move, has_portal_config
 
-                    gate = has_portal_config(rt, self.portals)
+                gate = has_portal_config(rt, self.portals)
 
-                    if gate:
-                        prev_off = (
-                            getattr(rt, "on_portal_tile", None) is None
-                            or user_id not in rt.on_portal_tile
+                if gate and (
+                    moved_any or sess.dx or sess.dy or sess.report_at > 0.0
+                ):
+                    prev_off = (
+                        getattr(rt, "on_portal_tile", None) is None
+                        or user_id not in rt.on_portal_tile
+                    )
+                    fired = check_portal_after_move(
+                        rt, self.portals, user_id, moved_off_portal=prev_off
+                    )
+                    if fired is not None:
+                        link, portal_player = fired
+                        await self._teleport_through_link(
+                            rt.channel_id, rt, user_id, link
                         )
-                        fired = check_portal_after_move(
-                            rt, self.portals, user_id, moved_off_portal=prev_off
-                        )
-                        if fired is not None:
-                            link, portal_player = fired
-                            await self._teleport_through_link(
-                                rt.channel_id, rt, user_id, link
-                            )
-                            # The player object moved runtime — skip further
-                            # per-tick work against the old rt this iteration.
-                            continue
+                        # The player object moved runtime — skip further
+                        # per-tick work against the old rt this iteration.
+                        continue
             # SEPARATE realtime web pack (state.web_zombies, float positions):
             # driven by this same 20 Hz tick with the tick dt — movement
             # integrates smoothly every frame like a player, bites are gated
@@ -1129,6 +1140,11 @@ class GameManager:
                         _mob_spawn_chance as _mob_chance,
                     )
 
+                    # STEALTH APPROACH reference (user 28/09): the animal AI
+                    # reads web_sessions[player].running off the runtime to
+                    # tell SPRINTING (loud, full vision) from WALKING/standing
+                    # (quiet, sneak vision fraction) players.
+                    rt.state._rt_ref = rt
                     zres = _z_web_tick(
                         rt.state, rt.collision, _mob_active(map_id, now_s),
                         tick_dt, rng=self.zombie_rng,
