@@ -886,6 +886,70 @@ class WebHub:
                 from persistence.repositories import save_inventory_order
                 await save_inventory_order(self.manager.db, cid, uid, list(inv.items))
             self.manager._notify_inventory_change(cid, uid)
+        elif op == "armor_equip":
+            # EQUIPMENT panel drag: move one armor stack between the bag and
+            # a paperdoll slot (helmet|chest|legs). Server-authoritative:
+            # the item must be armor AND its armor_slot must MATCH the target
+            # slot (a helmet can never land on the chest cell), and unequip
+            # requires a free bag cell (the returned stack never vanishes).
+            from game.items import armor_slot_of
+
+            action = str(frame.get("action", ""))
+            slot = str(frame.get("slot", ""))
+            rt = self.manager.get_runtime_for(cid, uid)
+            player = rt.state.get_player(uid) if rt is not None else None
+            inv = self.manager.get_inventory(cid, uid)
+            if player is None:
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR, "code": "no_player"})
+                return
+            equipped = getattr(player, "equipped_armor", None)
+            if equipped is None:
+                equipped = player.equipped_armor = {}
+            if action == "equip":
+                item_id = str(frame.get("item_id", ""))
+                want_slot = armor_slot_of(item_id)
+                if want_slot is None:
+                    await self.send_to_client_conn(
+                        sess, {"type": MSG_ERROR, "code": "not_armor",
+                               "message": "Vật phẩm này không phải giáp."})
+                    return
+                if slot != want_slot:
+                    await self.send_to_client_conn(
+                        sess, {"type": MSG_ERROR, "code": "bad_slot",
+                               "message": "Sai ô — đồ phải vào đúng ô của nó (mũ vào ô mũ…)."})
+                    return
+                if inv.count(item_id) <= 0:
+                    await self.send_to_client_conn(
+                        sess, {"type": MSG_ERROR, "code": "empty",
+                               "message": "Không còn món đó trong túi."})
+                    return
+                prev = equipped.get(slot)
+                inv.remove(item_id, 1)
+                equipped[slot] = item_id
+                if prev:
+                    inv.add(prev, 1)  # the old piece swaps back into the bag
+            elif action == "unequip":
+                prev = equipped.pop(slot, None)
+                if not prev:
+                    await self.send_to_client_conn(
+                        sess, {"type": MSG_ERROR, "code": "bad_slot"})
+                    return
+                if inv.first_free_slot() < 0:
+                    equipped[slot] = prev  # roll back — bag is FULL
+                    await self.send_to_client_conn(
+                        sess, {"type": MSG_ERROR, "code": "bag_full",
+                               "message": "Túi đầy — không tháo được."})
+                    return
+                inv.add(prev, 1)
+            else:
+                await self.send_to_client_conn(
+                    sess, {"type": MSG_ERROR, "code": "bad_op"})
+                return
+            if self.manager.db is not None:
+                from persistence.repositories import save_inventory_order
+                await save_inventory_order(self.manager.db, cid, uid, list(inv.items))
+            self.manager._notify_inventory_change(cid, uid)
         else:
             await self.send_to_client_conn(sess, {"type": MSG_ERROR, "code": "bad_op"})
             return

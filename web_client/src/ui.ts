@@ -148,11 +148,6 @@ function fmtClock(secondsOfDay: number): string {
 /** One stack living in a grid (bag slot or craft material slot). */
 interface Stack { id: string; qty: number }
 
-/** Armor item ids (client mirror of game/items.py armor registry). Must
- *  match the server's armor_slot_of coverage — the equipment panel's 4x4
- *  carried grid filters the bag down to exactly these. */
-const ARMOR_IDS = new Set(["leatherhelmet", "leatherchest", "leatherleggings"]);
-
 /** Drag payload: which grid a drag started from + the stack. */
 interface DragSrc {
   from: "bag" | "mat" | "result" | "worn";
@@ -199,7 +194,6 @@ export class Hud {
   private invCraftWrap = document.getElementById("inv-craft-wrap")!;
   private invItemsCraftWrap = document.getElementById("inv-items-craft")!;
   private invEquipWrap = document.getElementById("inv-equip-wrap") as HTMLElement;
-  private invItemsEquipWrap = document.getElementById("inv-items-equip") as HTMLElement;
   private craftDetail = document.getElementById("craft-detail")!;
   private craftTab: HTMLElement;
   private itemsTab: HTMLElement;
@@ -300,7 +294,6 @@ export class Hud {
       inRect(this.invCraftWrap) ||
       inRect(this.invItemsCraftWrap) ||
       inRect(this.invEquipWrap) ||
-      inRect(this.invItemsEquipWrap) ||
       inRect(this.hotbarEl) || // release over the hotbar = move/cancel, NEVER a throw
       inRect(this.invPanel)
     );
@@ -365,7 +358,6 @@ export class Hud {
     sizePanel(this.invCraftWrap, CRAFT_PANEL);
     sizePanel(this.invItemsCraftWrap, INVENTORY_PANEL);
     sizePanel(this.invEquipWrap, EQUIPMENT_PANEL);
-    sizePanel(this.invItemsEquipWrap, INVENTORY_PANEL);
     this.attachCraftScrollHandler();
     // Static kit layers — placed once, exact bboxes.
     this.invItemsWrap.append(makeLayer(INV_TITLE), makeLayer(INV_COIN), makeLayer(INV_CRYSTAL));
@@ -561,7 +553,7 @@ export class Hud {
     const equipActive = this.equipTab.classList.contains("active");
     if (equipActive) {
       scan(this.invEquipWrap, "worn");
-      scan(this.invItemsEquipWrap, "bag");
+      scan(this.invEquipWrap, "bag");
     } else if (craftActive) {
       scan(this.invCraftWrap, "mat");
       scan(this.invItemsCraftWrap, "bag");
@@ -767,20 +759,18 @@ export class Hud {
       tabsEl.classList.toggle("hidden", this.invClosed && this.craftClosed);
     }
     if (equipActive) {
-      // EQUIP tab: the equipment panel + its own bag drag partner.
+      // EQUIP tab: the equipment panel ALONE — its right grid IS the bag
+      // (user: "bỏ cái inv panel ở bên dưới của trang bị panel").
       const showEquip = this.visiblyShow(this.invEquipWrap, this.craftClosed);
-      const showBag = this.visiblyShow(this.invItemsEquipWrap, this.invClosed);
       this.invItemsWrap.classList.add("hidden");
       this.invCraftWrap.classList.add("hidden");
       this.invItemsCraftWrap.classList.add("hidden");
       if (showEquip) this.playTabIn(this.invEquipWrap);
-      if (showBag) this.playTabIn(this.invItemsEquipWrap);
     } else if (craftActive) {
       const showCraft = this.visiblyShow(this.invCraftWrap, this.craftClosed);
       const showBag = this.visiblyShow(this.invItemsCraftWrap, this.invClosed);
       this.invItemsWrap.classList.add("hidden");
       this.invEquipWrap.classList.add("hidden");
-      this.invItemsEquipWrap.classList.add("hidden");
       // Tab-swap entrance animation on whichever wrap(s) just appeared.
       if (showCraft) this.playTabIn(this.invCraftWrap);
       if (showBag) this.playTabIn(this.invItemsCraftWrap);
@@ -789,7 +779,6 @@ export class Hud {
       this.invCraftWrap.classList.add("hidden");
       this.invItemsCraftWrap.classList.add("hidden");
       this.invEquipWrap.classList.add("hidden");
-      this.invItemsEquipWrap.classList.add("hidden");
       if (showBag) this.playTabIn(this.invItemsWrap);
     }
     if (slideInv && !this.invClosed) {
@@ -885,8 +874,7 @@ export class Hud {
     this.lastNearTable = this.nearTable;
     this.renderPurse(craftActive);
     if (equipActive) {
-      this.renderBagGrid(this.invItemsEquipWrap); // equip tab: drag partner
-      this.renderEquipPanel();
+      this.renderEquipPanel(); // right grid = the bag itself, no partner
     } else if (craftActive) {
       this.renderBagGrid(this.invItemsCraftWrap); // craft tab: drag partner
       this.renderCraftPanel();
@@ -905,22 +893,30 @@ export class Hud {
    *  gets eaten by this panel. */
   private renderEquipPanel(): void {
     this.invEquipWrap.querySelectorAll(".slot-pix").forEach((n) => n.remove());
-    // --- WORN slots (left, over the mannequin sockets) ---
+    // --- WORN slots (left, over the mannequin sockets) — TRANSPARENT
+    // surface (user: "làm trong suốt cái ô slot đó", hiệu ứng 4 góc on
+    // hover vẫn giữ qua CSS .slot-pix.equip-worn:hover::after): the icon
+    // floats directly over the mannequin socket art underneath.
     for (const w of EQUIP_WORN_SLOTS) {
       const stem = this.wornArmor[w.slot] ?? null;
-      const itemId = stem === this.wornArmor[w.slot] && stem ? stem : stem;
-      // stem IS the item id (leatherhelmet etc.) — the manifest armor keys
-      // equal the item ids by design.
-      const slot = makeSlot(14, w.x, w.y, EQUIP_SLOT_ATOM, {
-        iconUrl: stem ? itemIconUrl(stem) : undefined,
-        emoji: stem ? iconFor(stem, this.itemEmojis) : "",
-        title: stem ? itemId : undefined,
-      });
+      const slot = document.createElement("div");
+      slot.className = "slot-pix equip-worn";
+      slot.style.cssText =
+        `left:${w.x * PIXEL_SCALE}px;top:${w.y * PIXEL_SCALE}px;` +
+        `width:${14 * PIXEL_SCALE}px;height:${14 * PIXEL_SCALE}px;` +
+        `--pix-scale:${PIXEL_SCALE};`;
       // Drop-target addressing: nearestDropTarget scans .slot-pix elements
       // by data-slot — worn cells carry "w<i>" (i = EQUIP_WORN_SLOTS index).
       slot.dataset.slot = `w${EQUIP_WORN_SLOTS.indexOf(w)}`;
       if (stem) {
+        const im = document.createElement("img");
+        im.className = "icon-img";
+        im.src = itemIconUrl(stem) ?? "";
+        im.draggable = false;
+        im.dataset.item = stem;
+        slot.appendChild(im);
         slot.classList.add("has-item");
+        slot.title = stem;
         slot.addEventListener("mousedown", (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -942,35 +938,34 @@ export class Hud {
       }
       this.invEquipWrap.appendChild(slot);
     }
-    // --- Carried armor (right 4x4): filtered bag view ---
-    const armorBag: { bagIndex: number; stack: Stack }[] = [];
-    for (const b of this.inventory.bag) {
-      if (b && ARMOR_IDS.has(b.id)) armorBag.push({ bagIndex: this.inventory.bag.indexOf(b), stack: b });
-    }
+    // --- RIGHT grid = THE BAG ITSELF (5x4 = all 20 bag cells, 1:1) ---
     const g = EQUIPMENT_GRID;
     const cells = g.cols * g.rows;
     for (let i = 0; i < cells; i++) {
       const [x, y] = slotXY(g, i);
-      const entry = armorBag[i] ?? null;
+      const st = this.inventory.bag[i] ?? null;
       const slot = makeSlot(g.slotW, x, y, EQUIP_SLOT_ATOM, {
-        iconUrl: entry ? itemIconUrl(entry.stack.id) : undefined,
-        emoji: entry ? iconFor(entry.stack.id, this.itemEmojis) : "",
-        qty: entry && entry.stack.qty > 1 ? String(entry.stack.qty) : "",
-        title: entry ? entry.stack.id : undefined,
+        iconUrl: st ? itemIconUrl(st.id) : undefined,
+        emoji: st ? iconFor(st.id, this.itemEmojis) : "",
+        qty: st && st.qty > 1 ? String(st.qty) : "",
+        title: st ? st.id : undefined,
       });
-      if (entry) {
+      slot.dataset.slot = String(i);
+      if (st) {
         slot.classList.add("has-item");
         slot.addEventListener("mousedown", (e) => {
+          if (e.button === 2) { this.splitBag(i); return; }
           if (e.button !== 0) return;
           e.preventDefault();
-          this.startDrag({ from: "bag", index: entry.bagIndex, stack: { ...entry.stack } }, e);
+          this.startDrag({ from: "bag", index: i, stack: { ...st } }, e);
         });
         slot.addEventListener("pointerdown", (e) => {
           if (e.pointerType === "mouse") return;
           e.preventDefault();
           try { slot.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
-          this.startDrag({ from: "bag", index: entry.bagIndex, stack: { ...entry.stack } }, e);
+          this.startDrag({ from: "bag", index: i, stack: { ...st } }, e);
         });
+        slot.addEventListener("contextmenu", (e) => e.preventDefault());
       }
       this.invEquipWrap.appendChild(slot);
     }

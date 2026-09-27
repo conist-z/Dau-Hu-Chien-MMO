@@ -58,6 +58,23 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "mushroom_purple": ItemDef("mushroom_purple", "Nấm tím", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
     "mushroom_brown": ItemDef("mushroom_brown", "Nấm nâu", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
     "seed": ItemDef("seed", "Hạt giống", "🌱", "material", {}, "Có thể trồng (sắp tới)"),
+    # --- ARMOR (Kaetram paperdoll layers) — type "equipment". slot rides in
+    # effect["armor_slot"] (helmet|chest|legs); mặc qua panel Trang bị.
+    "leatherhelmet": ItemDef(
+        "leatherhelmet", "Mũ da", "🪖", "equipment",
+        {"armor_slot": "helmet", "armor_stem": "leatherhelmet"},
+        "Mũ giáp da — mặc vào ô Mũ trong Trang bị",
+    ),
+    "leatherchest": ItemDef(
+        "leatherchest", "Giáp ngực da", "🥋", "equipment",
+        {"armor_slot": "chest", "armor_stem": "leatherchest"},
+        "Áo giáp da — mặc vào ô Thân trong Trang bị",
+    ),
+    "leatherleggings": ItemDef(
+        "leatherleggings", "Giáp chân da", "👖", "equipment",
+        {"armor_slot": "legs", "armor_stem": "leatherleggings"},
+        "Quần giáp da — mặc vào ô Chân trong Trang bị",
+    ),
 }
 
 # --- Tool tiers (game/tools.py): dirt/wood/stone x shovel/pickaxe/axe/sword
@@ -92,6 +109,15 @@ WEAPON_ITEM_IDS = {
 def is_weapon(item_id: Optional[str]) -> bool:
     """True when the held item grants weapon-class attack damage."""
     return item_id in WEAPON_ITEM_IDS
+
+
+def armor_slot_of(item_id: str) -> Optional[str]:
+    """The paperdoll slot an armor item occupies (None = not armor)."""
+    it = ITEM_REGISTRY.get(item_id)
+    if it is None or it.type != "equipment":
+        return None
+    slot = it.effect.get("armor_slot")
+    return slot if slot in ("helmet", "chest", "legs") else None
 
 
 def get_item(item_id: str) -> Optional[ItemDef]:

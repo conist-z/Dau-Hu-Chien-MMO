@@ -245,6 +245,41 @@ class LocalStack:
             except Exception as exc:
                 await self._send(cid, {"type": "push", "message": f"[preview] action error: {exc!r}"})
             return
+        if t == "inventory_op" and frame.get("op") == "armor_equip":
+            # Preview parity with web_api/core._handle_inventory_op armor_equip:
+            # server validates the slot match and swaps the old piece back.
+            from game.items import armor_slot_of
+            uid = self.sessions[cid]["user_id"]
+            ch = self.joined.get(cid)
+            rt = self.gm.get_runtime(ch) if ch else None
+            player = rt.state.get_player(uid) if rt is not None else None
+            if player is None:
+                return
+            action = str(frame.get("action", ""))
+            slot = str(frame.get("slot", ""))
+            equipped = getattr(player, "equipped_armor", None)
+            if equipped is None:
+                equipped = player.equipped_armor = {}
+            inv = self.gm.get_inventory(ch, uid)
+            if action == "equip":
+                item_id = str(frame.get("item_id", ""))
+                want = armor_slot_of(item_id)
+                if want is None or slot != want or inv.count(item_id) <= 0:
+                    await self._send(cid, {"type": "error", "code": "bad_slot"})
+                    return
+                prev = equipped.get(slot)
+                inv.remove(item_id, 1)
+                equipped[slot] = item_id
+                if prev:
+                    inv.add(prev, 1)
+            elif action == "unequip":
+                prev = equipped.pop(slot, None)
+                if prev and inv.first_free_slot() >= 0:
+                    inv.add(prev, 1)
+                elif prev:
+                    equipped[slot] = prev  # bag full: roll back
+            await self._send(cid, build_welcome(rt, uid))
+            return
         if t == "asset_request":
             await self._serve_asset(cid, str(frame.get("name", "")))
             return

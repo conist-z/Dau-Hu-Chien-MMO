@@ -804,7 +804,6 @@ body.mobile-ui #hud-hub #buttons.shown::-webkit-scrollbar-thumb {
   body.mobile-ui #inv-panel .inv-tabs { flex: 1 1 100%; }
   body.mobile-ui #inv-panel #inv-items-craft,
   body.mobile-ui #inv-panel #inv-equip-wrap,
-  body.mobile-ui #inv-panel #inv-items-equip,
   body.mobile-ui #inv-panel #craft-detail { position: relative; }
 }
 /* HIDE the mobile atk/inv buttons while a panel window is open (user:
@@ -896,9 +895,32 @@ body.mobile-ui #mc-actions.mc-hidden {
 #inv-items-wrap .panel-close { left: 261px; top: 9px; }
 #inv-craft-wrap .panel-close { left: 360px; top: 9px; }
 #inv-items-craft .panel-close { left: 261px; top: 9px; }
-/* Equipment panel (148 kit px wide => X at ~137*3=411px) + its bag partner. */
+/* Equipment panel (148 kit px wide => X at ~137*3=411px). */
 #inv-equip-wrap .panel-close { left: 411px; top: 9px; }
-#inv-items-equip .panel-close { left: 261px; top: 9px; }
+/* Worn armor cells: NO surface art — the icon floats directly over the
+   mannequin socket art underneath (user: transparent slots). Hover KEEPS
+   the 4-corner brackets effect (user: "hiệu ứng 4 góc on hover vẫn nên
+   có"): a transparent fill + 4 corner notches via double linear-gradient
+   background on the ::after overlay. */
+.slot-pix.equip-worn { background: transparent; }
+.slot-pix.equip-worn img.slot-bg { display: none; }
+.slot-pix.equip-worn:hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background:
+    linear-gradient(#ffe9b0, #ffe9b0) top left / 30% 3px,
+    linear-gradient(#ffe9b0, #ffe9b0) top left / 3px 30%,
+    linear-gradient(#ffe9b0, #ffe9b0) top right / 30% 3px,
+    linear-gradient(#ffe9b0, #ffe9b0) top right / 3px 30%,
+    linear-gradient(#ffe9b0, #ffe9b0) bottom left / 30% 3px,
+    linear-gradient(#ffe9b0, #ffe9b0) bottom left / 3px 30%,
+    linear-gradient(#ffe9b0, #ffe9b0) bottom right / 30% 3px,
+    linear-gradient(#ffe9b0, #ffe9b0) bottom right / 3px 30%;
+  background-repeat: no-repeat;
+}
 
 /* Tab-content swap animation: the wrap entering the layout slides in
    (fade + slight rise); the leaving one just disappears (display:none). */

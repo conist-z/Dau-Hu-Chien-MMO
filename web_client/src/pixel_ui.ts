@@ -177,10 +177,12 @@ export const EQUIP_MANNEQUIN = { x: 11, y: 16, w: 43, h: 46, file: "ui/v5/layers
 export const EQUIP_CHAR_SLOTS = { x: 10, y: 17, w: 46, h: 62, file: "ui/v5/layers/equip_char_slots.png" };
 export const EQUIP_CHAR_TRINKET = { x: 44, y: 65, w: 10, h: 13, file: "ui/v5/layers/equip_char_trinket.png" };
 export const EQUIP_CHAR_RING = { x: 12, y: 66, w: 11, h: 12, file: "ui/v5/layers/equip_char_ring.png" };
-// RIGHT 4x4 bag-of-equippables grid (player's armor pieces carried).
+// RIGHT grid = THE BAG (5x4 = all 20 bag cells). The kit's 16px pitch
+// only fits 4 cols inside the 148px frame, so this grid compresses to a
+// 14px pitch (slots touch — the atom art carries its own border).
 export const EQUIPMENT_GRID: GridLayout = {
-  firstX: 74, firstY: 17, stepX: 16, stepY: 16,
-  cols: 4, rows: 4, slotW: 14, slotH: 14,
+  firstX: 74, firstY: 17, stepX: 14, stepY: 14,
+  cols: 5, rows: 4, slotW: 14, slotH: 14,
 };
 export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
 // Paperdoll SLOTS (left, worn): slot keys + their kit-local cell bboxes.
