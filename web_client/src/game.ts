@@ -3261,13 +3261,13 @@ export class WorldScene extends Phaser.Scene {
         ty = Math.floor(rp.container.y / this.tilePx);
       }
     }
-    // Purple-red to distinguish INCOMING damage from player-dealt red.
-    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "#ff5bd6", "#5a1048");
+    // Kaetram DamageColours[Normal].fill — đỏ rgb(255,50,50) với viền
+    // rgb(255,180,180) cho damage NHẬN VÀO (bite/DOT đều qua feed này).
+    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "rgb(255,50,50)", "rgb(255,180,180)");
   }
 
-  /** Status-effect DOT splat: BLUE (the icon's colour, user 25/09) so
-   *  poison/infection ticks read differently from bites (purple-red) and
-   *  player-dealt damage (red). */
+  /** Status-effect DOT splat: Kaetram DamageColours[Poison] — fill
+   *  rgb(66,183,77), stroke rgb(50,120,50) (đúng bảng màu Kaetram thuần). */
   spawnStatusSplat(userId: number, damage: number): void {
     let tx: number | null = null;
     let ty: number | null = null;
@@ -3281,7 +3281,7 @@ export class WorldScene extends Phaser.Scene {
         ty = Math.floor(rp.container.y / this.tilePx);
       }
     }
-    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "#4db8ff", "#0f2a4a");
+    if (tx !== null && ty !== null) this.spawnSplatAt(tx, ty, String(damage), "rgb(66,183,77)", "rgb(50,120,50)");
   }
 
   private spawnSplatAt(tx: number, ty: number, text: string, fill: string, stroke: string): void {
@@ -3306,8 +3306,10 @@ export class WorldScene extends Phaser.Scene {
   spawnSplat(tx: number | null, ty: number | null, damage: number, critical: boolean, missed: boolean): void {
     if (tx === null || ty === null) return;
     const text = missed || damage <= 0 ? "MISS" : String(damage);
-    const fill = missed ? "#cfd6e4" : critical ? "#ffd75e" : "#ff3232";
-    const stroke = missed ? "#2a2f3a" : critical ? "#7a5b00" : "#ffb4b4";
+    // Kaetram DamageColours: damage GÂY RA (isTarget) = fill WHITE stroke
+    // #373737; crit = inflicted pink rgb(255,153,204); MISS xám nhạt.
+    const fill = missed ? "#cfd6e4" : critical ? "rgb(255,153,204)" : "white";
+    const stroke = missed ? "#2a2f3a" : critical ? "#373737" : "#373737";
     const txt = this.add.text(tx * this.tilePx + this.tilePx / 2, ty * this.tilePx - 4, text, {
       fontSize: critical ? "15px" : "12px",
       fontStyle: critical ? "bold" : "bold",

@@ -512,11 +512,14 @@ const net = new Net({
     }
     // Incoming-damage hitsplats: float the number over the VICTIM (dedupe
     // by unix timestamp — the feed window overlaps across snapshots).
-    for (const [ts, uid, dmg] of frame.damage_feed ?? []) {
-      const key = `${ts}:${uid}:${dmg}`;
+    // Route by source: bites ("zombie"...) = Kaetram red; status DOT
+    // ("status" = infection/poison ticks) = Kaetram poison green.
+    for (const [ts, uid, dmg, src] of frame.damage_feed ?? []) {
+      const key = `${ts}:${uid}:${dmg}:${src ?? "zombie"}`;
       if (!seenDamageKeys.has(key)) {
         seenDamageKeys.add(key);
-        scene.spawnSplatOnPlayer(uid, dmg);
+        if (src === "status") scene.spawnStatusSplat(uid, dmg);
+        else scene.spawnSplatOnPlayer(uid, dmg);
       }
     }
     if (seenDamageKeys.size > 200) {
