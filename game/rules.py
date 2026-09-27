@@ -109,6 +109,73 @@ def _tile_has_player(state: GameState, x: int, y: int, exclude: int) -> bool:
 
 ATTACK_RANGE = 3
 
+# ---- Combat cost + hit-quality (user 28/09: kill the free punch spam) ----
+# One landed attack drains STAMINA_ATTACK_DRAIN stamina (same bank as
+# sprinting/harvesting — punches compete with running for breath). Hit
+# rolls: a swing may MISS (no damage) or CRIT (damage multiplier). The
+# ActionResult.critical/missed flags were always echoed to clients — both
+# web + Kaetram splats render them — they just were never set.
+STAMINA_ATTACK_DRAIN = float(__import__('os').getenv("STAMINA_ATTACK_DRAIN", "12"))
+# Miss chance scales UP as stamina empties (fresh 0.10 -> exhausted 0.30).
+ATTACK_MISS_BASE = float(__import__('os').getenv("ATTACK_MISS_BASE", "0.10"))
+ATTACK_MISS_TIRED = float(__import__('os').getenv("ATTACK_MISS_TIRED", "0.30"))
+ATTACK_CRIT_CHANCE = float(__import__('os').getenv("ATTACK_CRIT_CHANCE", "0.12"))
+ATTACK_CRIT_MULT = float(__import__('os').getenv("ATTACK_CRIT_MULT", "1.6"))
+
+
+def _attack_hit_roll(player: Player, dmg: int) -> tuple[int, bool, bool]:
+    """One Kaetram-style hit roll -> (damage, critical, missed).
+
+    Miss chance interpolates with the CURRENT stamina fraction (10% fresh,
+    30% exhausted — 'harder' tuning per user 28/09). Crits are a flat roll
+    applied to landed hits only. Deterministic inputs stay deterministic;
+    combat is explicitly the stochastic exception (drops already roll).
+    """
+    import random as _r
+    import os as _os
+
+    frac = 1.0
+    try:
+        frac = max(0.0, min(1.0, player.stamina / max(1.0, player.max_stamina)))
+    except Exception:  # noqa: BLE001 — never let a stat read kill the swing
+        pass
+    miss = ATTACK_MISS_BASE + (ATTACK_MISS_TIRED - ATTACK_MISS_BASE) * (1.0 - frac)
+    if _r.random() < miss:
+        return 0, False, True
+    crit = _r.random() < ATTACK_CRIT_CHANCE
+    if crit:
+        return max(1, int(round(dmg * ATTACK_CRIT_MULT))), True, False
+    return dmg, False, False
+
+
+def _attack_stamina_cost(player: Player) -> float:
+    """Stamina spent on one attack: the flat drain, x1.5 while infected
+    (same status gate as every other exertion — game.status_effects)."""
+    amount = STAMINA_ATTACK_DRAIN
+    try:
+        from game.status_effects import stamina_cost_mult
+
+        amount *= stamina_cost_mult(player)
+    except Exception:  # noqa: BLE001 — status gate must never break combat
+        pass
+    return amount
+
+
+def _pay_attack_stamina(state: GameState, player: Player) -> None:
+    """Drain + regen clock. The manager owns the drain helper (it stamps
+    last_exert_at for the regen grace); when the rule layer runs WITHOUT a
+    manager (pure tests), fall back to a bare drain so costs still apply."""
+    amount = _attack_stamina_cost(player)
+    mgr = getattr(state, "manager", None)
+    drain = getattr(mgr, "_drain_stamina", None) if mgr is not None else None
+    if drain is not None:
+        drain(player, amount)
+        return
+    import time as _t
+
+    player.stamina = max(0.0, player.stamina - amount)
+    player.last_exert_at = _t.monotonic()
+
 
 def _nearest_in_range(state, x: int, y: int, candidates, max_range: int):
     valid = [
@@ -173,13 +240,62 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
                         True, state_changed=True, pos=(tx, ty), block_id=block_id,
                     )
             return ActionResult(False, "no_target")
-        dmg = _attack_damage(state, player)
+        base = _attack_damage(state, player)
+        # ATTACK COST: every swing (hit or miss) spends breath — spamming
+        # runs the stamina bank dry, and an empty bank raises miss chance
+        # to ATTACK_MISS_TIRED (see _attack_hit_roll).
+        _pay_attack_stamina(state, player)
+        dmg, critical, missed = _attack_hit_roll(player, base)
+        if missed:
+            # Whiff: no damage, but the stamina is already spent — the
+            # ActionResult rides back with missed=True for the MISS splat.
+            return ActionResult(
+                False, reason="missed", state_changed=True,
+                pos=(best.x, best.y), block_id="zombie",
+                target_id=best.zombie_id, missed=True,
+            )
         best.hp = max(0, best.hp - dmg)
         target_id = best.zombie_id
         defeated = not best.alive
+        # NEUTRAL wildlife: a hit arms the fight-back window (a cornered boar
+        # or bear charges for aggro_s seconds — game/mob_profiles.py).
+        if getattr(best, "ambient", False):
+            from game.mob_profiles import behavior_of
+            from game.zombies import mob_stats as _ms
+
+            beh = behavior_of(getattr(best, "kind", ""))
+            if beh.get("style") == "neutral":
+                import time as _t
+
+                best.aggro_until = _t.monotonic() + float(
+                    beh.get("aggro_s", 15.0)
+                )
+                # A provoked animal turns on its attacker with full stats.
+                best.damage = _ms(best.kind)["dmg"]
         drops = []
         if defeated:
             remove_web_zombie(state, target_id)
+            # SKELETON REBIRTH (user 25/09): a slain skeleton has a 10%
+            # chance to rise again AS A NEW MOB (full HP) at its death spot.
+            import random as _rand
+
+            if getattr(best, "kind", "") == "skeleton" and _rand.random() < 0.10:
+                from game.zombies import mob_stats
+
+                best.hp = best.max_hp = mob_stats("skeleton")["hp"]
+                from game.zombies import _next_web_id
+
+                best.zombie_id = _next_web_id(state)
+                web = getattr(state, "web_zombies", None)
+                if isinstance(web, dict):
+                    web[best.zombie_id] = best
+                # No drops on the rebirth roll — the skeleton is still alive.
+                return ActionResult(
+                    True, state_changed=True,
+                    pos=(best.x, best.y), block_id="zombie",
+                    damage=dmg, target_id=best.zombie_id,
+                    target_defeated=False, drops=[],
+                )
             # Slain mob: loot pops out as drop entities at the corpse —
             # the killer (or anyone) walks over to vacuum it up. Drops are
             # themed per mob kind (web_hit path — mob attribute kind).
@@ -199,6 +315,7 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
             pos=(best.x, best.y), block_id="zombie",
             damage=dmg, target_id=target_id,
             target_defeated=defeated, drops=drops,
+            critical=critical,
         )
     zombie = _nearest_in_range(state, player.x, player.y, candidates, ATTACK_RANGE)
     if zombie is None:
@@ -218,7 +335,16 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
     # Damage depends on what the player is holding: per-family/per-tier tool
     # damage (sword > axe > pickaxe > shovel, each scaled by material tier);
     # a bare hand punches for BARE_HAND_ATTACK_DAMAGE.
-    dmg = _attack_damage(state, player)
+    base = _attack_damage(state, player)
+    # ATTACK COST + hit roll (same rules as the web pack above).
+    _pay_attack_stamina(state, player)
+    dmg, critical, missed = _attack_hit_roll(player, base)
+    if missed:
+        return ActionResult(
+            False, reason="missed", state_changed=True,
+            pos=(zombie.x, zombie.y), block_id="zombie",
+            target_id=zombie.zombie_id, missed=True,
+        )
     zombie.hp = max(0, zombie.hp - dmg)
     target_id = zombie.zombie_id
     defeated = not zombie.alive
@@ -244,6 +370,7 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
         pos=(zombie.x, zombie.y), block_id="zombie",
         damage=dmg, target_id=target_id,
         target_defeated=defeated, drops=drops,
+        critical=critical,
     )
 
 

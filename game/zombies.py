@@ -42,18 +42,32 @@ NIGHT_MOB_MAX_COUNT = _math.ceil(ZOMBIE_MAX_COUNT * NIGHT_MOB_COUNT_SCALE)
 # speed = web tiles/s; cooldown = seconds between bites.
 MOB_KINDS: Dict[str, dict] = {
     #        hp_mult dmg_mult speed  cd    weight (zombie highest, rat lowest)
-    "zombie":   dict(hp=40, dmg=10, speed=2.2, cooldown=1.8, weight=38),
-    "skeleton": dict(hp=56, dmg=11, speed=2.0, cooldown=2.2, weight=22),   # tanky, slow (lvl14/HP140)
-    "spider":   dict(hp=44, dmg=10, speed=2.2, cooldown=1.8, weight=16),   # lvl47/HP650 ~ zombie-ish
-    "slime":    dict(hp=50, dmg=9,  speed=2.2, cooldown=1.8, weight=12),   # lvl48/HP694 tanky
-    "bat":      dict(hp=20, dmg=6,  speed=2.8, cooldown=1.6, weight=8),    # lvl4/HP65 fast swarm
-    "rat":      dict(hp=12, dmg=4,  speed=2.6, cooldown=2.0, weight=4),    # lvl1/HP20 pest
+    # HP x5 (user 25/09: "nâng máu tổng hiện tại của tụi quái lên gấp 5 lần")
+    # applied to the HOSTILE roster; wildlife keeps its tuned numbers.
+    "zombie":   dict(hp=200, dmg=10, speed=2.2, cooldown=1.8, weight=38),
+    "skeleton": dict(hp=280, dmg=11, speed=2.0, cooldown=2.2, weight=22),   # tanky, slow (lvl14/HP140)
+    "spider":   dict(hp=220, dmg=10, speed=2.2, cooldown=1.8, weight=16),   # lvl47/HP650 ~ zombie-ish
+    "slime":    dict(hp=250, dmg=9,  speed=2.2, cooldown=1.8, weight=12),   # lvl48/HP694 tanky
+    "bat":      dict(hp=100, dmg=6,  speed=2.8, cooldown=1.6, weight=8),    # lvl4/HP65 fast swarm
+    "rat":      dict(hp=60,  dmg=4,  speed=2.6, cooldown=2.0, weight=4),    # lvl1/HP20 pest
+    # (user 28/09: rare bruisers + the ranged caster join the shared night
+    # pool — the weight-0 rows only spawned through map profiles before.)
     # ---- cave/forest packs (game/mob_profiles.py routes them per map) ----
     # Stats scaled from Kaetram _all_mobs.json relative to the zombie row.
-    "skeleton2": dict(hp=56, dmg=14, speed=2.0, cooldown=2.6, weight=0),  # lvl30/HP375 tanky bruiser
-    "spectre":   dict(hp=27, dmg=9,  speed=1.8, cooldown=2.4, weight=0),  # lvl32/HP270 ghost, RANGED
-    "goblin":    dict(hp=9,  dmg=4,  speed=2.4, cooldown=2.0, weight=0),  # lvl7/HP90 weak nuisance
-    "hobgoblin": dict(hp=26, dmg=13, speed=2.2, cooldown=1.8, weight=0),  # lvl42/HP260 aggressive bruiser
+    "skeleton2": dict(hp=280, dmg=14, speed=2.0, cooldown=2.6, weight=4),   # lvl30/HP375 tanky bruiser
+    "spectre":   dict(hp=135, dmg=9,  speed=1.8, cooldown=2.4, weight=3),   # lvl32/HP270 ghost, RANGED
+    "goblin":    dict(hp=45,  dmg=4,  speed=2.4, cooldown=2.0, weight=3),   # lvl7/HP90 weak nuisance
+    "hobgoblin": dict(hp=130, dmg=13, speed=2.2, cooldown=1.8, weight=4),   # lvl42/HP260 aggressive bruiser
+    # ---- daytime wildlife (Minifolks Forest Animals; ambient pool, no    # hostile-weight 0 means they only spawn via the ambient roster) -------
+    # Prey flee before fighting, so their dmg only matters when cornered.
+    "bunny":  dict(hp=8,  dmg=2,  speed=2.4, cooldown=2.0, weight=0),  # flee mult 1.35 -> ~3.2 real
+    "deer":   dict(hp=22, dmg=4,  speed=2.3, cooldown=2.2, weight=0),  # big meat sack
+    "deer2":  dict(hp=30, dmg=6,  speed=2.3, cooldown=2.0, weight=0),  # rare buck
+    "bird":   dict(hp=5,  dmg=1,  speed=2.6, cooldown=2.0, weight=0),  # flies away (unfightable)
+    "boar":   dict(hp=26, dmg=9,  speed=2.0, cooldown=1.8, weight=0),  # neutral, gored back
+    "bear":   dict(hp=70, dmg=16, speed=2.0, cooldown=2.4, weight=0),  # elite — hits HARD
+    "fox":    dict(hp=14, dmg=5,  speed=2.5, cooldown=1.8, weight=0),  # skittish scavenger
+    "wolf":   dict(hp=24, dmg=10, speed=2.4, cooldown=1.6, weight=0),  # hostile pack hunter
 }
 MOB_SPAWN_WEIGHTS: List[Tuple[str, float]] = [
     (kind, float(cfg["weight"])) for kind, cfg in MOB_KINDS.items()
@@ -106,7 +120,7 @@ WEB_ZOMBIE_RECOVER_SPEED = 1.4
 # Spawn/despawn distances in float tiles (mirror the int constants).
 WEB_ZOMBIE_MIN_SPAWN_DIST = 8.0
 WEB_ZOMBIE_DESPAWN_DIST = 90.0
-WEB_ZOMBIE_VISION_RADIUS = 6.0
+WEB_ZOMBIE_VISION_RADIUS = 15.0  # 6.0 x2.5 (user 28/09): mob phát hiện xa hơn
 # Hard chase leash (tiles, centre distance): a zombie NEVER chases or bites
 # beyond this even if its steering got confused by a lagging player ghost.
 # Without a leash a bad server tick made zombies pursue (and damage) a
@@ -125,7 +139,7 @@ WEB_Z_IDLE_LEN = 2
 # ---- threat model (see README-ish notes in game.manager) -----------------
 # A zombie "sees" a player within this Chebyshev radius; outside it the
 # zombie wanders instead of chasing.
-ZOMBIE_VISION_RADIUS = 6
+ZOMBIE_VISION_RADIUS = 15  # 6 x2.5 (user 28/09): mob phát hiện xa hơn
 # Population scales with the darkness around each player: within this many
 # tiles of every player there may be at most ZOMBIE_AREA_MAX_COUNT zombies.
 ZOMBIE_AREA_RADIUS = 75
@@ -138,6 +152,10 @@ ZOMBIE_HUNTER_CHANCE = 0.005
 ZOMBIE_MAX_HUNTERS = 2
 # Despawn when the nearest player is farther than this (they "wandered off").
 ZOMBIE_DESPAWN_DISTANCE = 90
+# A fleeing bird that has kept panicking this long despawns ("bay mất") —
+# it flew out of the area instead of staying punchable forever.
+_PREY_BIRD_FLEE_DESPAWN_S = 4.0
+
 ZOMBIE_DROP_TABLE = (
     ("rotten_flesh", 1.0, 1),
     ("coin", 0.35, 1),
@@ -192,6 +210,42 @@ MOB_DROP_TABLES: Dict[str, tuple] = {
         ("raw_meat", 0.4, 1),
         ("coal", 0.2, 1),
     ),
+    # ---- wildlife: the hunting economy (meat + hide + rare coin) ----------
+    "bunny": (
+        ("raw_meat", 0.6, 1),
+        ("hide", 0.25, 1),
+    ),
+    "deer": (
+        ("raw_meat", 1.0, 2),     # the reliable hunter's prize
+        ("hide", 0.6, 1),
+    ),
+    "deer2": (
+        ("raw_meat", 1.0, 2),
+        ("hide", 0.8, 1),
+        ("coin", 0.4, 2),         # trophy buck
+    ),
+    "bird": (
+        ("feather", 0.7, 1),      # barely worth the arrow
+    ),
+    "boar": (
+        ("raw_meat", 1.0, 2),
+        ("hide", 0.7, 1),         # thick skin
+    ),
+    "bear": (
+        ("raw_meat", 1.0, 3),     # most meat in the game
+        ("hide", 1.0, 2),
+        ("coin", 0.6, 3),
+    ),
+    "fox": (
+        ("raw_meat", 0.5, 1),
+        ("hide", 0.6, 1),         # prized pelt
+        ("coin", 0.3, 1),
+    ),
+    "wolf": (
+        ("raw_meat", 0.8, 1),
+        ("hide", 0.5, 1),
+        ("coin", 0.3, 1),
+    ),
 }
 
 
@@ -244,9 +298,8 @@ class Zombie:
     # Web pack attack rhythm: after ONE bite the zombie plays a short
     # "recovery" window (shuffle back/strafe, anim=walk) before lunging again
     # — no more vibrating in place on the lunge pose.
-    attack_recover_until: float = 0.0
-    # Per-kind web stats (filled by web_spawn_one from MOB_KINDS): chase
-    # speed (tiles/s) and bite cooldown (seconds).
+    attack_recover_until: float = 0.0# Per-kind web stats (filled by web_spawn_one from MOB_KINDS): chase
+# speed (tiles/s) and bite cooldown (seconds).
     web_speed: float = WEB_ZOMBIE_WALK_SPEED
     web_cooldown: float = WEB_ZOMBIE_BITE_COOLDOWN
     # Unit-vector of the recovery drift, picked once per bite.
@@ -258,6 +311,20 @@ class Zombie:
     ambush_armed: bool = False
     ambush_until: float = 0.0
     recover_until: float = 0.0
+    # ---- ambient wildlife flag (game/mob_profiles ambient pool) ------------
+    # True = daytime animal: separate pool cap, prey/neutral behaviors, and
+    # it never counts toward the night-mob cap.
+    ambient: bool = False
+    # NEUTRAL animals: monotonic() until which the animal fights back after
+    # being hit (0.0 = calm, never attacks unprovoked).
+    aggro_until: float = 0.0
+    # AMBIENT wander heading persistence: the animal KEEPS one direction for
+    # 1.5-4 s (wander_until) instead of re-rolling a move/stand coin every
+    # tick — a per-tick coin flip made the anim flap walk<->idle ~10x/s and
+    # the client reset to frame 0 each change (sprites looked frozen/idle
+    # while actually moving).
+    wander_until: float = 0.0
+    wander_walking: bool = False
 
     def sync_float_from_int(self) -> None:
         self.x_f = float(self.x) + 0.5
@@ -356,6 +423,12 @@ def remove_web_zombie(state, zombie_id: str) -> Optional[Zombie]:
 def _next_web_id(state) -> str:
     state.web_zombie_seq = getattr(state, "web_zombie_seq", 0) + 1
     return f"wzombie-{state.web_zombie_seq}"
+
+
+def next_animal_id(state) -> str:
+    """Ambient wildlife share the web store under their own id prefix."""
+    state.web_animal_seq = getattr(state, "web_animal_seq", 0) + 1
+    return f"animal-{state.web_animal_seq}"
 
 
 def remove_zombie(state, zombie_id: str) -> Optional[Zombie]:
@@ -811,6 +884,25 @@ def _web_facing(dx: float, dy: float) -> str:
     return "SW" if dy > 0 else "NW"
 
 
+def _web_facing_towards(z: Zombie, dx: float, dy: float) -> str:
+    """Facing when the mob is TARGETING a player (chase or flee).
+
+    `_web_facing` derives facing from the ACTUAL movement vector — after a
+    collision slide along a wall it can point sideways while the mob still
+    bears down on the player, and a vertically-fleeding prey (single-facing
+    side-view sheet!) would face neither left nor right at all. When a
+    target is involved the face must track the TARGET: horizontal sign of
+    (dx, dy) wins; when |dx|≈|dy| keep the current horizontal bias so the
+    sprite doesn't flicker E/W on a diagonal."""
+    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+        return z.facing
+    if abs(dx) > 1e-6:
+        return "E" if dx > 0 else "W"
+    # Pure vertical: keep the last horizontal facing (W/E); default W only
+    # when the mob never had a horizontal bearing.
+    return z.facing if z.facing in ("E", "W", "NE", "NW", "SE", "SW") else "W"
+
+
 def _web_set_anim(z: Zombie, anim: str, now: float) -> None:
     if z.anim != anim:
         z.anim = anim
@@ -851,6 +943,12 @@ def web_spawn_one(state, collision, players: List[object], rng: random.Random) -
             continue
         if not walkable:
             continue
+        # VOID GUARD: also require ART at the tile (same rule as the
+        # spawner's _spawn_position) — the carve opens walkable no-art
+        # cells around the playable region; mobs must never pop there.
+        _art_ok = _build_art_ok_set(getattr(collision, "map_data", None))
+        if _art_ok is not None and (tx, ty) not in _art_ok:
+            continue
         z = Zombie(_next_web_id(state), tx, ty)
         # Kind roll FIRST (per-map profile), then per-kind stats.
         from game.mob_profiles import roll_kind_for
@@ -872,6 +970,183 @@ def web_spawn_one(state, collision, players: List[object], rng: random.Random) -
         _add_web_zombie(state, z)
         return z
     return None
+
+
+def spawn_animal_one(state, collision, players: List[object], rng: random.Random,
+                     kind: Optional[str] = None) -> Optional[Zombie]:
+    """Spawn ONE ambient animal (same ring rules as the hostile spawner).
+
+    kind=None rolls from the map's ambient roster. Animals share the web
+    store with ambient=True — the hostile cap never counts them.
+    """
+    import math as _math
+
+    from game.mob_profiles import (
+        behavior_of,
+        roll_ambient_kind_for,
+    )
+
+    alive = [p for p in players if getattr(p, "alive", True)]
+    if not alive:
+        return None
+    anchor = rng.choice(alive)
+    w = getattr(getattr(collision, "map_data", None), "width", 0) or 0
+    h = getattr(getattr(collision, "map_data", None), "height", 0) or 0
+    if not w or not h:
+        return None
+    for _ in range(24):
+        ang = rng.uniform(0, 2 * _math.pi)
+        dist = rng.uniform(WEB_ZOMBIE_MIN_SPAWN_DIST, WEB_ZOMBIE_MIN_SPAWN_DIST + 10.0)
+        tx = int(_math.floor(anchor.x_f + _math.cos(ang) * dist))
+        ty = int(_math.floor(anchor.y_f + _math.sin(ang) * dist))
+        if tx < 0 or ty < 0 or tx >= w or ty >= h:
+            continue
+        try:
+            walkable = collision.is_walkable(tx, ty)
+        except Exception:
+            walkable = True
+        if not _in_bounds_float(tx + 0.5, ty + 0.5, w, h):
+            continue
+        if not walkable:
+            continue
+        _art_ok = _build_art_ok_set(getattr(collision, "map_data", None))
+        if _art_ok is not None and (tx, ty) not in _art_ok:
+            continue
+        z = Zombie(next_animal_id(state), tx, ty)
+        z.kind = kind or roll_ambient_kind_for(
+            getattr(getattr(collision, "map_data", None), "map_id", "bigmap"), rng
+        )
+        stats = mob_stats(z.kind)
+        z.hp = z.max_hp = stats["hp"]
+        z.damage = stats["dmg"]
+        z.web_speed = stats["speed"]
+        z.web_cooldown = stats["cooldown"]
+        z.x_f = float(tx) + 0.5
+        z.y_f = float(ty) + 0.5
+        z.ambient = True
+        z.hunter = False
+        # Neutral animals spawn calm; aggro is armed by taking a hit.
+        z.aggro_until = 0.0
+        _ = behavior_of(z.kind)  # validate the kind has a behavior row
+        z.facing = "S"
+        z.anim = "walk"
+        z.anim_t = time.monotonic()
+        _add_web_zombie(state, z)
+        return z
+    return None
+
+
+def _web_ambient_upkeep(state, collision, players, rng, map_id: str,
+                        second_of_day: int) -> list:
+    """Spawn/despawn upkeep for the AMBIENT pool — runs inside web_tick.
+
+    Returns the freshly spawned animals. Despawn radius mirrors the hostile
+    pack so wildlife never litters abandoned corners of the map.
+    """
+    from game.mob_profiles import ambient_max_for, ambient_spawn_chance
+
+    cap = ambient_max_for(map_id, second_of_day)
+    if cap <= 0:
+        return []
+    animals = [z for z in _web_zombies(state) if getattr(z, "ambient", False)]
+    # Animals farther than the hostile despawn distance from every player
+    # wander off (keeps the population near the action).
+    for z in animals:
+        nearest = _web_nearest(z, players)
+        if nearest is not None and _web_dist(z, nearest) > WEB_ZOMBIE_DESPAWN_DIST:
+            remove_web_zombie(state, z.zombie_id)
+    animals = [z for z in _web_zombies(state) if getattr(z, "ambient", False)]
+    spawned = []
+    if len(animals) < cap and (
+        not animals or rng.random() < ambient_spawn_chance(map_id)
+    ):
+        z = spawn_animal_one(state, collision, players, rng)
+        if z is not None:
+            spawned.append(z)
+    return spawned
+
+
+def _web_ambient_move(state, collision, players, now_mono: float, dt: float,
+                      result: "ZombieTurnResult") -> None:
+    """Daytime HALF of web_tick: animals keep moving when the hostile gate is
+    off. A cond copy of the prey/neutral steering from the night loop — kept
+    separate so the hot night path never pays an extra style branch."""
+    import math as _math
+
+    rng = state.__dict__.get("_ambient_rng")
+    if rng is None:
+        import random as _random
+
+        rng = _random.Random()
+        state._ambient_rng = rng
+    step = max(0.0, min(0.25, dt))
+    from game.mob_profiles import behavior_of
+
+    for z in list(_web_zombies(state)):
+        if not getattr(z, "ambient", False):
+            continue
+        target = _web_nearest(z, players)
+        if target is None:
+            _web_set_anim(z, "idle", now_mono)
+            continue
+        dist = _web_dist(z, target)
+        beh = behavior_of(z.kind)
+        style = beh.get("style", "melee")
+        dx = target.x_f - z.x_f
+        dy = target.y_f - z.y_f
+        length = _math.hypot(dx, dy) or 1e-6
+        if style == "prey":
+            flee_vision = float(beh.get("flee_vision", 4.5))
+            if dist <= flee_vision:
+                _web_chase_step(
+                    z, -dx / length, -dy / length, collision, step, now_mono,
+                    result,
+                    speed=z.web_speed * float(beh.get("flee_mult", 1.3)),
+                    towards=(-dx, -dy),  # fleeing: face AWAY from the player
+                )
+                if beh.get("fly_away"):
+                    if z.aggro_until <= now_mono:
+                        z.aggro_until = now_mono
+                    if now_mono - z.aggro_until >= _PREY_BIRD_FLEE_DESPAWN_S:
+                        removed = remove_web_zombie(state, z.zombie_id)
+                        if removed is not None:
+                            result.removed.append(removed)
+                            result.changed = True
+            else:
+                z.aggro_until = 0.0
+                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+            continue
+        # neutral / others: calm wander (aggro never persists into the day
+        # gate for these because the day gate only runs this function).
+        _web_ambient_wander(z, rng, collision, step, now_mono, result)
+
+
+def _web_ambient_wander(z, rng, collision, step, now_mono: float,
+                        result: "ZombieTurnResult") -> None:
+    """Calm wander with a PERSISTENT heading: walk one direction 1.5-4 s at
+    ~35% speed, then stand 1-3 s, then pick again. The long walk windows
+    keep the server anim stable ("walk" for seconds) so the client's frame
+    timer actually advances — no more frozen-looking walkers."""
+    if now_mono >= getattr(z, "wander_until", 0.0):
+        import math as _math
+
+        if rng.random() < 0.6:  # 60% stroll, 40% graze
+            ang = rng.uniform(0, 2 * _math.pi)
+            z.recover_dx, z.recover_dy = _math.cos(ang), _math.sin(ang)
+            z.wander_walking = True
+            z.wander_until = now_mono + rng.uniform(1.5, 4.0)
+        else:
+            z.wander_walking = False
+            z.wander_until = now_mono + rng.uniform(1.0, 3.0)
+    if getattr(z, "wander_walking", False):
+        _web_slide(
+            z,
+            z.recover_dx * z.web_speed * 0.35 * step,
+            z.recover_dy * z.web_speed * 0.35 * step,
+            collision, now_mono, result,
+        )
+    else:
+        _web_set_anim(z, "idle", now_mono)
 
 
 def web_tick(
@@ -897,12 +1172,49 @@ def web_tick(
     players = _web_players(state)
 
     if not night or not players:
+        # Night gate OFF: the HOSTILE pack despawns — but ambient wildlife
+        # is independent (day animals + day/night wolves keep living).
+        removed_any = False
         for z in list(_web_zombies(state)):
+            if getattr(z, "ambient", False):
+                continue
             removed = remove_web_zombie(state, z.zombie_id)
             if removed is not None:
                 result.removed.append(removed)
                 result.changed = True
-        result.visible_changed = bool(result.removed)
+                removed_any = True
+        if players:
+            # Day upkeep: animals keep spawning/moving on their own rhythm.
+            from game.mob_profiles import ambient_max_for
+
+            map_id = getattr(getattr(collision, "map_data", None), "map_id", "bigmap")
+            from rendering.daynight import ingame_seconds as _ingame_s2
+
+            if ambient_max_for(map_id, _ingame_s2()) > 0:
+                born = _web_ambient_upkeep(
+                    state, collision, players, rng, map_id, _ingame_s2()
+                )
+                if born:
+                    result.spawned.extend(born)
+                    result.changed = True
+            else:
+                # NO-WILDLIFE maps (trade lobby + monter-trade interior):
+                # the cap is 0, so also sweep out any animals already inside
+                # (e.g. carried over from the roster fallback before this
+                # rule, or test setups).
+                removed_animals = False
+                for z in list(_web_zombies(state)):
+                    if not getattr(z, "ambient", False):
+                        continue
+                    removed = remove_web_zombie(state, z.zombie_id)
+                    if removed is not None:
+                        result.removed.append(removed)
+                        result.changed = True
+                        removed_animals = True
+                if removed_animals:
+                    result.visible_changed = True
+        _web_ambient_move(state, collision, players, now_mono, dt, result)
+        result.visible_changed = removed_any or bool(result.spawned)
         return result
 
     for z in list(_web_zombies(state)):
@@ -923,6 +1235,39 @@ def web_tick(
             result.visible_changed = True
             zombies = _web_zombies(state)
 
+    # ---- AMBIENT wildlife upkeep (daytime animals, own pool cap) ---------
+    # The hostile night cap above counts ONLY ambient=False mobs; the animal
+    # pool follows its own day/night rhythm (game/mob_profiles.py) and runs
+    # in BOTH halves of this tick (day keeps the hostile gate out, animals
+    # still spawn/move).
+    from game.mob_profiles import ambient_max_for
+
+    map_id = getattr(getattr(collision, "map_data", None), "map_id", "bigmap")
+    from rendering.daynight import ingame_seconds as _ingame_s
+
+    if ambient_max_for(map_id, _ingame_s()) > 0:
+        born = _web_ambient_upkeep(state, collision, players, rng, map_id, _ingame_s())
+        if born:
+            result.spawned.extend(born)
+            result.changed = True
+            result.visible_changed = True
+            zombies = _web_zombies(state)
+    else:
+        # NO-WILDLIFE maps (night half): trade zones also sweep animals
+        # already inside — same rule as the day half above.
+        removed_any = False
+        for z in list(_web_zombies(state)):
+            if not getattr(z, "ambient", False):
+                continue
+            removed = remove_web_zombie(state, z.zombie_id)
+            if removed is not None:
+                result.removed.append(removed)
+                result.changed = True
+                removed_any = True
+        if removed_any:
+            result.visible_changed = True
+            zombies = _web_zombies(state)
+
     step = max(0.0, min(0.25, dt))
     for z in list(zombies):
         target = _web_nearest(z, players)
@@ -938,6 +1283,45 @@ def web_tick(
         dx = target.x_f - z.x_f
         dy = target.y_f - z.y_f
         length = _math.hypot(dx, dy)
+
+        # ---- PREY (bunny/deer/bird): NEVER attacks — flees from any player
+        # inside flee_vision. The bird flees hard enough to despawn ("bay
+        # mất") once it has kept running for fly_away_s of continuous panic.
+        if style == "prey":
+            flee_vision = float(beh.get("flee_vision", 4.5))
+            if dist <= flee_vision and length > 1e-6:
+                ux, uy = -dx / length, -dy / length
+                _web_chase_step(
+                    z, ux, uy, collision, step, now_mono, result,
+                    speed=z.web_speed * float(beh.get("flee_mult", 1.3)),
+                    towards=(-dx, -dy),  # fleeing: face AWAY from the player
+                )
+                if beh.get("fly_away"):
+                    z.aggro_until = (z.aggro_until or now_mono) if (
+                        z.aggro_until > now_mono
+                    ) else now_mono
+                    if now_mono - z.aggro_until >= _PREY_BIRD_FLEE_DESPAWN_S:
+                        removed = remove_web_zombie(state, z.zombie_id)
+                        if removed is not None:
+                            result.removed.append(removed)
+                            result.changed = True
+                else:
+                    z.aggro_until = 0.0
+            else:
+                # Calm: persistent wander heading (walk windows last seconds
+                # so the client's walk anim actually plays).
+                z.aggro_until = 0.0
+                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+            continue
+
+        # ---- NEUTRAL (boar/bear): wanders calmly; fights back ONLY while
+        # aggro (armed by the player's attack, see rules.py).
+        if style == "neutral":
+            if now_mono >= getattr(z, "aggro_until", 0.0):
+                _web_ambient_wander(z, rng, collision, step, now_mono, result)
+                continue
+            # Aggro: falls through to the melee chase/bite below (a cornered
+            # boar is a melee mob until it calms down).
 
         # ---- RANGED (spectre): fires from a distance, never closes in. ----
         if style == "ranged":
@@ -978,6 +1362,7 @@ def web_tick(
                 _web_chase_step(
                     z, dx / length, dy / length, collision, step, now_mono,
                     result, speed=z.web_speed,
+                    towards=(dx, dy),
                 )
             continue
 
@@ -1042,9 +1427,26 @@ def web_tick(
                 if feed is not None:
                     feed.append((now_wall, target.user_id, dealt, "zombie"))
                     del feed[:-40]
-                # Pick the recovery drift: mostly AWAY from the target with a
-                # random sideways component, so packs break apart instead of
-                # shuffling in lockstep.
+            # ---- STATUS EFFECTS (user 25/09): per-kind bite roll. Zombie
+            # 50% infection L1; spider 70% poison L1 (refresh: 50% -> L2);
+            # bat 25% light poison L1. Refresh = reset the clock (shared).
+            # Bat has its own LIGHT poison numbers (12 s, 1 dmg / 3 s).
+            try:
+                from game import status_effects as _se
+
+                if z.kind == "bat":
+                    if rng.random() < _se.BITE_EFFECTS["bat"]["chance"]:
+                        _se.apply_bat_poison(target)
+                        result.changed = True
+                else:
+                    eff = _se.apply_bite_effect(target, z.kind, rng)
+                    if eff is not None:
+                        result.changed = True
+            except Exception:  # noqa: BLE001 — a status roll must never break the bite
+                pass
+            # Pick the recovery drift: mostly AWAY from the target with a
+            # random sideways component, so packs break apart instead of
+            # shuffling in lockstep.
                 rec_len = max(1e-6, length)
                 # SKITTISH (rat/goblin): hit-and-run — a LONG retreat drift
                 # straight away from the player after every successful bite.
@@ -1084,6 +1486,19 @@ def web_tick(
         speed = WEB_ZOMBIE_HUNTER_SPEED if z.hunter else z.web_speed
         if style == "ambush" and getattr(z, "ambush_armed", False) and now_mono < getattr(z, "ambush_until", 0.0):
             speed = max(speed, z.web_speed * 1.8)  # pounce!
+        # WOLF PACK: each fellow wolf within pack_radius adds pack_bonus
+        # speed (capped at pack_cap x) — wolves hunt in packs, day or night.
+        if beh.get("pack"):
+            fellows = sum(
+                1 for o in _web_zombies(state)
+                if o is not z and getattr(o, "kind", "") == z.kind
+                and _web_dist(o, target) <= float(beh.get("pack_radius", 5.0))
+            )
+            if fellows:
+                speed = min(
+                    speed * (1.0 + fellows * float(beh.get("pack_bonus", 0.1))),
+                    speed * float(beh.get("pack_cap", 1.5)),
+                )
         # SWARM (bat): erratic weaving — sinusoidal sideways offset while
         # closing in so it flies in loops instead of a straight beeline.
         ux, uy = dx / length, dy / length
@@ -1093,7 +1508,10 @@ def web_tick(
             ux, uy = ux - uy * wob * 0.6, uy + ux * wob * 0.6
             wl = _m2.hypot(ux, uy) or 1.0
             ux, uy = ux / wl, uy / wl
-        _web_chase_step(z, ux, uy, collision, step, now_mono, result, speed=speed)
+        _web_chase_step(
+            z, ux, uy, collision, step, now_mono, result, speed=speed,
+            towards=(dx, dy),  # chasing: face the target, not the slide vector
+        )
     if result.changed:
         result.visible_changed = True
     return result
@@ -1103,9 +1521,18 @@ def _web_chase_step(
     z: Zombie, ux: float, uy: float, collision,
     step: float, now_mono: float, result: "ZombieTurnResult",
     speed: float,
+    towards: tuple[float, float] | None = None,
 ) -> None:
     """One float chase step along a UNIT vector with collision + the void
-    guard (shared by the melee chase and the ranged caster drift)."""
+    guard (shared by the melee chase, the prey flee and the ranged caster
+    drift).
+
+    `towards` = (dx, dy) to the TARGET (player or away-from-player for
+    fleeing prey): when given, facing tracks the TARGET, not the actual
+    post-collision movement vector — a mob sliding along a tree keeps
+    looking at what it hunts, and a single-facing (side-view) animal
+    moving purely vertically keeps a sensible horizontal bearing instead
+    of freezing on a stale facing."""
     import math as _math
 
     can_float = getattr(collision, "can_move_float", None)
@@ -1135,10 +1562,15 @@ def _web_chase_step(
     if (nx_f, ny_f) != (z.x_f, z.y_f):
         z.x_f, z.y_f = nx_f, ny_f
         z.sync_int_from_float()
-        z.facing = _web_facing(ux, uy)
+        z.facing = _web_facing_towards(z, *towards) if towards else _web_facing(ux, uy)
         _web_set_anim(z, "walk", now_mono)
         result.changed = True
     else:
+        # Blocked: STILL track the target — a mob pressed against a tree
+        # between bites must keep eye contact instead of drifting its face
+        # to whatever direction the blocked step failed toward.
+        if towards:
+            z.facing = _web_facing_towards(z, *towards)
         _web_set_anim(z, "idle", now_mono)
 
 

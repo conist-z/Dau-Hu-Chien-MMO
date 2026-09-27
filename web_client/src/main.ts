@@ -790,6 +790,11 @@ const net = new Net({
       } else if (frame.missed) {
         // Whiff on a live target still shows MISS over the zombie tile.
         scene.spawnSplat(frame.tx, frame.ty, 0, false, true);
+        // Attack-miss flavour: misses get likelier as stamina empties —
+        // tell the player WHY (attacks spend breath since 28/09).
+        if ((scene as unknown as { selfStamina: number }).selfStamina <= 0) {
+          hud.toast("Phờ rũ rồi — đấm yếu và hụt nhiều, nghỉ chút đi!");
+        }
       }
       if (frame.ok) return;
     }

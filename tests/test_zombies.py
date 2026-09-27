@@ -101,7 +101,7 @@ def test_offscreen_zombie_without_vision_stays_put(world):
     'always-beeline-to-screen' behaviour is gone). A spawn may still happen
     on the same tick (spawn_chance) — that does not count as chasing."""
     state, collision, _player = world
-    zombie = Zombie("z1", 17, 17)  # dist 7 > vision 6, outside view rect
+    zombie = Zombie("z1", 25, 25)  # dist ~16 > vision 15 (x2.5), outside view rect
     state.zombies[zombie.zombie_id] = zombie
 
     result = tick_zombies(
@@ -112,23 +112,23 @@ def test_offscreen_zombie_without_vision_stays_put(world):
         max_count=30,
     )
 
-    assert (zombie.x, zombie.y) == (17, 17)
+    assert (zombie.x, zombie.y) == (25, 25)
     for spawned in result.spawned:
         assert spawned.zombie_id != "z1"
 
 
 def test_walker_in_view_but_out_of_vision_stops_chasing(world):
-    """A walker standing inside the viewport but beyond vision 6 does NOT
+    """A walker standing inside the viewport but beyond vision 15 does NOT
     chase on player-action turns — it lost sight of the player."""
     state, collision, player = world
-    zombie = Zombie("z1", 18, 10)  # dist 8 > vision 6, but inside views
+    zombie = Zombie("z1", 18, 25)  # dist ~15.03 > vision 15, but inside views
     state.zombies[zombie.zombie_id] = zombie
-    views = {1: (0, 0, 20, 20)}
+    views = {1: (0, 0, 40, 40)}
 
     result = advance_visible_zombies(state, collision, views)
 
     assert result.changed is False
-    assert (zombie.x, zombie.y) == (18, 10)
+    assert (zombie.x, zombie.y) == (18, 25)
 
 
 def test_walker_chases_inside_vision_then_hunter_still_does(world):
@@ -219,6 +219,12 @@ def test_visible_zombie_damages_player_on_turn(world):
 
 
 def test_attack_hits_facing_zombie_and_removes_it_at_zero(world):
+    # Combat hit roll (miss/crit) is stochastic — pin random.random() at 0.5
+    # (above both the miss and crit thresholds = every swing lands plain).
+    from unittest import mock
+
+    _roll = mock.patch("random.random", return_value=0.5)
+    _roll.start()
     state, _collision, player = world
     player.direction = "EAST"
     zombie = Zombie("z1", 11, 10, hp=20, max_hp=20)
@@ -242,6 +248,12 @@ def test_attack_does_not_advance_visible_zombie():
         collision=[[0] * 20 for _ in range(20)],
         spawn=(10, 10),
     )
+    # Combat hit roll (miss/crit) is stochastic — pin random.random() at 0.5
+    # (above both the miss and crit thresholds = every swing lands plain).
+    from unittest import mock
+
+    _roll = mock.patch("random.random", return_value=0.5)
+    _roll.start()
     state = GameState(2, map_data.map_id)
     player = state.add_player(1, "A", 10, 10)
     player.direction = "EAST"
@@ -255,6 +267,52 @@ def test_attack_does_not_advance_visible_zombie():
     assert (zombie.x, zombie.y) == (11, 10)
 
 
+def test_attack_costs_stamina_and_rolls_hit_quality():
+    """Combat cost + hit-quality rules (user 28/09): every swing drains
+    STAMINA_ATTACK_DRAIN; a roll below the miss chance whiffs (no damage,
+    missed=True); a crit multiplies the damage; an empty stamina bank
+    raises the miss chance to ATTACK_MISS_TIRED."""
+    from unittest import mock
+
+    import game.rules as rules_mod
+
+    map_data = MapData(
+        map_id="combat-cost",
+        width=20, height=20,
+        collision=[[0] * 20 for _ in range(20)],
+        spawn=(10, 10),
+    )
+    state = GameState(9, map_data.map_id)
+    player = state.add_player(1, "A", 10, 10)
+    player.direction = "EAST"
+    zombie = Zombie("z1", 11, 10, hp=10_000, max_hp=10_000)
+    state.zombies["z1"] = zombie
+
+    # --- MISS: random() below the fresh miss chance (0.10) ---
+    with mock.patch("random.random", return_value=0.01):
+        r = apply_attack(state, AttackAction(1))
+    assert r.missed is True and r.damage == 0 and zombie.hp == 10_000
+    assert player.stamina == player.max_stamina - rules_mod.STAMINA_ATTACK_DRAIN
+
+    # --- CRIT: miss roll clears, crit roll lands ---
+    with mock.patch("random.random", side_effect=[0.9, 0.01]):
+        r = apply_attack(state, AttackAction(1))
+    assert r.critical is True
+    assert r.damage == int(round(6 * rules_mod.ATTACK_CRIT_MULT))
+    assert zombie.hp == 10_000 - r.damage
+
+    # --- Exhausted: miss chance rises to ATTACK_MISS_TIRED; the threshold
+    # 0.01 < p <= 0.30 band now MISSES where a fresh player would hit ---
+    player.stamina = 0.0
+    with mock.patch("random.random", return_value=0.20):
+        r = apply_attack(state, AttackAction(1))
+    assert r.missed is True  # 0.20 >= base 0.10 (hit) but < tired 0.30 (miss)
+
+    with mock.patch("random.random", return_value=0.5):
+        r = apply_attack(state, AttackAction(1))
+    assert r.missed is False and r.damage == 6  # plain hit again
+
+
 def test_attack_bare_hand_vs_weapon_damage():
     """Balance rule: zombie hp 40 -> 7 bare-hand punches (6 dmg). Held tools
     deal PER-FAMILY damage (game/tools.py FAMILY_BASE_DAMAGE) scaled by the
@@ -266,6 +324,12 @@ def test_attack_bare_hand_vs_weapon_damage():
         collision=[[0] * 20 for _ in range(20)],
         spawn=(10, 10),
     )
+    # Combat hit roll (miss/crit) is stochastic — pin random.random() at 0.5
+    # (above both the miss and crit thresholds = every swing lands plain).
+    from unittest import mock
+
+    _roll = mock.patch("random.random", return_value=0.5)
+    _roll.start()
     state = GameState(3, map_data.map_id)
     player = state.add_player(1, "A", 10, 10)
     player.direction = "EAST"
