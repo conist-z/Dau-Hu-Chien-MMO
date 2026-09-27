@@ -2342,7 +2342,10 @@ export class WorldScene extends Phaser.Scene {
         z.body.setFlipX(fx);
         if (z.anim === "atk") {
           z.body.setTint(0xffb0a0);
-          z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
+          // SIDE-VIEW animals: NO rotation tween — the lunge tilt reads as a
+          // body slam on a 9-way humanoid but as a broken pose on a 1-facing
+          // animal ("đần"). A red tint flash is enough feedback.
+          if (!sheet.singleFacing) z.body.setAngle(z.frame % 2 === 0 ? -6 : 6);
         } else {
           z.body.clearTint();
           z.body.setAngle(0);

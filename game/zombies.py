@@ -884,6 +884,43 @@ def _web_facing(dx: float, dy: float) -> str:
     return "SW" if dy > 0 else "NW"
 
 
+# ---- side-view animal facing (user 28/09: "quay mặt qua trái rồi chạy lên
+# phải — khó chịu") ----------------------------------------------------------
+# Minifolks animals are SIDE-VIEW art with ONE facing row: the sprite can
+# only look left or right. Deriving N/S/E/W per slide and re-deriving it
+# every tick made the head flip left<->right while the body kept gliding
+# diagonally. Rules that fix it:
+#   1. E/W only — vertical movement keeps the current face.
+#   2. HYSTERESIS: a flip requires |dx| accumulated past SIDE_FLIP_THRESHOLD
+#      in the OPPOSITE direction (a diagonal stroll with |dx| ≈ 0 no longer
+#      strobes the face every tick).
+#   3. No-face zones (blocked/idle) never re-face.
+SIDE_FLIP_THRESHOLD = 0.25  # tiles of travel opposite the current face
+
+
+def _side_animal_facing(z, dx: float, dy: float) -> str:
+    """E/W facing for a side-view animal with anti-strobe hysteresis.
+
+    ``dx/dy`` is the CURRENT movement step (not a target vector). Returns
+    the possibly-unchanged z.facing (always "E" or "W" once an animal has
+    moved at all — spawn default "S" is fixed on the first step).
+    """
+    cur = z.facing if z.facing in ("E", "W") else ("E" if dx >= 0 else "W")
+    if abs(dx) < 1e-6:
+        return cur  # pure vertical / no horizontal motion: keep the face
+    want = "E" if dx > 0 else "W"
+    if want == cur:
+        return cur
+    # Opposite direction: flip only after the accumulated counter-travel
+    # proves intent (resets on every agreeing step — jitter never flips).
+    trav = abs(dx)
+    z._side_flip_acc = (getattr(z, "_side_flip_acc", 0.0) + trav)
+    if z._side_flip_acc >= SIDE_FLIP_THRESHOLD:
+        z._side_flip_acc = 0.0
+        return want
+    return cur
+
+
 def _web_facing_towards(z: Zombie, dx: float, dy: float) -> str:
     """Facing when the mob is TARGETING a player (chase or flee).
 
@@ -1028,7 +1065,9 @@ def spawn_animal_one(state, collision, players: List[object], rng: random.Random
         # Neutral animals spawn calm; aggro is armed by taking a hit.
         z.aggro_until = 0.0
         _ = behavior_of(z.kind)  # validate the kind has a behavior row
-        z.facing = "S"
+        # Side-view sheet: start facing right ("S" would show the right row
+        # anyway — face the art's native direction from birth).
+        z.facing = "E"
         z.anim = "walk"
         z.anim_t = time.monotonic()
         _add_web_zombie(state, z)
@@ -1562,14 +1601,20 @@ def _web_chase_step(
     if (nx_f, ny_f) != (z.x_f, z.y_f):
         z.x_f, z.y_f = nx_f, ny_f
         z.sync_int_from_float()
-        z.facing = _web_facing_towards(z, *towards) if towards else _web_facing(ux, uy)
+        # SIDE-VIEW animals: E/W face from the ACTUAL step (hysteresis),
+        # never the target vector — a diagonally-fleeing deer must not
+        # strobe its head while gliding. Kaetram mobs keep target-tracking.
+        if getattr(z, "ambient", False):
+            z.facing = _side_animal_facing(z, ux * speed * step, uy * speed * step)
+        else:
+            z.facing = _web_facing_towards(z, *towards) if towards else _web_facing(ux, uy)
         _web_set_anim(z, "walk", now_mono)
         result.changed = True
     else:
         # Blocked: STILL track the target — a mob pressed against a tree
         # between bites must keep eye contact instead of drifting its face
         # to whatever direction the blocked step failed toward.
-        if towards:
+        if towards and not getattr(z, "ambient", False):
             z.facing = _web_facing_towards(z, *towards)
         _web_set_anim(z, "idle", now_mono)
 
@@ -1621,7 +1666,12 @@ def _web_slide(
     if (nx_f, ny_f) != (z.x_f, z.y_f):
         z.x_f, z.y_f = nx_f, ny_f
         z.sync_int_from_float()
-        z.facing = _web_facing(dx, dy)
+        # SIDE-VIEW animals face E/W only (hysteresis-protected); Kaetram
+        # mobs keep the 8-way facing.
+        if getattr(z, "ambient", False):
+            z.facing = _side_animal_facing(z, dx, dy)
+        else:
+            z.facing = _web_facing(dx, dy)
         _web_set_anim(z, "walk", now_mono)
         result.changed = True
     else:

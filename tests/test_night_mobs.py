@@ -33,6 +33,22 @@ def _world():
     return state, collision, player
 
 
+def _world_on_map(map_id: str):
+    """Same as _world but with a custom map_id (trade-zone tests)."""
+    map_data = MapData(
+        map_id=map_id,
+        width=40,
+        height=40,
+        collision=[[0] * 40 for _ in range(40)],
+        spawn=(20, 20),
+    )
+    state = GameState(1, map_data.map_id)
+    player = state.add_player(1, "A", 20, 20)
+    player.is_web = True
+    collision = Collision(map_data, state.blocks)
+    return state, collision, player
+
+
 def test_roll_mob_kind_descending_weights():
     """zombie most common ... rat rarest, matching the user's order."""
     rng = random.Random(42)
@@ -48,7 +64,8 @@ def test_roll_mob_kind_descending_weights():
 
 def test_mob_stats_per_kind():
     """Each kind has its own hp/damage; zombie keeps the classic stats."""
-    assert mob_stats("zombie")["hp"] == 40
+    # HP x5 (user 25/09): zombie 40 -> 200.
+    assert mob_stats("zombie")["hp"] == 200
     assert mob_stats("zombie")["dmg"] == 10
     bat = mob_stats("bat")
     assert bat["hp"] < mob_stats("zombie")["hp"]
@@ -104,3 +121,103 @@ def test_bite_damage_uses_kind_damage():
     web_tick(state, collision, True, 0.05, rng=rng)
     if player.hp < player.hp_before:
         assert (player.hp_before - player.hp) == z.damage
+
+
+def test_trade_zone_maps_have_no_animal_roster():
+    """User 28/09: the market must have NO animals inside. The trade maps
+    used to fall back to the bigmap profile (bunnies/deer/wolves spawned in
+    the lobby); their own profiles must be wildlife-free."""
+    from game.mob_profiles import ambient_max_for, ambient_profile_for
+
+    for map_id in ("lobbytrade", "montertradebase"):
+        assert not ambient_profile_for(map_id), map_id
+        assert ambient_max_for(map_id, 12 * 3600) == 0  # noon
+
+
+def test_trade_zone_tick_never_spawns_and_sweeps_leftover_animals():
+    """web_tick on a trade map (day-forced, like manager does) must spawn
+    nothing AND remove any ambient animal already inside."""
+    from game.zombies import spawn_animal_one
+
+    for map_id in ("lobbytrade", "montertradebase"):
+        state, collision, player = _world_on_map(map_id)
+        rng = random.Random(7)
+        # Seed a leftover animal as if it had spawned before the rule.
+        z = spawn_animal_one(state, collision, [player], rng)
+        assert z is not None
+        # Day-forced tick (night=False — the manager's trade-zone call).
+        for _ in range(3):
+            web_tick(state, collision, False, 0.05, rng=rng)
+        assert not [
+            zz for zz in iter_web_zombies(state) if getattr(zz, "ambient", False)
+        ], map_id
+        # And the night half sweeps too.
+        z2 = spawn_animal_one(state, collision, [player], rng)
+        assert z2 is not None
+        web_tick(state, collision, True, 0.05, rng=rng)
+        assert not [
+            zz for zz in iter_web_zombies(state) if getattr(zz, "ambient", False)
+        ], map_id
+
+
+def test_side_animal_facing_never_strobes():
+    """Side-view animal facing (user 28/09): E/W only, vertical movement
+    keeps the face, and a flip requires accumulated opposite travel — a
+    diagonal glide must not strobe the head left<->right every tick."""
+    from game.zombies import SIDE_FLIP_THRESHOLD, _side_animal_facing, Zombie
+
+    z = Zombie("a1", 10, 10)
+    z.facing = "E"
+    # Pure vertical: face unchanged.
+    assert _side_animal_facing(z, 0.0, 0.1) == "E"
+    assert _side_animal_facing(z, 0.0, -0.1) == "E"
+    # Moving right: stays E.
+    assert _side_animal_facing(z, 0.1, 0.0) == "E"
+    # Small opposite drifts (jitter) NEVER flip until the threshold:
+    # 4 steps x 0.05 = 0.20 < 0.25 stays un-flipped.
+    for _ in range(4):
+        assert _side_animal_facing(z, -0.05, 0.0) == "E"
+    # A 5th opposite step crosses the accumulated threshold -> flips.
+    assert _side_animal_facing(z, -0.05, 0.0) == "W"
+    # Once W, agreeing steps keep it; spawn default "S" fixes on first step.
+    z2 = Zombie("a2", 5, 5)
+    z2.facing = "S"
+    assert _side_animal_facing(z2, -0.1, 0.0) == "W"
+
+
+def test_web_push_into_monter_door_teleports():
+    """Regression 28/09 ("hết vào được montertradebase"): since gates are
+    SOLID walls the web body rests flush against the door and moved_any stays
+    False while the key is held — the portal check used to run ONLY on a real
+    move, so the gate never fired. Pressing INTO the door must teleport."""
+    import asyncio
+
+    from game.manager import GameManager, _loop_time
+    from config import ASSETS_DIR
+
+    async def drive():
+        gm = GameManager(assets_dir=ASSETS_DIR)
+        rt = gm.create_runtime(999, "lobbytrade")
+        p = rt.state.add_player(42, "A", 38, 27)
+        p.is_web = True
+        p.sync_float_from_int()
+        assert gm.register_web_session(999, 42, "A")
+        for _ in range(400):
+            # Hold UP into the solid door with a fresh predicted report —
+            # exactly what the browser does while the key is held.
+            report_y = max(26.3, p.y_f - 0.1)
+            gm.web_input(999, 42, 0.0, -1.0,
+                         report_x=p.x_f, report_y=report_y)
+            await gm._web_tick_runtime(rt, rt.web_sessions, _loop_time())
+            if rt.map_data.map_id != "lobbytrade":
+                break
+            await asyncio.sleep(0.01)  # real dt so the body actually walks
+        return rt, gm
+
+    rt, gm = asyncio.run(drive())
+    # The player left the lobby runtime...
+    assert 42 not in rt.state.players
+    # ...and landed inside the monter trade interior.
+    dst = gm.side_runtimes.get((999, "montertradebase"))
+    assert dst is not None
+    assert 42 in dst.state.players
