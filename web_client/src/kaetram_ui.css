@@ -2260,7 +2260,12 @@
 #hud-hub #map-frame {
   width: 25.3125em;
   height: 16.875em;
-  background-image: url("/ui/kaetram/interface/mapframe.png");
+  /* CUSTOM WORLD MAP: the user's own pixel world map baked UNDER the
+     original Kaetram frame ring (mapframe_custom.png = map + hollow ring
+     composited). The frame's transparent center shows the custom map; the
+     ring/corners/close-button visuals are pixel-identical to mapframe.png
+     (close X still works — same element, same CSS). */
+  background-image: url("/ui/kaetram/interface/mapframe_custom.png");
   background-repeat: no-repeat;
   background-size: 25.3125em 16.875em;
 }
@@ -2365,6 +2370,47 @@
   top: 7.5em;
   left: 8.4375em;
 }
+/* ==== CUSTOM WORLD MAP: warp7-13 extend the Kaetram sprite rules (the
+   original sheet block only covered warp0-6); all use mapicons col 0 with
+   the 3-state normal/hover/active rows. Positions come from the user's
+   14 markers (warp_markers.json -> scripts/_gen_warp_css.py). ==== */
+#hud-hub #warp7, #hud-hub #warp8, #hud-hub #warp9, #hud-hub #warp10,
+#hud-hub #warp11, #hud-hub #warp12, #hud-hub #warp13 {
+  width: 2em;
+  height: 2em;
+  background-image: url("/ui/kaetram/interface/mapicons.png");
+  background-repeat: no-repeat;
+  background-size: 22em 6em;
+  background-position-x: -0em;
+}
+#hud-hub #warp7:hover, #hud-hub #warp8:hover, #hud-hub #warp9:hover,
+#hud-hub #warp10:hover, #hud-hub #warp11:hover, #hud-hub #warp12:hover,
+#hud-hub #warp13:hover {
+  background-position-y: -2em;
+}
+#hud-hub #warp7:active, #hud-hub #warp7.active, #hud-hub #warp8:active,
+#hud-hub #warp8.active, #hud-hub #warp9:active, #hud-hub #warp9.active,
+#hud-hub #warp10:active, #hud-hub #warp10.active, #hud-hub #warp11:active,
+#hud-hub #warp11.active, #hud-hub #warp12:active, #hud-hub #warp12.active,
+#hud-hub #warp13:active, #hud-hub #warp13.active {
+  background-position-y: -4em;
+}
+/* OVERRIDE the stock Kaetram warp0-5 positions: our 14 markers replace
+   the original 6-warp layout (positions from warp_markers.json). */
+#hud-hub #warp0 { top: 4.7188em; left: 17.2812em; }
+#hud-hub #warp1 { top: 1.5312em; left: 22.1562em; }
+#hud-hub #warp2 { top: 13.7188em; left: 20.5625em; }
+#hud-hub #warp3 { top: 10.5312em; left: 21.6875em; }
+#hud-hub #warp4 { top: 13.0625em; left: 11.3750em; }
+#hud-hub #warp5 { top: 9.5938em; left: 16.5312em; }
+#hud-hub #warp6 { top: 2.7500em; left: 10.8125em; }
+#hud-hub #warp7 { top: 2.9375em; left: 7.4375em; }
+#hud-hub #warp8 { top: 1.3438em; left: 1.0625em; }
+#hud-hub #warp9 { top: 6.2188em; left: 3.7812em; }
+#hud-hub #warp10 { top: 13.5312em; left: 2.6562em; }
+#hud-hub #warp11 { top: 9.4062em; left: 7.0625em; }
+#hud-hub #warp12 { top: 5.1875em; left: 10.1562em; }
+#hud-hub #warp13 { top: 6.9688em; left: 22.1562em; }
 @media (--portrait) {#hud-hub #map-frame {
     font-size: 0.875em;
   }
