@@ -1536,6 +1536,10 @@ game.events.once("ready", () => {
   scene.onNpcInteract = (npc) => {
     net.chatCommand(`npc ${npc.id}`);
   };
+  // Mouse-facing sync: the scene's 8-way facing label (driven by the blue
+  // hover-box tile) forwards as a server "turn" action so remote players
+  // see the same direction (throttled inside the scene).
+  scene.onSelfTurn = (dir) => net.turn(dir);
   // Station interact pipeline. TOGGLE: if the station window is already
   // open, E closes it (bubble fades back); otherwise open + suppress the
   // bubble. The explosion only plays on the OPEN press.
