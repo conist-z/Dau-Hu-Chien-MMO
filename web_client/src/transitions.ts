@@ -235,13 +235,21 @@ export class TravelVeil {
       vid.currentTime = 0;
       vid.style.opacity = "1";
       // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS: run the video at a rate
-      // that lands ~96% right when MIN_LOAD elapses, and PAUSE it there —
+      // that lands ~93% right when MIN_LOAD elapses, and PAUSE it there —
       // playing on to the final frame made the bar hit 100%, blink out and
       // re-appear for ~0.5s (user: "load 100% rồi mất, hiện lại rồi mới
       // mất đi"). If the load takes longer than MIN_LOAD the bar simply
-      // holds at 96% until the real exit.
+      // holds at 93% until the real exit.
+      // HOLD TARGET = 93% OF THE PLAYABLE DURATION, not of videoDur:
+      // the webm declares 5.1s but only ~3.6s decodes (frame 71 of 102;
+      // the tail frames are empty) and the LAST playable frame's bar is
+      // back at 0% — holding past the playable end showed "0% sau khi
+      // chạy 100%" (user report). 93% of 5.1s ≈ 4.74s > playable end, so
+      // clamp to a safe in-playable ceiling and hold just below the 85%
+      // fill frame (frame 70).
       if (this.videoDur > 0) {
-        const target = this.videoDur * 0.96;
+        const PLAYABLE = Math.min(this.videoDur, 3.55); // ~frame 70/72
+        const target = PLAYABLE * 0.97;
         const rate = target / (TravelVeil.MIN_LOAD_MS / 1000);
         vid.playbackRate = Math.min(3, Math.max(1, rate));
         const hold = () => {
