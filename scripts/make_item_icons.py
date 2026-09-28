@@ -22,11 +22,13 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 KAETRAM = ROOT / "kaetram_extract" / "04_items" / "sprites"
+CURSORS = ROOT / "kaetram_extract" / "10_interface" / "cursors"
 TWEMOJI = ROOT / "assets" / "gui" / "items"
 BLOCKS = ROOT / "assets" / "blocks"  # placed-block face art (32x32 world PNG)
 OUT_DIRS = [ROOT / "assets" / "gui" / "icons", ROOT / "web_client" / "public" / "ui" / "icons"]
 
-# item_id -> Kaetram sprite stem (KAETRAM dir), or ("twemoji", codepoint)
+# item_id -> Kaetram sprite stem (KAETRAM dir), ("cursor", stem) for the
+# 10_interface/cursors tool icons (stone/steel look), or ("twemoji", codepoint)
 # for items Kaetram doesn't ship. Optional tint multiplies the RGB channels
 # (recolor while keeping shading) — used for HP/MP flasks + the steel sword.
 # ("block", stem) sources the PLACED-BLOCK face PNG (assets/blocks/<stem>.png)
@@ -49,7 +51,11 @@ SOURCES: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float, float]]
     "iron_sword": ("kaetram", "ironsword"),
     "stone_sword": ("kaetram", "tinsword"),
     "stone_axe": ("kaetram", "bronzebattleaxe"),
-    "stone_pickaxe": ("kaetram", "bonepickaxe"),
+    # stone_pickaxe: Kaetram ships NO "stonepickaxe" sprite — the wrong
+    # bonepickaxe (bone-white head with a teal grip) read as a bone tool.
+    # The interface cursors' pickaxe (steel-grey head, stone look) is the
+    # correct "cúp đá" art (user: "cây cúp đá ... dùng sai assets").
+    "stone_pickaxe": ("cursor", "pickaxe"),
     "gold_ingot": ("kaetram", "goldbar"),
     "gold_ore": ("kaetram", "goldore"),
     "steel_ingot": ("kaetram", "moonrockore"),
@@ -92,6 +98,20 @@ def load_kaetram(stem: str) -> Image.Image | None:
     return Image.open(p).convert("RGBA")
 
 
+def load_cursor(stem: str) -> Image.Image | None:
+    """A 10_interface cursor tool icon (14-16px, already icon-sized)."""
+    p = CURSORS / f"{stem}.png"
+    if not p.is_file():
+        return None
+    im = Image.open(p).convert("RGBA")
+    if im.size != (16, 16):
+        # Center on a 16x16 canvas (NEAREST — hard pixel edges kept).
+        canvas = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+        canvas.paste(im, ((16 - im.size[0]) // 2, (16 - im.size[1]) // 2))
+        im = canvas
+    return im
+
+
 def load_block_face(stem: str) -> Image.Image | None:
     """A placed-block face PNG, downscaled to 16x16 icon (NEAREST — hard
     pixel edges kept, no blur: the icon must read as the same art)."""
@@ -121,7 +141,8 @@ def make() -> int:
         if kind == "block":
             im = load_block_face(name)
         else:
-            im = load_kaetram(name) if kind == "kaetram" else load_twemoji(name)
+            im = (load_kaetram(name) if kind == "kaetram"
+                  else load_cursor(name) if kind == "cursor" else load_twemoji(name))
         if im is None and kind == "kaetram":
             # Kaetram file missing -> keep pipeline alive with twemoji fallback
             fallbacks.append(item_id)

@@ -19,7 +19,8 @@ export const WEAPON_SHEETS: Record<string, string> = {
   gold_axe: "goldaxe",
   steel_axe: "cobaltaxe",
   wood_pickaxe: "bronzepickaxe",
-  stone_pickaxe: "bonepickaxe",
+  // GENERATED sheet (user recolor) — mirror of game/appearance.py
+  stone_pickaxe: "stonepickaxe",
   iron_pickaxe: "ironpickaxe",
   gold_pickaxe: "goldpickaxe",
   steel_pickaxe: "cobaltpickaxe",

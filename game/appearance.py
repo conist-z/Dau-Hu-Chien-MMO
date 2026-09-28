@@ -59,7 +59,10 @@ WEAPON_SHEETS: Dict[str, str] = {
     "gold_axe": "goldaxe",
     "steel_axe": "cobaltaxe",
     "wood_pickaxe": "bronzepickaxe",
-    "stone_pickaxe": "bonepickaxe",
+    # stone_pickaxe: GENERATED sheet (make_held_sheet.py) from the user's
+    # recolored stone pickaxe icon — Kaetram ships no "stonepickaxe" sprite
+    # and the old bonepickaxe mapping read as a bone tool.
+    "stone_pickaxe": "stonepickaxe",
     "iron_pickaxe": "ironpickaxe",
     "gold_pickaxe": "goldpickaxe",
     "steel_pickaxe": "cobaltpickaxe",
