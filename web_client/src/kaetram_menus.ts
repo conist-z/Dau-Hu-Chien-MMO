@@ -505,7 +505,11 @@ export class Equipments extends Menu {
   private unequipCallback?: (slot: string) => void;
 
   constructor() {
-    super("#equipments", "#close-equipments", "#equipment-button");
+    // NO toggle button: #equipment-button on the hub bar now opens OUR
+    // OWN Equipment tab (web_client inventory panel) instead of this
+    // Kaetram menu (user: "icon mở trang bị của kaetram giờ thành mở
+    // trang bị của mình"). The menu itself stays reachable for parity.
+    super("#equipments", "#close-equipments");
     for (const key of [
       "helmet", "pendant", "arrows", "chestplate", "weapon", "shield",
       "ring", "armour-skin", "weapon-skin", "legplates", "cape", "boots",

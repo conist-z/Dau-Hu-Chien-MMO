@@ -355,8 +355,8 @@ export class Hud {
         this.renderInventory();
       });
     });
-    // Legacy strip X (kept for DOM parity) closes the whole window.
-    document.getElementById("inv-close")!.addEventListener("click", () => this.toggleInventory(false));
+    // Legacy strip X removed from the DOM (user: only panel X buttons
+    // remain) — guard the binding so a missing element is not a crash.
     // Per-panel pixel X buttons (cover the X baked into each frame art).
     document.querySelectorAll<HTMLButtonElement>(".panel-close").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -765,6 +765,25 @@ export class Hud {
     this.renderInventory();
   }
 
+  /** Hub-bar armor icon: open the inv window straight on OUR Equipment
+   *  tab (replaces the Kaetram Equipments menu — user request). */
+  openEquipTab(): void {
+    this.invClosed = false;
+    this.craftClosed = false;
+    this.equipClosed = false;
+    this.stationOpen = false;
+    this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
+    if (this.invPanel.classList.contains("hidden")) {
+      this.applyTabLayout(false);
+      this.animateShow(this.invPanel);
+    }
+    document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
+    this.equipTab.classList.add("active");
+    this.applyTabLayout();
+    this.craftDetail.classList.toggle("hidden", true);
+    this.renderInventory();
+  }
+
   /** Set by main.ts: called when the WHOLE window closes (any path —
    *  X buttons, B key, station range exit) so the scene can un-suppress
    *  the station "E" bubble. */
@@ -846,17 +865,13 @@ export class Hud {
       this.applyTabLayout();
       this.renderInventory();
     } else if (which === "equip") {
-      // Equip X: hides the equipment panel ONLY — its own close flag (NOT
-      // craftClosed: sharing it made the craft-tab slide-up branch fire and
-      // re-show the old inv panel alone under the equip tab).
+      // Equip X: on the EQUIP tab the equipment panel IS the only panel —
+      // closing it closes the whole window including the tab strip (user:
+      // "tắt lại thì tab Túi đồ Chế tạo Trang bị tắt đi luôn").
       this.equipClosed = true;
-      this.applyTabLayout(false);
-      if (this.invClosed) {
-        this.stationOpen = false;
-        this.animateHide(this.invPanel);
-        this.onPanelWindowClosed?.();
-        return;
-      }
+      this.stationOpen = false;
+      this.animateHide(this.invPanel);
+      this.onPanelWindowClosed?.();
     } else {
       this.craftClosed = true;
       // Craft X on the craft tab: craft hides, the bag slides up. The tab
@@ -3243,10 +3258,15 @@ export class Hud {
           this.chatInput.focus();
           break;
         case "profile-button":
-          // The Equipments menu binds #equipment-button (inside the profile
-          // page, original behavior); the main-bar profile button is driven
-          // here — a single extra trigger, no double-toggle.
+          // The Kaetram Equipments menu was the profile page's default view
+          // (original behavior — main-bar profile button).
           this.kEquipments.toggle();
+          break;
+        case "equipment-button":
+          // OUR Equipment tab (user: hub armor icon opens our panel now):
+          // close any Kaetram page, then open the inv window on the equip tab.
+          this.kaetramHideAll();
+          this.openEquipTab();
           break;
         case "guildss-button": case "friends-button":
           this.toast("Chưa có hệ thống này trên server.");
