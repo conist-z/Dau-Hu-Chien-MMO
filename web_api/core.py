@@ -1154,7 +1154,7 @@ class WebHub:
             stamp = "meteor-fix-4d16382"
             await self.send_to_client_conn(sess, {
                 "type": MSG_PUSH,
-                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /mac leather|off (mặc giáp da demo), /meteor [rand] (admin — gọi thiên thạch)"
+                "message": "Lệnh: /help, /cuahang <hang|rung|ban do>, /khutraodoi in|out, /kill (tự chết để test hồi sinh), /weather, /time, /setweather <key> (admin), /give <item> [số lượng] (admin), /spawnmob <kind> [số lượng] (admin), /mac leather|off (mặc giáp da demo), /meteor [rand] (admin — gọi thiên thạch)"
                 + f" — build {stamp} ({_dt.datetime.now().strftime('%H:%M')})",
             })
         elif cmd == "cuahang":
@@ -1235,6 +1235,8 @@ class WebHub:
             await self._cmd_spawnmob(sess, args)
         elif cmd == "mac":
             await self._cmd_mac(sess, args)
+        elif cmd == "kill":
+            await self._cmd_kill(sess)
         elif cmd == "meteor":
             # /meteor       -> hits the caller's tile exactly
             # /meteor rand  -> hits a tile 6-12 tiles away from the caller
@@ -1325,6 +1327,33 @@ class WebHub:
         label = f"{it.name} x{qty}" if it is not None else f"{item_id} x{qty}"
         await self.send_to_client_conn(sess, {
             "type": MSG_PUSH, "message": f"🎁 Đã nhận {label} vào túi.",
+            "kind": "system_private",
+        })
+
+    async def _cmd_kill(self, sess: WebSession) -> None:
+        """/kill: drop the caller's HP to 0 — the standard death flow (respawn
+        countdown, drops-free) runs so the loading/respawn veil can be tested
+        without waiting for a mob. Preview-helper, like /spawnmob."""
+        rt = self.manager.get_runtime_for(sess.channel_id, sess.user_id)
+        if rt is None:
+            return
+        player = rt.state.get_player(sess.user_id)
+        if player is None:
+            return
+        if not player.alive:
+            await self.send_to_client_conn(sess, {
+                "type": MSG_PUSH, "message": "Bạn đã chết sẵn rồi.",
+                "kind": "system_private",
+            })
+            return
+        player.hp = 0
+        player.visible = False
+        player.dead_until = time.time() + 5.0
+        player.death_reason = "tự kết thúc để xem màn hồi sinh"
+        self.manager._schedule_respawn(rt, sess.user_id)
+        self.manager._schedule_save(rt, player)
+        await self.send_to_client_conn(sess, {
+            "type": MSG_PUSH, "message": "☠️ Tự tử để test màn hồi sinh…",
             "kind": "system_private",
         })
 
