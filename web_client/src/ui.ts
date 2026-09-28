@@ -157,6 +157,9 @@ interface DragSrc {
 }
 
 export class Hud {
+  /** Warp region click (UNLOCKED regions only — locked ones never fire,
+   *  see Warp.handleWarp). Assigned in main.ts → net.chatCommand travel. */
+  onWarpRegion: ((id: number) => void) | null = null;
   private clockEl = document.getElementById("hud-clock")!;
   private weatherEl = document.getElementById("hud-weather")!;
   private pingEl = document.getElementById("hud-ping")!;
@@ -3083,7 +3086,10 @@ export class Hud {
     this.kLeaderboards = new Leaderboards([
       { name: "Người chơi online", rows: [] },
     ]);
-    this.kWarp = new Warp();
+    // WARP REGIONS → REAL TRAVEL (routed through the onWarpRegion hook,
+    // assigned in main.ts where `net` + the live map id live): only the
+    // unlocked regions act — 10 (khu chợ du hành giả) and 12 (thảo nguyên).
+    this.kWarp = new Warp((id) => this.onWarpRegion?.(id));
     this.kEquipments = new Equipments();
     for (const m of [this.kQuests, this.kAchievements, this.kSettings, this.kLeaderboards, this.kWarp, this.kEquipments])
       this.kaetramMenus.register(m);

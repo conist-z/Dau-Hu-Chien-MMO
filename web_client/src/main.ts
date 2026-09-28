@@ -940,6 +940,24 @@ hud.onThrow = (itemId, qty) => {
   hud.toast(`Đã vứt ${itemId}×${qty}`);
 };
 
+// WARP REGIONS → REAL TRAVEL: the map frame's unlocked icons drive the
+// same server chat-command plumbing the manual commands use (the welcome
+// re-send on map switch makes the transition a normal one):
+// - 10 "Khu chợ cho du hành giả" = /khutraodoi in|out toggle (lobbytrade).
+// - 12 "Thảo nguyên" = back to the big map via fast travel.
+hud.onWarpRegion = (id) => {
+  if (id === 10) {
+    const inLobby = welcome?.map.id === "lobbytrade";
+    net.chatCommand(inLobby ? "/khutraodoi out" : "/khutraodoi in");
+  } else if (id === 12) {
+    if (welcome?.map.id === "bigmap") {
+      hud.toast("Bạn đang ở Thảo nguyên (big map) rồi.");
+    } else {
+      net.chatCommand("/cuahang ban do");
+    }
+  }
+};
+
 hud.setHooks(
   (itemId) => net.inventoryOp("use", { item_id: itemId }),
   (text) => {

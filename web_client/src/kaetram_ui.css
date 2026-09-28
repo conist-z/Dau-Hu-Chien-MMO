@@ -2428,6 +2428,57 @@
 #hud-hub #warp11 { top: calc(111 / 180 * 100% - 16px); left: calc(86 / 270 * 100% - 16px); }
 #hud-hub #warp12 { top: calc(66 / 180 * 100% - 16px); left: calc(119 / 270 * 100% - 16px); }
 #hud-hub #warp13 { top: calc(85 / 180 * 100% - 16px); left: calc(247 / 270 * 100% - 16px); }
+/* ==== WARP ICONS v2: per-region pixel icons + LOCK OVERLAY ==========
+   Each warp gets its own heavily pixelated PNG (warpicons/N.png, one
+   8x8 pixel-grid motif per region) — the shared Kaetram mapicons
+   sheet is retired. Not-yet-built regions render dimmed under a
+   padlock badge (CSS only; the Warp handler refuses their clicks).
+   Unlocked today: 10 (khu chợ du hành giả) + 12 (thảo nguyên).
+   The !important neutralizes the stock sheet hover/active position
+   shifts (their sprite rows don't exist for single-file icons). ===== */
+#hud-hub #warp0, #hud-hub #warp1, #hud-hub #warp2, #hud-hub #warp3,
+#hud-hub #warp4, #hud-hub #warp5, #hud-hub #warp6, #hud-hub #warp7,
+#hud-hub #warp8, #hud-hub #warp9, #hud-hub #warp10, #hud-hub #warp11,
+#hud-hub #warp12, #hud-hub #warp13 {
+  background-size: 100% 100%;
+  background-position-x: 0 !important;
+  background-position-y: 0 !important;
+  transition: filter 0.12s;
+}
+#hud-hub #warp0 { background-image: url("/ui/kaetram/interface/warpicons/0.png"); }
+#hud-hub #warp1 { background-image: url("/ui/kaetram/interface/warpicons/1.png"); }
+#hud-hub #warp2 { background-image: url("/ui/kaetram/interface/warpicons/2.png"); }
+#hud-hub #warp3 { background-image: url("/ui/kaetram/interface/warpicons/3.png"); }
+#hud-hub #warp4 { background-image: url("/ui/kaetram/interface/warpicons/4.png"); }
+#hud-hub #warp5 { background-image: url("/ui/kaetram/interface/warpicons/5.png"); }
+#hud-hub #warp6 { background-image: url("/ui/kaetram/interface/warpicons/6.png"); }
+#hud-hub #warp7 { background-image: url("/ui/kaetram/interface/warpicons/7.png"); }
+#hud-hub #warp8 { background-image: url("/ui/kaetram/interface/warpicons/8.png"); }
+#hud-hub #warp9 { background-image: url("/ui/kaetram/interface/warpicons/9.png"); }
+#hud-hub #warp10 { background-image: url("/ui/kaetram/interface/warpicons/10.png"); }
+#hud-hub #warp11 { background-image: url("/ui/kaetram/interface/warpicons/11.png"); }
+#hud-hub #warp12 { background-image: url("/ui/kaetram/interface/warpicons/12.png"); }
+#hud-hub #warp13 { background-image: url("/ui/kaetram/interface/warpicons/13.png"); }
+#hud-hub .map-button:hover { filter: brightness(1.25); }
+#hud-hub .map-button:active { filter: brightness(0.9); }
+#hud-hub .map-button.locked,
+#hud-hub .map-button.locked:hover,
+#hud-hub .map-button.locked:active {
+  cursor: not-allowed;
+  filter: grayscale(1) brightness(0.55);
+}
+#hud-hub .map-button.locked::after {
+  content: "\1F512"; /* 🔒 — visible lock over the dimmed region icon */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
 @media (--portrait) {#hud-hub #map-frame {
     font-size: 0.875em;
   }

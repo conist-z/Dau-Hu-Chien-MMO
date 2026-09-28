@@ -400,12 +400,52 @@ export class Leaderboards extends Menu {
 }
 
 // ---------- Warp / map frame (warp.ts parity) ----------
+
+/** The 14 world-map regions (user-defined). `locked` = the region's map
+ *  doesn't exist yet — the icon renders dimmed + padlocked and refuses
+ *  clicks. Unlocked today: 10 (khu chợ du hành giả → big map) and
+ *  12 (thảo nguyên → khu trao đổi). Flip `locked` as maps ship. */
+export interface WarpRegion {
+  id: number;
+  name: string;
+  locked: boolean;
+}
+
+export const WARP_REGIONS: WarpRegion[] = [
+  { id: 0, name: "Vùng đất núi lửa", locked: true },
+  { id: 1, name: "Đảo núi lửa", locked: true },
+  { id: 2, name: "Đảo bình minh", locked: true },
+  { id: 3, name: "Đảo hoàng hôn", locked: true },
+  { id: 4, name: "Vương quốc Bách Miêu", locked: true },
+  { id: 5, name: "Vùng lương thực", locked: true },
+  { id: 6, name: "Dãy núi", locked: true },
+  { id: 7, name: "Núi dungeon", locked: true },
+  { id: 8, name: "Đảo hải đăng", locked: true },
+  { id: 9, name: "Khu chợ", locked: true },
+  { id: 10, name: "Khu chợ cho du hành giả", locked: false },
+  { id: 11, name: "Rừng", locked: true },
+  { id: 12, name: "Thảo nguyên", locked: false },
+  { id: 13, name: "Đảo sa mạc", locked: true },
+];
+
 export class Warp extends Menu {
   private list: NodeListOf<HTMLElement>;
 
   constructor(private onSelectCallback?: (id: number) => void) {
     super("#map-frame", "#close-map-frame", "#warp-button");
     this.list = document.querySelectorAll(".map-button")!;
+    for (const element of this.list) {
+      const id = parseInt(element.id.replace("warp", ""));
+      const region = WARP_REGIONS[id];
+      if (!region) continue;
+      if (region.locked) {
+        element.classList.add("locked");
+        element.title = `${region.name} (chưa mở)`;
+      } else {
+        element.classList.remove("locked");
+        element.title = region.name;
+      }
+    }
     for (const element of this.list)
       element.addEventListener("click", () => this.handleWarp(element));
   }
@@ -413,6 +453,9 @@ export class Warp extends Menu {
   private handleWarp(element: HTMLElement): void {
     const id = parseInt(element.id.replace("warp", ""));
     if (isNaN(id)) return;
+    // LOCK GATE: not-yet-built regions swallow the click (the dimmed
+    // + padlocked icon already signals it; no menu close either).
+    if (WARP_REGIONS[id]?.locked) return;
     this.onSelectCallback?.(id);
     this.hide();
   }
