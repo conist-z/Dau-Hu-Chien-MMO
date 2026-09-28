@@ -256,6 +256,18 @@ export class Hud {
   // bag<->grid delta.
   private matGrid: (Stack | null)[] = Array(9).fill(null);
   private parkedResult: { id: string; qty: number } | null = null;
+  /** COLLECT RACE GUARD (user 29/09: "ô nhận đồ lấy mãi không hết"): the
+   *  20 Hz snapshot still carries the PRE-collect craft_result during the
+   *  collect-op's round-trip, and setCraftResult used to resurrect it right
+   *  after the optimistic clear — the slot refilled, a second click merged
+   *  the stack into the bag AGAIN (a UI-side dupe). While a collect is
+   *  in flight, a server result that is NOT larger than the collected
+   *  stack (same id, qty <= collected) is a stale echo and is dropped.
+   *  Accepted only: null (collect confirmed), a different id (fresh craft
+   *  on a now-empty slot), or a qty > collected (collect landed + a new
+   *  craft stacked on top). The guard self-expires (COLLECT_GUARD_TTL). */
+  private pendingCollect: { id: string; qty: number; at: number } | null = null;
+  private static readonly COLLECT_GUARD_TTL = 5000;
   private drag: DragSrc | null = null;
   /** Set by main.ts: throws a stack into the world (drop entity). */
   onThrow: ((itemId: string, qty: number) => void) | null = null;
@@ -648,8 +660,28 @@ export class Hud {
 
   /** Server-synced parked craft RESULT (the result slot is server truth).
    *  The material grid itself is a local buffer and is never overwritten
-   *  by server echoes. */
+   *  by server echoes. Stale pre-collect echoes are dropped while a
+   *  collect is in flight (see pendingCollect). */
   setCraftResult(result: { id: string; qty: number } | null): void {
+    const pc = this.pendingCollect;
+    if (pc) {
+      const expired = Date.now() - pc.at > Hud.COLLECT_GUARD_TTL;
+      if (result === null) {
+        // Collect confirmed server-side: clear the guard.
+        this.pendingCollect = null;
+      } else if (expired || result.id !== pc.id || result.qty > pc.qty) {
+        // A NEW craft landed (bigger stack / different item) or the guard
+        // expired: accept and clear.
+        this.pendingCollect = null;
+      } else {
+        // Stale pre-collect echo (same id, qty <= what we collected):
+        // keep the slot EMPTY, never resurrect the collected stack.
+        if (this.inventoryOpen && this.craftTab.classList.contains("active")) {
+          this.renderCraftPanel();
+        }
+        return;
+      }
+    }
     this.parkedResult = result;
     if (this.inventoryOpen && this.craftTab.classList.contains("active")) {
       this.renderCraftPanel();
@@ -660,6 +692,13 @@ export class Hud {
    *  set when the output was DRAGGED onto a specific bag slot). */
   onCollectResult(cb: (slot: number | null) => void): void {
     this.onCollect = cb;
+  }
+
+  /** The server REFUSED our collect (empty_result — the optimistic UI had
+   *  already emptied the slot). Drop the race guard so the next server
+   *  craft_result echo can repaint the slot honestly. */
+  notifyCollectRefused(): void {
+    this.pendingCollect = null;
   }
 
   get gateVisible(): boolean {
@@ -1359,6 +1398,10 @@ export class Hud {
     if (!this.parkedResult) return;
     const res = { ...this.parkedResult };
     this.parkedResult = null;
+    // COLLECT RACE GUARD: remember what we are collecting so the stale
+    // pre-collect craft_result echoes (20 Hz snapshots in flight) cannot
+    // resurrect the stack on the slot (the "lấy mãi không hết" dupe).
+    this.pendingCollect = { id: res.id, qty: res.qty, at: Date.now() };
     if (this.craftTab.classList.contains("active")) this.renderCraftPanel();
     if (slot !== null) {
       // Drop-to-slot: the cell the player chose, verbatim. Occupied cells
