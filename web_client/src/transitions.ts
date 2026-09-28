@@ -234,19 +234,21 @@ export class TravelVeil {
       vid.pause();
       vid.currentTime = 0;
       vid.style.opacity = "1";
-      // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS: run the video at a rate
-      // that lands the bar near-full when MIN_LOAD elapses, and PARK it
-      // there — playing on reached the webm's broken tail: only ~3.6s of
-      // the declared 5.1s decodes and the LAST playable frame's bar is
-      // back at 0% (the loop-restart frame) — the "0% sau khi chạy 100%"
-      // bug (user, twice).
-      // ROBUST PARK: arm the clamp UNCONDITIONALLY (videoDur can be 0 when
-      // metadata lags) and re-seat on BOTH timeupdate AND ended — at 3x
-      // playback a timeupdate can skip straight past the target to
-      // 'ended', which parked the video on the 0% frame until exit.
-      const target = 3.3; // ~frame 66: bar ~85% full, safely inside the span
-      const rate = target / (TravelVeil.MIN_LOAD_MS / 1000);
-      vid.playbackRate = Math.min(3, Math.max(1, rate));
+      // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS into the broken tail.
+      // Webm facts (probed frame-by-frame): declared 5.1s but the tail is
+      // broken — the last PLAYABLE frame is t=3.5s (bar just full) and the
+      // wrap frame after it is BLANK/0% — the "0% sau khi chạy 100%" bug
+      // (user, twice). Earlier attempts still leaked because (a) timeupdate
+      // only fires every ~250ms REAL time → at rate 1.5 the video overshoots
+      // the target by up to 0.37s INTO the broken zone, and (b) SEEKING
+      // back inside a broken webm can silently fail (stays on the bad
+      // frame).
+      // FIX: PLAY SLOW, PARK EARLY, NEVER SEEK. rate 1.25 caps the worst
+      // timeupdate overshoot at 0.31s; the pause target 3.0s (bar ~85%)
+      // therefore lands at worst ~3.31s — safely inside the playable span
+      // WITHOUT any seeking. 'ended' is a belt-and-braces last resort.
+      const target = 3.0; // ~frame 60: bar ~85% full
+      vid.playbackRate = 1.25;
       const hold = () => {
         if (this.state !== "loading") {
           vid.removeEventListener("timeupdate", hold);
@@ -254,8 +256,9 @@ export class TravelVeil {
           return;
         }
         if (vid.ended || vid.currentTime >= target) {
+          // Pause ONLY — seeking inside the broken webm showed the bad
+          // frame again; the paused ~85% bar is exactly what we want.
           vid.pause();
-          try { vid.currentTime = target; } catch { /* already idle */ }
         }
       };
       vid.addEventListener("timeupdate", hold);
