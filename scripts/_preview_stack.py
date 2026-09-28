@@ -153,6 +153,7 @@ class PreviewStack(LocalStack):
             "state": self._cmd_state,
             # player admin (user 28/09 overhaul)
             "heal": self._cmd_heal,
+            "hurt": self._cmd_hurt,
             "kill": self._cmd_kill,
             "respawn": self._cmd_respawn,
             "status": self._cmd_status,
@@ -349,6 +350,22 @@ class PreviewStack(LocalStack):
         player.last_damaged_at = None
         player.regen_bank = 0.0
         await self._send(cid, {"type": "push", "message": "[preview] ❤️ Full HP/mana/stamina + xoá sạch debuff."})
+
+    async def _cmd_hurt(self, cid: int, uid: int, rt, value) -> None:
+        """Set HP = ratio * max (default 0.15) — the low-HP bloody screen
+        gate lives CLIENT-side (hp/max_hp <= 0.15 in the web client), so
+        this only sets the truth and lets the client react."""
+        player = self._player_or_msg(cid, uid, rt)
+        if player is None:
+            return
+        try:
+            ratio = float(value) if value not in (None, "") else 0.15
+        except (TypeError, ValueError):
+            ratio = 0.15
+        ratio = max(0.0, min(1.0, ratio))
+        player.hp = max(1, round(player.max_hp * ratio))  # floor 1: stay alive
+        player.last_damaged_at = time.time()  # hold off regen so it sticks
+        await self._send(cid, {"type": "push", "message": f"[preview] 🩸 HP = {player.hp}/{player.max_hp} ({ratio:.0%})."})
 
     async def _cmd_kill(self, cid: int, uid: int, rt, value) -> None:
         player = self._player_or_msg(cid, uid, rt)

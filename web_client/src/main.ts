@@ -11,6 +11,7 @@ import { Hud } from "./ui";
 import { weatherFx } from "./weather";
 import { meteorFx } from "./meteors";
 import { previewPanel } from "./preview_panel";
+import { lowHpFx } from "./lowhp";
 // Day/night tint: kept as its own DOM canvas BUT throttled to 8 Hz + dpr 1 +
 // duplicate-frame skip (daynight.ts) — the per-rAF full-window repaint was
 // the PC-only lag. Same visual as before.
@@ -201,6 +202,10 @@ scene.onPlayerClick = (p) => showProfilePopup(p);
 if (perf.weather) {
   weatherFx.mount(document.getElementById("game-root")!);
 }
+// Low-HP bloody screen (≤15% HP): DOM overlay trên canvas, dưới HUD — luôn
+// mount (không gate perf.weather vì nó là trạng thái người chơi, không phải
+// hiệu ứng thời tiết).
+lowHpFx.mount(document.getElementById("game-root")!);
 // Weather camera hook: rain/snow/CLOUD SHADOWS anchor to the MAP (world
 // space) — they slide across the viewport as the player walks instead of
 // being glued to the screen. Without this hook camScroll stays {0,0} and
@@ -576,6 +581,10 @@ const net = new Net({
     // Death veil: server ignores our inputs while dead; the scene freezes
     // prediction and this overlay explains why (5s respawn). The iris veil
     // shares the moment (close on death, open on respawn).
+    // Low-HP bloody screen gate (user 29/09): ≤15% bật (fade-in + tim đập),
+    // hồi trên 18% hoặc chết thì tắt (fade-out). Debounce band chống flicker
+    // khi regen nhấp nhô quanh ngưỡng — chi tiết trong lowhp.ts.
+    lowHpFx.setRatio(frame.self.hp, frame.self.max_hp, !!frame.self.dead);
     hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
     travelVeil.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
     if (frame.self.dead) input.clearKeys();
@@ -700,6 +709,14 @@ const net = new Net({
     // inventory delta repaints the truth. Toasting them was the "bad other"
     // spam during fast drags.
     if (code === "bad_order" || code === "bad_split" || code === "bad_slot") {
+      return;
+    }
+    // COLLECT refused (empty_result): the optimistic UI already emptied the
+    // result slot; clear the race guard so the next craft_result echo (or a
+    // fresh craft) repaints honestly, and let the next inventory delta
+    // reconcile the bag (nothing was gained server-side).
+    if (code === "empty_result") {
+      hud.notifyCollectRefused();
       return;
     }
     // Purse withdraw refused (empty counter or full bag): silent — the

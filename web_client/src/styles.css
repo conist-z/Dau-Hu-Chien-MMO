@@ -60,6 +60,124 @@ html, body {
   pointer-events: none;
   z-index: 2;
 }
+
+/* Low-HP "bloody screen" (cảnh báo ngưỡng 15%, user 29/09): overlay DOM
+   3 lớp từ pack status_effect_assets_pixel_32x32_v3 (Drip_1 + Blood_Drops +
+   Veins_1, crop + downscale -> ui/fx/bloody/*.webp) VÀNG layer tinh tế:
+   opacity thấp (peak ~0.26), vị trí mép màn hình, KHÔNG che tầm nhìn như
+   frame Effect_N nguyên bản (che 40-64% màn). Cả layer pointer-events:none
+   (tương tự weather-fx) + z-index 1: trên game canvas, DƯỚI #overlay HUD
+   (2), dưới mobile-controls (1 cùng tầng — DOM order sau nên vẫn vẽ trên,
+   mobile controls là nút đục riêng lẻ nên không bị che lấp chức năng).
+   Hiện bằng .on (fade-in ~900ms), tắt bỏ .on (fade-out chậm ~1400ms),
+   tim đập bằng keyframes pulse (scale 1.02) gắn biến --beat-s
+   (chu kỳ ngắn dần khi HP càng thấp). */
+#lowhp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none !important;
+  opacity: 0;
+  transition: opacity 1.4s ease; /* rời khỏi ngưỡng: fade-out chậm, dịu */
+}
+#lowhp-overlay.on {
+  opacity: 1; /* cấu trúc .lowhp-vein giữ alpha thấp — layer tổng mỏng */
+  transition: opacity 0.9s ease; /* vào ngưỡng: fade-in nhanh hơn chút */
+}
+#lowhp-overlay > * {
+  position: absolute;
+  pointer-events: none;
+  transform-origin: center center;
+}
+/* Lớp 1: vignette đỏ (radial-gradient — không tốn thêm byte asset, nền móng
+   cho nhịp tim). Heartbeat = pulse ĐỘ ĐẬM (opacity) + phồng cực nhẹ của
+   riêng lớp gradient mượt — KHÔNG scale container (bug cũ 29/09: scale cả
+   overlay làm mép ảnh máu nhấp nhô trông ngu). */
+.lowhp-vein {
+  inset: -2%;
+  background:
+    radial-gradient(ellipse 75% 75% at 50% 50%,
+      transparent 38%, rgba(120, 8, 14, 0.14) 68%, rgba(96, 4, 10, 0.34) 100%),
+    linear-gradient(rgba(120, 8, 14, 0.05), rgba(120, 8, 16, 0.05));
+  mix-blend-mode: multiply;
+  opacity: 0.85;
+}
+/* Lớp 2: texture gân máu (Veins_1) — rất mờ, phập phồng theo nhịp tim để
+   cảm giác "máu dồn"; trôi cực chậm cho bức ảnh sống thay vì tĩnh. */
+.lowhp-veins {
+  inset: 0;
+  background: url("/ui/fx/bloody/veins.webp") center / cover no-repeat;
+  mix-blend-mode: multiply;
+  opacity: 0.11;
+}
+/* Lớp 3: máu chảy từ mép trên (Drip_1) — TỰ NHẤP NHÔ chảy xuống (ooze)
+   chậm 7s qua lại: đủ thấy di chuyển, không loop giật cục. */
+.lowhp-drip {
+  inset: 0 0 auto 0;
+  height: min(34vh, 368px); /* giữ tỷ lệ gốc 1200x330 khi co giãn */
+  width: 100%;
+  background: url("/ui/fx/bloody/drip_1.webp") top center / 100% auto no-repeat;
+  opacity: 0.3;
+}
+/* Lớp 4: giọt văng nhỏ rải rác (Blood_Drops) — trôi chéo rất chậm. */
+.lowhp-drops {
+  inset: 0;
+  background: url("/ui/fx/bloody/drops.webp") center / cover no-repeat;
+  opacity: 0.14;
+  mix-blend-mode: multiply;
+}
+/* CHUYỂN ĐỘNG — chỉ chạy khi .on (tắt = 0 animation ẩn). Nhịp tim lub-dub
+   2 nhịp rồi nghỉ: --beat-s do TS set theo HP (1.15s ở 15%, ~0.75s gần 0). */
+#lowhp-overlay.on .lowhp-vein {
+  animation: lowhp-throb var(--beat-s, 1.15s) infinite;
+}
+#lowhp-overlay.on .lowhp-veins {
+  /* Keyframes RIÊNG (throb-veins): throb thường set opacity 0.78-1.0 sẽ đè
+     mất opacity gốc 0.11 của lớp này — bug 29/09 khiến gân máu đậm như sơn. */
+  animation:
+    lowhp-throb-veins var(--beat-s, 1.15s) infinite,
+    lowhp-drift 13s ease-in-out infinite alternate;
+}
+#lowhp-overlay.on .lowhp-drip {
+  animation: lowhp-ooze 7s ease-in-out infinite alternate;
+}
+#lowhp-overlay.on .lowhp-drops {
+  animation: lowhp-drift-flip 12s ease-in-out infinite alternate;
+}
+@keyframes lowhp-throb {
+  0%   { opacity: 0.78; }
+  10%  { opacity: 1; }     /* nhịp một (mạnh) */
+  22%  { opacity: 0.84; }
+  32%  { opacity: 0.94; }  /* nhịp hai (yếu hơn) */
+  48%  { opacity: 0.78; }
+  100% { opacity: 0.78; }  /* nghỉ giữa hai lần đập */
+}
+@keyframes lowhp-throb-veins {
+  0%   { opacity: 0.09; }
+  10%  { opacity: 0.15; }  /* nhịp một */
+  22%  { opacity: 0.10; }
+  32%  { opacity: 0.135; } /* nhịp hai */
+  48%  { opacity: 0.09; }
+  100% { opacity: 0.09; }
+}
+@keyframes lowhp-ooze {
+  from { transform: translateY(-0.6%); }
+  to   { transform: translateY(1.6%); }
+}
+@keyframes lowhp-drift {
+  from { transform: translate(-0.4%, -0.5%); }
+  to   { transform: translate(0.5%, 0.9%); }
+}
+@keyframes lowhp-drift-flip {
+  from { transform: scaleX(-1) translate(-0.4%, -0.5%); }
+  to   { transform: scaleX(-1) translate(0.5%, 0.9%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #lowhp-overlay.on .lowhp-vein,
+  #lowhp-overlay.on .lowhp-veins,
+  #lowhp-overlay.on .lowhp-drip,
+  #lowhp-overlay.on .lowhp-drops { animation: none; }
+}
 #overlay > * { pointer-events: auto; }
 
 .hud-box {

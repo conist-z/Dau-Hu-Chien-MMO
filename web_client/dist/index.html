@@ -10,8 +10,8 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-CAlQADPQ.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BbekIFRK.css">
+    <script type="module" crossorigin src="./assets/index-j6-UWBp0.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cyloq5Q-.css">
   </head>
   <body>
     <!-- Landscape lock (mobile): covers the screen when a touch device is
@@ -451,12 +451,13 @@
         </div>
         <!-- Inventory + Craft panels (pixel asset panels, handoff geometry) -->
         <div id="inv-panel" class="hidden">
-          <!-- Tab strip mirrors the pixel look but stays plain DOM (no panel art). -->
+          <!-- Tab strip mirrors the pixel look but stays plain DOM (no panel art).
+               NO strip-level ✕ (user: "chỉ giữ lại dấu x của mấy cái panel") —
+               each panel's own pixel X closes it (and the whole window on equip). -->
           <div class="inv-tabs">
             <button class="inv-tab active" data-tab="items" type="button">Túi đồ</button>
             <button class="inv-tab" data-tab="craft" type="button">Chế tạo</button>
             <button class="inv-tab" data-tab="equip" type="button">Trang bị</button>
-            <button class="inv-close" id="inv-close" type="button">✕</button>
           </div>
           <!-- INVENTORY (V5 frame_01): 98×101 frame, 20 slots 5×4 at
                (10,17) pitch 16, currency overlays at kit bboxes -->
