@@ -947,7 +947,7 @@ export class Hud {
         im.dataset.item = stem;
         slot.appendChild(im);
         slot.classList.add("has-item");
-        slot.title = stem;
+        slot.title = this.itemName(stem);
         slot.addEventListener("mousedown", (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -982,7 +982,7 @@ export class Hud {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
         qty: st && st.qty > 1 ? String(st.qty) : "",
-        title: st ? st.id : undefined,
+        title: st ? this.itemName(st.id) : undefined,
       });
       if (st && ARMOR_ITEM_IDS.has(st.id)) slot.classList.add("icon-armor");
       slot.dataset.slot = String(i);
@@ -1647,7 +1647,7 @@ export class Hud {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
         qty: st ? String(st.qty) : "",
-        title: st ? st.id : undefined,
+        title: st ? this.itemName(st.id) : undefined,
       });
       slot.dataset.slot = String(i);
       if (st) {
@@ -1677,7 +1677,7 @@ export class Hud {
       iconUrl: this.parkedResult ? itemIconUrl(this.parkedResult.id) : undefined,
       emoji: this.parkedResult ? iconFor(this.parkedResult.id, this.itemEmojis) : "",
       qty: this.parkedResult ? String(this.parkedResult.qty) : "",
-      title: this.parkedResult ? this.parkedResult.id : undefined,
+      title: this.parkedResult ? this.itemName(this.parkedResult.id) : undefined,
     });
     outSlot.classList.add("result");
     if (this.parkedResult) {

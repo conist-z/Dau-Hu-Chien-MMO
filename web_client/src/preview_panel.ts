@@ -17,7 +17,8 @@
 
 type Cmd =
   | "clock" | "meteor" | "weather" | "zombies" | "animals" | "map"
-  | "state" | "bite" | "heal" | "kill" | "respawn" | "status" | "tp";
+  | "state" | "bite" | "heal" | "kill" | "respawn" | "status" | "tp"
+  | "hurt"; // 🩸 Nặng Má: HP% để thử bloody screen (main.ts lowHpFx)
 
 interface PanelHooks {
   send: (frame: Record<string, unknown>) => void;
@@ -195,6 +196,8 @@ export class PreviewPanel {
     row(me);
     btn(me, "Rail demo", () => this.startStatusDemo(), "#2a2a3a");
     btn(me, "❤️ Hồi full", () => this.send("heal"), "#1a3a1a");
+    // 🩸 Nặng Má: HP = 15% — ngưỡng bật bloody screen (xem main.ts lowHpFx).
+    btn(me, "🩸 Nặng Má", () => this.send("hurt", "0.15"), "#3a1418");
     btn(me, "☠️ Chết", () => this.send("kill"), "#5a1a1a");
     btn(me, "✨ Hồi sinh", () => this.send("respawn"), "#1a2a52");
     row(me);
