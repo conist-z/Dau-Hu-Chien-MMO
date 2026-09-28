@@ -32,6 +32,7 @@ interface MobSheetInfo {
    * flipX only for leftward facing. */
   singleFacing?: boolean;
   /** Left-facing native art (the bird): flipX when facing RIGHT instead. */
+  /** Kept for backward compat; no sheet uses it since the 29/09 bird fix. */
   flipFacing?: boolean;
   /** Displayed ART height (px): the verbatim pack cell is mostly
    * transparent around the animal — the HP bar anchors to this, not `size`. */
@@ -140,37 +141,41 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // empty transparent cell top (bear's cell is 2 tiles tall).
   bunny: {
     texKey: "mob-bunny", size: 32, artH: 8, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    // Frame lengths = REAL opaque cells in assets/mobs/bunny.png (a loop past
+    // the last packed frame renders an EMPTY cell — the "blink" bug).
+    rows: { atk: { right: [0, 3], up: [0, 3], down: [0, 3] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   deer: {
     texKey: "mob-deer", size: 48, artH: 21, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   deer2: {
     texKey: "mob-deer2", size: 64, artH: 34, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   bird: {
-    // LEFT-facing native art (MiniBird beak points left) — everything else
-    // in this pack faces right. flipFacing flips the convention below.
-    texKey: "mob-bird", size: 24, artH: 11, cellW: 32, cellH: 32, singleFacing: true, flipFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    // Beak faces RIGHT natively (pixel-verified 29/09 — the old flipFacing
+    // flag double-mirrored it and the bird flew backwards). Frames: the
+    // pack keeps only 2 real fly frames (padded to 3) — looping 5 rendered
+    // two EMPTY cells = the bird vanished every flap ("nhấp nháy").
+    texKey: "mob-bird", size: 24, artH: 11, cellW: 32, cellH: 32, singleFacing: true,
+    rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 3], up: [1, 3], down: [1, 3] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   boar: {
     texKey: "mob-boar", size: 64, artH: 20, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   bear: {
     texKey: "mob-bear", size: 80, artH: 28, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   fox: {
     texKey: "mob-fox", size: 48, artH: 16, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   wolf: {
     texKey: "mob-wolf", size: 64, artH: 22, cellW: 32, cellH: 32, singleFacing: true,
-    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 5], up: [2, 5], down: [2, 5] } },
+    rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
 };
 const INTERP_BUFFER_MS = 120; // render ~2 ticks behind for smoothness
@@ -3824,16 +3829,13 @@ export class WorldScene extends Phaser.Scene {
   /** True when the zombie facing needs the RIGHT row mirrored (Kaetram
    * ships no left rows — left = flipX of right). Minifolks wildlife ships
    * ONE facing per sheet (rows up/down duplicate right), so up/down NEVER
-   * flips — only W/NW/SW mirrors. */
+   * flips — only W/NW/SW mirrors. (flipFacing was removed 29/09: pixel
+   * check proved the bird sheet faces RIGHT like every other animal — the
+   * flag double-mirrored it and the bird flew backwards.) */
   private zombieFlipX(facing: string, kind?: string): boolean {
     const f = (facing || "S").toUpperCase();
-    const left = f === "W" || f === "NW" || f === "SW";
-    const sheet = kind ? MOB_SHEETS[kind] : undefined;
-    // Left-facing native art (bird): mirror when moving RIGHT, not left —
-    // the old sheet-side flip double-mirrored and the bird flew backwards.
-    if (sheet?.flipFacing) return !left;
-    if (sheet?.singleFacing) return left;
-    return left;
+    if (kind) { /* kind kept in signature: call sites pass it for future per-sheet flips */ }
+    return f === "W" || f === "NW" || f === "SW";
   }
 
   /** Sheet-facing suffix (right/up/down) for a non-mirrored zombie facing. */
