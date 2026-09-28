@@ -19,10 +19,10 @@ class ItemDef:
 # and from NPC dialogue effects; this stays pure (no discord / no IO).
 ITEM_REGISTRY: Dict[str, ItemDef] = {
     "potion_hp": ItemDef(
-        "potion_hp", "Potion HP", "🧪", "consumable", {"heal_hp": 30}, "Hồi 30 HP"
+        "potion_hp", "Bình máu", "🧪", "consumable", {"heal_hp": 30}, "Hồi 30 HP"
     ),
     "potion_mp": ItemDef(
-        "potion_mp", "Potion Mana", "🔵", "consumable", {"heal_mp": 20}, "Hồi 20 Mana"
+        "potion_mp", "Bình mana", "🔵", "consumable", {"heal_mp": 20}, "Hồi 20 Mana"
     ),
     "key_stone": ItemDef("key_stone", "Chìa khoá đá", "🔑", "key", {}, "Mở cửa bí mật"),
     # Gathered from trees/bushes (game/resources.py); heals a little.
@@ -32,10 +32,10 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "plank": ItemDef("plank", "Ván gỗ", "🟫", "material", {}, "Nguyên liệu chế tạo"),
     "stick": ItemDef("stick", "Gậy", "🥢", "material", {}, "Nguyên liệu chế tạo"),
     "wood_axe": ItemDef(
-        "wood_axe", "Rìu gỗ", "🪓", "material", {}, "Chặt cây nhanh hơn (sắp dùng)"
+        "wood_axe", "Rìu gỗ", "🪓", "material", {}, "Chặt cây nhanh hơn"
     ),
     "wood_pickaxe": ItemDef(
-        "wood_pickaxe", "Cuốc gỗ", "⛏️", "material", {}, "Đập đá hiệu quả hơn (sắp dùng)"
+        "wood_pickaxe", "Cúp gỗ", "⛏️", "material", {}, "Đập đá hiệu quả hơn"
     ),
     "rotten_flesh": ItemDef("rotten_flesh", "Thịt thối", "🥩", "consumable", {"heal_hp": 5}, "Ăn được… nhưng chỉ hồi 5 HP"),
     "coin": ItemDef("coin", "Xu", "🪙", "material", {}, "Xu nhặt được từ zombie"),
@@ -44,9 +44,9 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     "iron_ore": ItemDef("iron_ore", "Quặng sắt", "🟤", "material", {}, "Nung ở lò ra thỏi sắt"),
     "gold_ore": ItemDef("gold_ore", "Quặng vàng", "🟡", "material", {}, "Nung ở lò ra thỏi vàng"),
     "coal": ItemDef("coal", "Than đá", "⚫", "material", {}, "Nhiên liệu tốt nhất cho lò nung"),
-    "iron_ingot": ItemDef("iron_ingot", "Thỏi sắt", "🥈", "material", {}, "Nguyên liệu tool sắt"),
-    "gold_ingot": ItemDef("gold_ingot", "Thỏi vàng", "🥇", "material", {}, "Nguyên liệu tool vàng"),
-    "steel_ingot": ItemDef("steel_ingot", "Thỏi thép", "🔩", "material", {}, "Nguyên liệu tool thép — hợp kim sắt + than"),
+    "iron_ingot": ItemDef("iron_ingot", "Thỏi sắt", "🥈", "material", {}, "Nguyên liệu chế tạo công cụ sắt"),
+    "gold_ingot": ItemDef("gold_ingot", "Thỏi vàng", "🥇", "material", {}, "Nguyên liệu chế tạo công cụ vàng"),
+    "steel_ingot": ItemDef("steel_ingot", "Thỏi thép", "🔩", "material", {}, "Nguyên liệu công cụ thép — hợp kim sắt + than"),
     "charcoal": ItemDef("charcoal", "Than củi", "🌑", "material", {}, "Nhiên liệu nung gỗ trong lò"),
     "raw_meat": ItemDef("raw_meat", "Thịt sống", "🍖", "consumable", {"heal_hp": 8}, "Ăn sống được, hồi 8 HP — nấu chín hồi nhiều hơn"),
     "cooked_meat": ItemDef(
@@ -57,7 +57,7 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
     # scripts/make_item_icons.py (mushroom6/1 + seed).
     "mushroom_purple": ItemDef("mushroom_purple", "Nấm tím", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
     "mushroom_brown": ItemDef("mushroom_brown", "Nấm nâu", "🍄", "material", {}, "Nấm dại mọc trên đồng"),
-    "seed": ItemDef("seed", "Hạt giống", "🌱", "material", {}, "Có thể trồng (sắp tới)"),
+    "seed": ItemDef("seed", "Hạt giống", "🌱", "material", {}, "Có thể trồng ra cây"),
     # --- ARMOR (Kaetram paperdoll layers) — type "equipment". slot rides in
     # effect["armor_slot"] (helmet|chest|legs); mặc qua panel Trang bị.
     "leatherhelmet": ItemDef(
@@ -92,7 +92,7 @@ for _mat in MATERIALS:
 
 # Scoopable-grass drop (game/terrain.py + terrain_rules.py).
 ITEM_REGISTRY.setdefault(
-    "dirt", ItemDef("dirt", "Đất", "🟤", "material", {}, "Nguyên liệu chế tạo tool đất")
+    "dirt", ItemDef("dirt", "Đất", "🟤", "material", {}, "Nguyên liệu chế tạo xẻng đất")
 )
 
 

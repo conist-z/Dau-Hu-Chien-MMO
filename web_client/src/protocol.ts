@@ -91,6 +91,9 @@ export interface WelcomePayload {
   near_station?: boolean;
   // Item id -> emoji (server registries; authoritative for icons).
   item_emojis: Record<string, string>;
+  // Item id -> display name (server registries; việt hoá tooltips/toasts).
+  // Optional: older servers omit it (client falls back to the raw id).
+  item_names?: Record<string, string>;
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
   // "x,y" -> [damage, needed(hardness)] — only DAMAGED blocks appear. The

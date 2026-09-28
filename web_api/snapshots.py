@@ -349,6 +349,21 @@ def _item_emojis_payload() -> Dict[str, str]:
     return out
 
 
+def _item_names_payload() -> Dict[str, str]:
+    """Item id -> DISPLAY NAME (việt hoá) for the web client's tooltips,
+    craft toasts and loot lines — straight from game/items.py + blocks.py.
+    Same registry pairing as _item_emojis_payload (they stay in sync)."""
+    from game.blocks import BLOCK_REGISTRY
+    from game.items import ITEM_REGISTRY
+
+    out: Dict[str, str] = {}
+    for iid, item in ITEM_REGISTRY.items():
+        out[iid] = item.name
+    for bid, block in BLOCK_REGISTRY.items():
+        out.setdefault(bid, block.name)
+    return out
+
+
 def _cave_ambience_payload(rt) -> dict:
     """Cave lighting data for the web client: glowing-mushroom light sources
     + the ambient darkness level.
@@ -562,6 +577,8 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "near_station": near_station,
         # Item id -> emoji for the client's inventory/hotbar icons.
         "item_emojis": _item_emojis_payload(),
+        # Item id -> display name (việt hoá) for tooltips + toasts.
+        "item_names": _item_names_payload(),
         # What THIS player holds right now (hotbar slot -> item id). The
         # client renders its own hand instantly from the local hotbar, but
         # the echo + snapshot copy keep reconnects/welcome in sync.

@@ -478,6 +478,7 @@ const net = new Net({
     scene.setSelfArmor(frame.armor ?? null);
     net.selectSlot(hud.currentSlot);
     hud.setItemEmojis(frame.item_emojis ?? {});
+    hud.setItemNames(frame.item_names ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);
@@ -991,9 +992,11 @@ hud.onCollectResult((slot) => net.craftCollect(slot));
 
 // EQUIPMENT panel: armor equip/unequip drags (server validates the slot
 // match and swaps the old piece back into the bag via the inventory delta).
-hud.onArmorEquip((action, slot, itemId) => {
+hud.onArmorEquip((action, slot, itemId, slotIndex) => {
   if (!slot) return;
-  net.inventoryOp("armor_equip", { action, slot, item_id: itemId });
+  // slotIndex (worn→bag drop): the piece lands EXACTLY on that bag cell —
+  // server skips the first-free-slot search, so nothing auto-reshuffles.
+  net.inventoryOp("armor_equip", { action, slot, item_id: itemId, slot_index: slotIndex });
 });
 
 // Slot selection: numbers 1-8, mouse wheel, or click — changes the held

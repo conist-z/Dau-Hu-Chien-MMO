@@ -247,6 +247,9 @@ export class Hud {
   // EVER received gets its proper icon; the static fallback below only
   // covers the bootstrap moment before welcome arrives.
   private itemEmojis: Record<string, string> = {};
+  // Server-driven DISPLAY-NAME map (welcome.item_names, việt hoá): powers
+  // slot tooltips + craft toasts; absent on old servers (falls back to id).
+  private itemNames: Record<string, string> = {};
   private recipes: RecipePayload[] = [];
   // MATERIAL grid state: SERVER truth (synced via craft_op mat_sync). The
   // client keeps a local mirror for instant painting; the server owns the
@@ -589,7 +592,7 @@ export class Hud {
     if (ok) {
       this.pendingCraftSnapshot = null;
       const r = this.recipes.find((x) => x.output.id === itemId);
-      this.toast(`Đã chế tạo ${r?.name ?? itemId} ×${qty}`);
+      this.toast(`Đã chế tạo ${r?.name ?? this.itemName(itemId)} ×${qty}`);
       // NO auto-collect: the output STAYS in the result slot — the player
       // sees it there and drags/clicks it back into the bag themselves.
     } else {
@@ -1480,7 +1483,9 @@ export class Hud {
         q.textContent = String(stack.qty);
         slot.appendChild(q);
       }
-      slot.title = stack.id;
+      // TOOLTIP = Vietnamese display name from the server (item_names);
+      // the raw id was an English tech string ("iron_ingot").
+      slot.title = this.itemName(stack.id);
       slot.classList.add("has-item");
     } else {
       if (icon) (icon as HTMLElement).style.display = "none";
@@ -2892,6 +2897,18 @@ export class Hud {
     this.itemEmojis = map ?? {};
     this.renderHotbar();
     if (this.inventoryOpen) this.renderInventory();
+  }
+
+  /** Authoritative id->display-name map (việt hoá) from the server. */
+  setItemNames(map: Record<string, string>): void {
+    this.itemNames = map ?? {};
+    if (this.inventoryOpen) this.renderInventory();
+  }
+
+  /** Vietnamese display name of an item id (falls back to the raw id). */
+  itemName(id: string | null | undefined): string {
+    if (!id) return "";
+    return this.itemNames[id] ?? id;
   }
 
   get recipeList(): RecipePayload[] {
