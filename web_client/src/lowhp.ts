@@ -14,16 +14,13 @@ export class LowHpFx {
   private static readonly EXIT = 0.18;
 
   /** Mount once into #game-root (after the canvas layers). Idempotent.
-   * 4 lớp: vignette gradient + gân máu + máu chảy mép trên + giọt văng. */
+   * 1 lớp gân máu (user 29/09 rút gọn: bỏ drip/drops — blob máu trông bẩn
+   * khi lên game thật; giữ veins + tim đập). */
   mount(parent: HTMLElement): void {
     if (this.root && this.root.parentElement === parent) return;
     const el = document.createElement("div");
     el.id = "lowhp-overlay";
-    el.innerHTML =
-      '<div class="lowhp-vein"></div>' +
-      '<div class="lowhp-veins"></div>' +
-      '<div class="lowhp-drip"></div>' +
-      '<div class="lowhp-drops"></div>';
+    el.innerHTML = '<div class="lowhp-veins"></div>';
     el.style.pointerEvents = "none";
     parent.appendChild(el);
     this.root = el;
