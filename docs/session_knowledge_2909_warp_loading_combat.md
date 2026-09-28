@@ -24,13 +24,20 @@
 - KHÔNG text "Bạn đã gục ngã…" — chết dùng đúng màn loading veil
   (`TravelVeil.setDead` label rỗng, `hud.setDead` force-hide overlay).
 
-## Loading veil "0% sau 100%" (báo cáo 2 LẦN)
+## Loading veil "0% sau 100%" (báo cáo 3 LẦN — fix cuối `8e7d66bc`)
 
-- `travel_wipe.webm` khai báo 5.1s nhưng **chỉ ~3.6s decode được** (72/102
-  frame); **frame cuối playable có bar = 0%** (frame lặp vòng).
-- Fix cuối (`6b31163c`): park CỨNG 3.3s, chặn CẢ `timeupdate` lẫn `ended`
-  (playback 3x có thể nhảy cóc thẳng tới ended). KHÔNG tính theo videoDur
-  (metadata lag/triệu).
+- `travel_wipe.webm` khai báo 5.1s nhưng **chỉ decode tới t=3.5s** (frame 71
+  là frame rỗng/wrap, bar 0%). Bar fill TUYẾN TÍNH frame 12→70 (đầy ở 70,
+  t=3.5s).
+- Thử 1+2 THẤT BẠI: park 96%/97% theo videoDur + park 3.3s chặn
+  timeupdate+ended — vẫn lộ 0% vì (a) `timeupdate` chỉ bắn mỗi ~250ms REAL →
+  rate cao overshoot tới 0.37s vào vùng hỏng; (b) **seek về trong webm hỏng
+  đuôi có thể FAIL NGẦM** — video vẫn nằm ở frame xấu.
+- **CÔNG THỨC CUỐI: PLAY SLOW + PARK EARLY + KHÔNG SEEK.** rate cố định
+  1.25 (overshoot tối đa 0.31s), pause ở 3.0s (bar ~85%) → vùng tới hạn
+  3.31s vẫn trong đoạn lành. `ended` là chốt an toàn cuối. Nếu sửa video
+  webm mới: phải kiểm tra decode-được-bao-lâu bằng OpenCV trước khi đẻ
+  logic theo thời lượng khai báo.
 
 ## Combat/harvest — TOOL THEO TAY CẦM (bug 29/09)
 
