@@ -2667,6 +2667,9 @@ class GameManager:
             # (apply_attack reads the held item for bare-hand vs weapon dmg).
             # The hotbar is a projection of each ordered bag — no separate map.
             rt.state.inventories = rt.inventories
+            # Held-slot mirror for the rule layer too (_held_item_id reads the
+            # SELECTED slot, not any weapon anywhere in the hotbar).
+            rt.state.held_slots = rt.held_slots
             # TRADE ZONE GATE (user rule 15/09): in the trade lobby/interior
             # building is forbidden — no placing AND no breaking blocks.
             # One check here covers the Discord D-pad path and the web mouse
@@ -2706,12 +2709,20 @@ class GameManager:
                 actor1 = rt.state.get_player(action.user_id)
                 tired1 = actor1 is not None and actor1.stamina <= 0.0
                 self._drain_stamina_harvest(actor1)
-                result = apply_chop(rt.state, action, rt.resources, inv, tired=tired1)
+                # TOOL FOLLOWs THE HAND: the held hotbar slot (web select_slot
+                # mirror; Discord players default 0) decides which pickaxe/axe
+                # counts — swapping slots away from the pickaxe swings bare-
+                # handed even with one in the bag (user bug 29/09).
+                result = apply_chop(
+                    rt.state, action, rt.resources, inv, tired=tired1,
+                    held_slot=rt.held_slots.get(action.user_id, 0),
+                )
                 rt.dirty = rt.dirty or result.state_changed
             elif isinstance(action, ShovelAction):
                 inv = self.get_inventory(channel_id, action.user_id)
                 result = apply_scoop(
-                    rt.state, action, rt.terrain, rt.state.blocks, inv
+                    rt.state, action, rt.terrain, rt.state.blocks, inv,
+                    held_slot=rt.held_slots.get(action.user_id, 0),
                 )
                 rt.dirty = rt.dirty or result.state_changed
             elif isinstance(action, TurnAction):

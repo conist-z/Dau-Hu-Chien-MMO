@@ -235,35 +235,31 @@ export class TravelVeil {
       vid.currentTime = 0;
       vid.style.opacity = "1";
       // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS: run the video at a rate
-      // that lands ~93% right when MIN_LOAD elapses, and PAUSE it there —
-      // playing on to the final frame made the bar hit 100%, blink out and
-      // re-appear for ~0.5s (user: "load 100% rồi mất, hiện lại rồi mới
-      // mất đi"). If the load takes longer than MIN_LOAD the bar simply
-      // holds at 93% until the real exit.
-      // HOLD TARGET = 93% OF THE PLAYABLE DURATION, not of videoDur:
-      // the webm declares 5.1s but only ~3.6s decodes (frame 71 of 102;
-      // the tail frames are empty) and the LAST playable frame's bar is
-      // back at 0% — holding past the playable end showed "0% sau khi
-      // chạy 100%" (user report). 93% of 5.1s ≈ 4.74s > playable end, so
-      // clamp to a safe in-playable ceiling and hold just below the 85%
-      // fill frame (frame 70).
-      if (this.videoDur > 0) {
-        const PLAYABLE = Math.min(this.videoDur, 3.55); // ~frame 70/72
-        const target = PLAYABLE * 0.97;
-        const rate = target / (TravelVeil.MIN_LOAD_MS / 1000);
-        vid.playbackRate = Math.min(3, Math.max(1, rate));
-        const hold = () => {
-          if (this.state !== "loading") {
-            vid.removeEventListener("timeupdate", hold);
-            return;
-          }
-          if (vid.currentTime >= target) {
-            vid.pause();
-            vid.currentTime = target;
-          }
-        };
-        vid.addEventListener("timeupdate", hold);
-      }
+      // that lands the bar near-full when MIN_LOAD elapses, and PARK it
+      // there — playing on reached the webm's broken tail: only ~3.6s of
+      // the declared 5.1s decodes and the LAST playable frame's bar is
+      // back at 0% (the loop-restart frame) — the "0% sau khi chạy 100%"
+      // bug (user, twice).
+      // ROBUST PARK: arm the clamp UNCONDITIONALLY (videoDur can be 0 when
+      // metadata lags) and re-seat on BOTH timeupdate AND ended — at 3x
+      // playback a timeupdate can skip straight past the target to
+      // 'ended', which parked the video on the 0% frame until exit.
+      const target = 3.3; // ~frame 66: bar ~85% full, safely inside the span
+      const rate = target / (TravelVeil.MIN_LOAD_MS / 1000);
+      vid.playbackRate = Math.min(3, Math.max(1, rate));
+      const hold = () => {
+        if (this.state !== "loading") {
+          vid.removeEventListener("timeupdate", hold);
+          vid.removeEventListener("ended", hold);
+          return;
+        }
+        if (vid.ended || vid.currentTime >= target) {
+          vid.pause();
+          try { vid.currentTime = target; } catch { /* already idle */ }
+        }
+      };
+      vid.addEventListener("timeupdate", hold);
+      vid.addEventListener("ended", hold);
       // muted+playsinline ⇒ autoplay is always permitted.
       vid.play().catch(() => {
         /* blocked playback: the black screen + iris still work */

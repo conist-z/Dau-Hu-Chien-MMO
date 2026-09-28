@@ -27,18 +27,30 @@ STONE_BLOCK_IDS = {"stone"}
 
 
 def _held_item_id(state: GameState, player: Player) -> Optional[str]:
-    """The item the player is 'holding': the first hotbar slot carrying a
-    weapon-class item with stock in the bag. The hotbar is a PROJECTION of
-    the first HOTBAR_SLOTS stacks of the ordered bag, so this is just: scan
-    the bag front-to-back for a weapon. Reads the runtime-scoped maps stashed
-    on the GameState by the manager (pure rule layer stays discord-free);
-    None when bare-handed."""
+    """The item the player is actually HOLDING: what sits in the selected
+    hotbar slot (the same slot every other client sees the hand from —
+    ``held_slots`` mirror on the runtime, stashed onto GameState by the
+    manager). Slot empty / not a weapon / out of stock = bare hands.
+    (The old scan-the-whole-hotbar version made a sword in ANY slot deal
+    damage while the player held something else — the same class of bug
+    as the chop tool, user 29/09.) Falls back to the legacy scan only when
+    no slot mirror exists (pure tests / old callers)."""
     inventories = getattr(state, "inventories", None) or {}
     inv = inventories.get(player.user_id)
     if inv is None:
         return None
     from game.items import WEAPON_ITEM_IDS
 
+    held_slots = getattr(state, "held_slots", None)
+    if held_slots is not None:
+        try:
+            slot = int(held_slots.get(player.user_id, 0) or 0)
+        except (TypeError, ValueError):
+            slot = 0
+        iid = inv.hotbar().get(slot)
+        if iid in WEAPON_ITEM_IDS and inv.count(iid) > 0:
+            return iid
+        return None
     for _slot, iid in inv.hotbar().items():
         if iid in WEAPON_ITEM_IDS and inv.count(iid) > 0:
             return iid
@@ -108,6 +120,10 @@ def _tile_has_player(state: GameState, x: int, y: int, exclude: int) -> bool:
 
 
 ATTACK_RANGE = 3
+# MELEE-only reach (user 29/09: "giảm tầm đánh xuống còn 1 nửa"): bare-hand/
+# tool swings at MOBS use half the old range. Block interaction (break in
+# the same swing, build aim) keeps its own AIM_RANGE — untouched.
+MELEE_ATTACK_RANGE = ATTACK_RANGE / 2  # = 1.5 tiles
 
 # ---- Combat cost + hit-quality (user 28/09: kill the free punch spam) ----
 # One landed attack drains STAMINA_ATTACK_DRAIN stamina (same bank as
@@ -247,7 +263,7 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
             if not enemy.alive:
                 continue
             d = _math.hypot(enemy.x_f - player.x_f, enemy.y_f - player.y_f)
-            if d <= max(1.5, ATTACK_RANGE) and d < best_d:
+            if d <= MELEE_ATTACK_RANGE and d < best_d:
                 best, best_d = enemy, d
         if best is None:
             if blocks is not None:
@@ -362,7 +378,7 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
             target_defeated=defeated, drops=drops,
             critical=critical,
         )
-    zombie = _nearest_in_range(state, player.x, player.y, candidates, ATTACK_RANGE)
+    zombie = _nearest_in_range(state, player.x, player.y, candidates, MELEE_ATTACK_RANGE)
     if zombie is None:
         # No hostile around: break the block on the target square instead.
         if blocks is not None:
@@ -563,13 +579,24 @@ def apply_break_block(
     hardness = max(1, bdef.hardness if bdef is not None else 1)
     from game.tools import parse_tool_id
 
-    # Resolve the held tool with the same fallback as the stone gate: the
-    # runtime-scoped map when present, else the passed inventory (tests and
-    # some adapters hand the bag straight in).
+    # Resolve the held tool with the SAME held-slot rule as chop/scoop
+    # (user bug 29/09): the tool counts only when it sits in the SELECTED
+    # hotbar slot (state.held_slots mirror); the old scan-the-hotbar loop
+    # found a pickaxe/axe anywhere in the bag. Legacy fallback only when no
+    # slot mirror exists.
     inventories = getattr(state, "inventories", None) or {}
     held_inv = inventories.get(player.user_id, inventory)
     held_id = None
-    if held_inv is not None:
+    held_slots = getattr(state, "held_slots", None)
+    if held_slots is not None and held_inv is not None:
+        try:
+            slot = int(held_slots.get(player.user_id, 0) or 0)
+        except (TypeError, ValueError):
+            slot = 0
+        iid = held_inv.hotbar().get(slot)
+        if iid and parse_tool_id(iid) is not None and held_inv.count(iid) > 0:
+            held_id = iid
+    elif held_inv is not None:
         for _slot, iid in held_inv.hotbar().items():
             if iid and parse_tool_id(iid) is not None and held_inv.count(iid) > 0:
                 held_id = iid
