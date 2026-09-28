@@ -37,6 +37,10 @@ ICON_TUNING = {
 
 GRID_FACTOR = 0.49  # cumulative 20% + 15% + 10% + 20% pixelation
 
+# EXTRA per-icon pixelation (user pick list): these regions get another
+# 15% off the grid (0.49 * 0.85 = 0.4165).
+EXTRA_PIXEL = {0, 1, 2, 6, 7, 9, 10, 11, 12}
+
 # --- Kaetram disc base -----------------------------------------------------
 # Background = CLEAN vertical gold->orange gradient sampled from the disc's
 # EDGE pixels (255,230,155 top-ish / 251,181,89 mid). (Per-row medians of the
@@ -75,7 +79,8 @@ clip = Image.fromarray((inner * 255).astype(np.uint8), "L")
 for i in range(14):
     t = ICON_TUNING[i]
     size = t["size"]
-    grid = max(4, round(size * GRID_FACTOR))
+    factor = GRID_FACTOR * (0.85 if i in EXTRA_PIXEL else 1.0)
+    grid = max(4, round(size * factor))
     im = Image.open(f"{SRC}/{i}.png").convert("RGBA")
     bbox = im.getbbox()
     if bbox: im = im.crop(bbox)
@@ -93,4 +98,4 @@ for i in range(14):
     masked.putalpha(Image.composite(masked.getchannel("A"), Image.new("L", (BIG, BIG), 0), clip))
     out.alpha_composite(masked)
     out.save(f"{DST}/{i}.png")
-print("rebuilt 14 icons (disc centered, grid factor", GRID_FACTOR, ")")
+print("rebuilt 14 icons (disc centered, base factor", GRID_FACTOR, ", extra 15% on", sorted(EXTRA_PIXEL), ")")
