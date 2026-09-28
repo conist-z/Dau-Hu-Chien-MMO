@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body { background:#222; color:#eee; font-family:monospace; padding:20px; }
+video { width:640px; display:block; background:#000; }
+#log { white-space:pre-wrap; font-size:12px; margin-top:10px; height:300px; overflow-y:auto; background:#111; padding:8px; }
+button { padding:8px 16px; margin:6px 4px; }
+</style></head><body>
+<h2>Live test: travel_wipe.webm park logic (rate 1.25, pause @3.0s)</h2>
+<video id="v" src="/ui/travel_wipe.webm" muted playsinline></video>
+<div>
+<button onclick="start()">▶ PLAY (giả lập enterLoading)</button>
+<button onclick="stop()">■ STOP</button>
+<button onclick="probe()">🔍 PROBE video (decode test)</button>
+</div>
+<div id="log"></div>
+<script>
+const v = document.getElementById('v');
+const log = document.getElementById('log');
+const target = 3.0;
+let timer = null;
+function p(msg){ log.textContent = msg + "\n" + log.textContent; }
+
+function start(){
+  clearInterval(timer);
+  v.currentTime = 0;
+  v.playbackRate = 1.25;
+  const hold = () => {
+    if (v.ended || v.currentTime >= target) {
+      v.pause();
+      p(`[hold] PAUSE at currentTime=${v.currentTime.toFixed(3)} ended=${v.ended}`);
+    }
+  };
+  v.addEventListener("timeupdate", hold);
+  v.addEventListener("ended", hold);
+  v.play().then(()=>p("play() ok")).catch(e=>p("play() FAIL: "+e.message));
+  timer = setInterval(()=>{
+    p(`t=${v.currentTime.toFixed(3)} rate=${v.playbackRate} paused=${v.paused} ended=${v.ended} readyState=${v.readyState} dur=${(v.duration||0).toFixed(2)}`);
+  }, 100);
+  setTimeout(()=>{ clearInterval(timer); p(`--- FINAL: paused=${v.paused} t=${v.currentTime.toFixed(3)} ended=${v.ended}`); }, 5000);
+}
+function stop(){ clearInterval(timer); v.pause(); }
+function probe(){
+  p(`duration=${v.duration} readyState=${v.readyState} videoWidth=${v.videoWidth} videoHeight=${v.videoHeight}`);
+  // try seeking near the end of the DECLARED duration — the broken zone
+  v.currentTime = Math.max(0,(v.duration||5.1) - 0.2);
+  setTimeout(()=>{
+    p(`seek to ${(v.duration-0.2).toFixed(2)} -> currentTime=${v.currentTime.toFixed(3)} ended=${v.ended} readyState=${v.readyState}`);
+    // capture what's on screen: sample the video into a canvas
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    const px = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    let bright = 0;
+    for (let i=0;i<px.length;i+=4) if (px[i]+px[i+1]+px[i+2] > 180) bright++;
+    p(`bright px at broken-zone frame: ${bright} (${bright>500 ? "HAS CONTENT" : "BLANK/0% FRAME — BUG VISIBLE"})`);
+  }, 300);
+}
+</script></body></html>
