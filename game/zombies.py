@@ -121,7 +121,7 @@ WEB_ZOMBIE_RECOVER_SPEED = 1.4
 # Spawn/despawn distances in float tiles (mirror the int constants).
 WEB_ZOMBIE_MIN_SPAWN_DIST = 8.0
 WEB_ZOMBIE_DESPAWN_DIST = 90.0
-WEB_ZOMBIE_VISION_RADIUS = 15.0  # 6.0 x2.5 (user 28/09): mob phát hiện xa hơn
+WEB_ZOMBIE_VISION_RADIUS = 30.0  # 15 x2 (user 29/09): tầm phát hiện địch gấp đôi
 # Hard chase leash (tiles, centre distance): a zombie NEVER chases or bites
 # beyond this even if its steering got confused by a lagging player ghost.
 # Without a leash a bad server tick made zombies pursue (and damage) a
@@ -140,7 +140,7 @@ WEB_Z_IDLE_LEN = 2
 # ---- threat model (see README-ish notes in game.manager) -----------------
 # A zombie "sees" a player within this Chebyshev radius; outside it the
 # zombie wanders instead of chasing.
-ZOMBIE_VISION_RADIUS = 15  # 6 x2.5 (user 28/09): mob phát hiện xa hơn
+ZOMBIE_VISION_RADIUS = 30  # 15 x2 (user 29/09): tầm phát hiện địch gấp đôi
 # Population scales with the darkness around each player: within this many
 # tiles of every player there may be at most ZOMBIE_AREA_MAX_COUNT zombies.
 ZOMBIE_AREA_RADIUS = 75
@@ -359,6 +359,9 @@ class Zombie:
     scavenge_target: Optional[str] = None
     # Side-view flip accumulator (see _side_animal_facing).
     _side_flip_acc: float = 0.0
+    # Last time the stand-and-stare tell played (monotonic). Inside
+    # ALERT_REPEAT_COOLDOWN a re-detection skips the freeze + "!" entirely.
+    last_alert_at: float = 0.0
 
     def sync_float_from_int(self) -> None:
         self.x_f = float(self.x) + 0.5
@@ -955,6 +958,12 @@ def _web_facing(dx: float, dy: float) -> str:
 #   3. No-face zones (blocked/idle) never re-face.
 SIDE_FLIP_THRESHOLD = 0.25  # tiles of travel opposite the current face
 
+# The stand-and-stare tell ("!" + freeze) plays ONCE per encounter: a
+# re-detection inside this cooldown (the player kept CHASING and the animal
+# calmed mid-flight) bolts straight into panic with no second freeze — the
+# "chạy được 1 đoạn lại ! rồi tiếp tục chạy" report, user 29/09.
+ALERT_REPEAT_COOLDOWN = 20.0
+
 
 def _side_animal_facing(z, dx: float, dy: float) -> str:
     """E/W facing for a side-view animal with anti-strobe hysteresis.
@@ -980,22 +989,16 @@ def _side_animal_facing(z, dx: float, dy: float) -> str:
 
 
 def _web_facing_towards(z: Zombie, dx: float, dy: float) -> str:
-    """Facing when the mob is TARGETING a player (chase or flee).
+    """8-WAY facing for HOSTILE mobs from the movement/target vector.
 
-    `_web_facing` derives facing from the ACTUAL movement vector — after a
-    collision slide along a wall it can point sideways while the mob still
-    bears down on the player, and a vertically-fleeding prey (single-facing
-    side-view sheet!) would face neither left nor right at all. When a
-    target is involved the face must track the TARGET: horizontal sign of
-    (dx, dy) wins; when |dx|≈|dy| keep the current horizontal bias so the
-    sprite doesn't flicker E/W on a diagonal."""
-    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-        return z.facing
-    if abs(dx) > 1e-6:
-        return "E" if dx > 0 else "W"
-    # Pure vertical: keep the last horizontal facing (W/E); default W only
-    # when the mob never had a horizontal bearing.
-    return z.facing if z.facing in ("E", "W", "NE", "NW", "SE", "SW") else "W"
+    REGRESSION FIX (user 29/09: "quái kaetram không có frame đi chéo"): the
+    animal-AI split rerouted hostile mobs onto an E/W-ONLY helper, so their
+    facing never read NE/NW/SE/SW/N/S while walking — the Kaetram walk_up /
+    walk_down rows stopped being used and diagonal/vertical chases showed a
+    sideways-gliding sprite. Kaetram mobs are FRONT/SIDE art (up + down +
+    right rows, LEFT mirrors right): they need the full 8-way face from the
+    actual step. (Animals keep their own E/W-only _side_animal_facing.)"""
+    return _web_facing(dx, dy)
 
 
 def _web_set_anim(z: Zombie, anim: str, now: float) -> None:
@@ -1448,27 +1451,45 @@ def web_tick(
                 # alert_s — idle anim only (the old atk-pose read as random
                 # leg flailing). The "!" marker on the client (alert=True in
                 # the snapshot) tells the player they've been spotted.
-                z.alert_until = now_mono + alert_s
-                z.facing = _side_animal_facing(z, dx, dy)
-                _web_set_anim(z, "idle", now_mono)
-                herd_r = float(beh.get("herd_panic_r", 0.0))
-                scatter_r = float(beh.get("scatter_r", 0.0))
-                contagion_r = herd_r or scatter_r
-                if contagion_r > 0.0:
-                    for o in _web_zombies(state):
-                        if o is z or not getattr(o, "ambient", False):
-                            continue
-                        if o.kind == z.kind and _web_dist(o, target) <= contagion_r:
-                            o.alert_until = now_mono + max(0.3, alert_s * 0.6)
-                            o.panic_until = now_mono + 2.5
-                continue  # frozen stare this tick
+                # ONCE PER ENCOUNTER: a re-detection inside the repeat
+                # cooldown (player still chasing after the animal calmed
+                # mid-flight) skips the freeze + "!" and bolts straight into
+                # panic below — the tell must not replay every few seconds
+                # during a chase.
+                if now_mono - z.last_alert_at >= float(
+                    beh.get("alert_repeat_s", ALERT_REPEAT_COOLDOWN)
+                ):
+                    z.last_alert_at = now_mono
+                    z.alert_until = now_mono + alert_s
+                    z.facing = _side_animal_facing(z, dx, dy)
+                    _web_set_anim(z, "idle", now_mono)
+                    herd_r = float(beh.get("herd_panic_r", 0.0))
+                    scatter_r = float(beh.get("scatter_r", 0.0))
+                    contagion_r = herd_r or scatter_r
+                    if contagion_r > 0.0:
+                        for o in _web_zombies(state):
+                            if o is z or not getattr(o, "ambient", False):
+                                continue
+                            if o.kind == z.kind and _web_dist(o, target) <= contagion_r:
+                                o.last_alert_at = now_mono
+                                o.alert_until = now_mono + max(0.3, alert_s * 0.6)
+                                o.panic_until = now_mono + 2.5
+                    continue  # frozen stare this tick
+                # Cooldown active: no tell — straight to flight.
+                # USER 29/09: same x1.5 flight window as the in-vision re-arm.
+                z.panic_until = now_mono + 2.0
+                z.alert_until = 0.0
             if z.alert_until > now_mono:
                 continue  # mid-stare
             if triggered or panicking:
                 # PANIC clock: re-armed while the player stays in vision;
                 # keeps the run alive past the rim, then decays to a walk.
+                # USER 29/09: the re-arm window grew 1.2 -> 2.0 s (x1.5-ish
+                # "chạy thật xa" flight) and the overrun multiplier lives in
+                # mob_profiles (also x1.5) — the animal now runs ~3x the
+                # vision radius before it even starts to calm down.
                 if triggered:
-                    z.panic_until = now_mono + 1.2
+                    z.panic_until = now_mono + 2.0
                 if z.alert_until > 0.0:
                     z.alert_until = 0.0
                 speed = z.web_speed * float(beh.get("flee_mult", 1.3))
@@ -1659,8 +1680,10 @@ def web_tick(
 
         # ---- AMBUSH (spider): camouflaged until the prey is close, then a
         # short fast pounce burst before settling into normal chase speed.
+        # USER 29/09: x2 detection — the trigger radius uses the same scale
+        # as the pack's vision bump (6 * 0.5 = 3 -> 12 * 0.5 = 6 tiles).
         if style == "ambush":
-            trigger = float(beh.get("ambush_bonus_vision", 6.0)) * 0.5
+            trigger = float(beh.get("ambush_bonus_vision", 6.0))
             if not getattr(z, "ambush_armed", False):
                 if dist <= trigger:
                     z.ambush_armed = True
