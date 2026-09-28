@@ -1,5 +1,6 @@
 import logging
 import math
+import time
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -1318,8 +1319,10 @@ class GameManager:
                 feed.append((_t.time(), player.user_id, dmg, "status"))
             del feed[:-40]
         if player.hp <= 0:
+            import time as _t2
+
             player.visible = False
-            player.dead_until = time.time() + 5.0
+            player.dead_until = _t2.time() + 5.0
             player.death_reason = "chết vì hiệu ứng độc/thối rửa"
             self._schedule_respawn(rt, player.user_id)
 
