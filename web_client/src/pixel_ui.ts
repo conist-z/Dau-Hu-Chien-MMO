@@ -177,19 +177,19 @@ export const EQUIP_MANNEQUIN = { x: 11, y: 16, w: 43, h: 46, file: "ui/v5/layers
 export const EQUIP_CHAR_SLOTS = { x: 10, y: 17, w: 46, h: 62, file: "ui/v5/layers/equip_char_slots.png" };
 export const EQUIP_CHAR_TRINKET = { x: 44, y: 65, w: 10, h: 13, file: "ui/v5/layers/equip_char_trinket.png" };
 export const EQUIP_CHAR_RING = { x: 12, y: 66, w: 11, h: 12, file: "ui/v5/layers/equip_char_ring.png" };
-// RIGHT grid = THE BAG (5x4 = all 20 bag cells). The kit's 16px pitch
-// only fits 4 cols inside the 148px frame, so this grid compresses to a
-// 14px pitch (slots touch — the atom art carries its own border).
+// RIGHT grid = THE BAG (5x4 = all 20 bag cells). The kit's 16px pitch only
+// fits 4 cols inside the 148px frame, but packing 5 cols at a 14px pitch
+// made the cells TOUCH — no parchment gap, one flat slab (user: "ô slot
+// không hiện"). Keep the bag's 16px pitch (2px gap between cells, exactly
+// the bag-tab look) and start at x=66 right after the mannequin zone.
 export const EQUIPMENT_GRID: GridLayout = {
-  firstX: 74, firstY: 17, stepX: 14, stepY: 14,
+  firstX: 66, firstY: 17, stepX: 16, stepY: 16,
   cols: 5, rows: 4, slotW: 14, slotH: 14,
 };
 export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
-// Equip grid cells are packed at a 14px pitch (no parchment gap between
-// cells, unlike the bag's 16px grid), so the LIGHT cell atom melts into the
-// frame's parchment as one flat slab. The DARK cell (inv_slot.png) keeps
-// each cell visible when they touch (user: "ô nền đậm như inv").
-export const EQUIP_GRID_CELL = "ui/v5/atoms/inv_slot.png";
+export const EQUIP_GRID_CELL = "ui/v5/atoms/inv_cell.png";
+// (inv_cell.png = the exact cell atom the bag tab uses — user wants the
+// equip grid to look LIKE the inv grid: light cells + parchment gaps.)
 // Kaetram armor sprites draw their ink at only ~12x11 inside the 16x16
 // canvas (stone/wood fill the full canvas) — at the shared icon size armor
 // looked visibly smaller (user: "icon giáp không to lên"). Slots carrying

@@ -989,12 +989,6 @@ body.mobile-ui #mc-actions.mc-hidden {
   width: calc(var(--pix-scale, 3) * 14px);
   height: calc(var(--pix-scale, 3) * 14px);
 }
-/* Equip grid: cells are packed at a 14px pitch (touching, no parchment
-   gap like the bag grid), so a hairline inner shade keeps each cell
-   readable as its own slot instead of one flat slab. */
-#inv-equip-wrap .slot-pix:not(.equip-worn) img.slot-bg {
-  box-shadow: inset 0 0 0 1px rgba(59, 40, 24, 0.45);
-}
 /* Armor icons: Kaetram sprites draw at only ~12x11 ink inside the 16x16
    canvas (stone/wood ink spans the full 16px), so at the shared size armor
    read visibly smaller (user: "icon giáp không to lên"). Scale the ELEMENT
