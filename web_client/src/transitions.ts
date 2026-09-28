@@ -177,16 +177,13 @@ export class TravelVeil {
   }
 
   /** Death: same veil flow (iris closes, video holds). dead=false →
-   *  reverse out + iris-open. */
-  setDead(dead: boolean, respawnS: number): void {
+   *  reverse out + iris-open. NO death text on purpose (user): the loading
+   *  video alone covers the screen — "chỉ có cái loading thôi". */
+  setDead(dead: boolean, _respawnS: number): void {
     if (dead) {
       this.deathMode = true;
       if (this.state === "idle") this.startTravel();
-      this.setLabel(
-        respawnS > 0
-          ? `Bạn đã gục ngã… Hồi sinh sau ${Math.ceil(respawnS)}s`
-          : "Bạn đã gục ngã… Đang hồi sinh…",
-      );
+      this.setLabel(""); // death text removed — loading screen only
     } else if (this.deathMode) {
       this.deathMode = false;
       this.exitSequence();

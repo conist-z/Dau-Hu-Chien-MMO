@@ -2609,15 +2609,13 @@ export class Hud {
     }
   }
 
-  /** Death veil + respawn countdown (dead while hp == 0). */
-  setDead(dead: boolean, respawnS: number, reason?: string): void {
-    const overlay = document.getElementById("death-overlay")!;
-    overlay.classList.toggle("hidden", !dead);
-    if (!dead) return;
-    const r = document.getElementById("death-reason");
-    if (r && reason) r.textContent = reason;
-    const t = document.getElementById("death-timer");
-    if (t) t.textContent = respawnS > 0 ? `Hồi sinh sau ${Math.ceil(respawnS)}s…` : "Đang hồi sinh…";
+  /** Death veil (dead while hp == 0). The TravelVeil loading screen covers
+   *  the death — this overlay stays hidden and NO text is set (user:
+   *  "bỏ hẳn chữ đã chết/đang hồi sinh, chỉ có loading"). Kept as a no-op
+   *  shell so call sites and the DOM don't need surgery. */
+  setDead(_dead: boolean, _respawnS: number, _reason?: string): void {
+    const overlay = document.getElementById("death-overlay");
+    if (overlay) overlay.classList.add("hidden");
   }
 
   private invVersion = -1;
