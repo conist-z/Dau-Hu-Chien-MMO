@@ -986,6 +986,18 @@ hud.onSlotSelect((slot) => {
   scene.setSelfHeldFromHotbar(hud.inventoryHotbar, slot);
 });
 
+// PLAYER SWING COOLDOWN (user 29/09): one arm swing = one hit. The paperdoll
+// plays the one-shot atk rows once per swing() (~450ms Kaetram-parity click
+// rhythm) — so client-side, an attack sent while the swing is still playing
+// is simply NOT SENT (the server enforces the same 450ms window itself and
+// answers "cooldown" for older clients / macros; REASONS has no entry for it
+// so the client stays silent — no toast spam).
+const SWING_COOLDOWN_MS = 450;
+let lastSwingSentAt = 0;
+const swingGateOpen = (): boolean =>
+  performance.now() - lastSwingSentAt >= SWING_COOLDOWN_MS;
+const markSwingSent = (): void => { lastSwingSentAt = performance.now(); };
+
 const input = new KeyboardInput({
   onVector: (dx, dy, running) => {
     // MULTI-TOUCH GUARD: while the mobile stick holds the pointer, the
@@ -1009,6 +1021,10 @@ const input = new KeyboardInput({
     // Cheap melee: attack IN PLACE + swing the hand at once (the swing is
     // client-optimistic; a landed server hit re-triggers it via the echo).
     // Kaetram parity: atk anim plays exactly ONCE per click, ~450ms.
+    // SWING GATE: one swing anim = one hit — rapid F taps inside the
+    // animation window are dropped locally (the server also refuses them).
+    if (!swingGateOpen()) return;
+    markSwingSent();
     net.action("attack");
     scene.combatSwing();
   },
@@ -1061,6 +1077,8 @@ const input = new KeyboardInput({
       // left click on a mob must damage it (melee resolves in a radius
       // server-side; tile targeting only picks the swing direction).
       if (scene.zombieNear(target)) {
+        if (!swingGateOpen()) return;
+        markSwingSent();
         net.action("attack");
         scene.swingSelfHand();
         return;
@@ -1166,6 +1184,8 @@ const mobile = new MobileControls({
     }
   },
   onAttack: () => {
+    if (!swingGateOpen()) return;
+    markSwingSent();
     net.action("attack");
     scene.combatSwing();
   },
@@ -1191,6 +1211,8 @@ const mobile = new MobileControls({
     // Act immediately either way — rapid taps on a locked tile chop at
     // full speed; a fresh lock also acts at once (tap-to-hit = instant).
     if (scene.zombieNear(target)) {
+      if (!swingGateOpen()) return;
+      markSwingSent();
       net.action("attack");
       scene.swingSelfHand();
       return;

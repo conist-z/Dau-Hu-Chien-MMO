@@ -296,6 +296,13 @@ class MapTileMasks:
         self.height = height
         self.grid: list = [[None] * width for _ in range(height)]
 
+    def clear_tile(self, x: int, y: int) -> None:
+        """Drop the sub-tile mask of one tile (portal gates: the tile is
+        forced solid anyway — a leftover mask would let the collision box
+        slide through the "wall" via the mask-aware sweep)."""
+        if 0 <= y < self.height and 0 <= x < self.width:
+            self.grid[y][x] = None
+
     def correct(
         self, x_f: float, y_f: float, box_half: float, collision=None
     ) -> tuple:

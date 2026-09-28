@@ -195,6 +195,11 @@ class Player:
     # the equip UI exists): a restart clears it — same lifetime as the
     # other non-persisted appearance state.
     equipped_armor: Dict[str, str] = field(default_factory=dict)
+    # PLAYER SWING COOLDOWN (user 29/09): monotonic() of the last attack
+    # swing — one swing animation (~450ms) = one hit, for EVERY mob kind.
+    # Runtime-only (never persisted). apply_attack gates on it so holding
+    # F / auto-fire macros cannot punch faster than the arm can swing.
+    last_swing_at: float = 0.0
 
     @property
     def alive(self) -> bool:

@@ -46,6 +46,13 @@ _FORAGE_NODE_KINDS = frozenset({
     "mushroom_brown", "mushroom_purple", "grass", "flower",
 })
 
+# Meteor-ore special tiles (spawned at meteor craters, game/manager.py):
+# NEGATIVE gids never collide with real Tiled tilesets — the client maps
+# "res--77" to the bundled meteor-ore sprite instead of a tileset crop.
+# The node covers 2x2 tiles like a tree ("to hơn, kiểu như cây") but mines
+# like a rock: pickaxe + stone drops ("đập rớt ra đá, tương tác y như đá").
+METEOR_ORE_GID = -77
+
 TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     9: ("tree", 0, 0),
     10: ("tree", 1, 0),
@@ -92,6 +99,10 @@ TILE_NODE_PARTS: Dict[int, Tuple[str, int, int]] = {
     # 65 = small rock, 66 = big rock (yields 1.5x stone, 1.4x hits).
     65: ("rock_small", 0, 0),
     66: ("rock_big", 0, 0),
+    # Meteor-ore crater node: a 2x2 cluster minted at runtime (no Tiled gid
+    # exists for it), so every tile carries the same negative pseudo-gid and
+    # the anchor part marks the top-left corner.
+    METEOR_ORE_GID: ("meteor_ore", 0, 0),
 }
 
 
@@ -139,6 +150,20 @@ NODE_DEFS: Dict[str, ResourceDef] = {
         hits=17,  # round(12 * 1.4)
         respawn_s=420.0,
         drops=[
+            ("stone", 1.0, 1),
+            ("stone", 0.5, 1),
+        ],
+    ),
+    # Meteor-ore (spawned at meteor craters): interaction mirrors rock_big
+    # (pickaxe tiers / bare-hand slow path handled in apply_chop) but the
+    # node is BIGGER — a 2x2 cluster — and yields more stone per fell.
+    "meteor_ore": ResourceDef(
+        "meteor_ore",
+        "Quặng thiên thạch",
+        hits=17,
+        respawn_s=420.0,
+        drops=[
+            ("stone", 1.0, 1),
             ("stone", 1.0, 1),
             ("stone", 0.5, 1),
         ],
@@ -379,7 +404,7 @@ PROGRESS_REGEN_STEP_S = 1.0  # one hit lost per this many seconds
 
 # Node kinds harvested with a PICKAXE instead of the axe (ore/rock veins).
 ORE_NODE_KINDS = {"ore", "rock", "stone_node", "iron_ore", "coal",
-                  "rock_small", "rock_big"}
+                  "rock_small", "rock_big", "meteor_ore"}
 
 
 def is_ore_kind(kind: str) -> bool:
@@ -503,6 +528,11 @@ def apply_chop(state: GameState,
             hits = round(ROCK_PICKAXE_HITS.get(tool.material, 12) * scale)
         else:
             hits = round((65 if node.kind == "rock_small" else 65 * 1.4))
+    elif node.kind == "meteor_ore":
+        if tool is not None:
+            hits = round(ROCK_PICKAXE_HITS.get(tool.material, 12) * 1.4)
+        else:
+            hits = round(65 * 1.4)
     else:
         hits_fn = tool_mod.pickaxe_hits if ore else tool_mod.axe_hits
         if tool is not None:

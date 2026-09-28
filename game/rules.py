@@ -122,6 +122,16 @@ ATTACK_MISS_TIRED = float(__import__('os').getenv("ATTACK_MISS_TIRED", "0.30"))
 ATTACK_CRIT_CHANCE = float(__import__('os').getenv("ATTACK_CRIT_CHANCE", "0.12"))
 ATTACK_CRIT_MULT = float(__import__('os').getenv("ATTACK_CRIT_MULT", "1.6"))
 
+# SWING COOLDOWN (user 29/09): one player arm swing = one hit, for EVERY
+# mob kind. The web paperdoll plays the one-shot atk rows over exactly
+# speeds.atk x frames_per_row = 50ms x 4 = 200ms per swing, with Kaetram
+# parity comment pinning the full click rhythm at ~450ms — so the server
+# gate sits at 450ms: any attack arriving sooner is refused (reason
+# "cooldown"), no damage, no stamina spent, and the client stays quiet.
+PLAYER_SWING_COOLDOWN = float(
+    __import__('os').getenv("PLAYER_SWING_COOLDOWN", "0.45")
+)
+
 
 def _attack_hit_roll(player: Player, dmg: int) -> tuple[int, bool, bool]:
     """One Kaetram-style hit roll -> (damage, critical, missed).
@@ -206,7 +216,19 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
     if not player.alive:
         return ActionResult(False, "dead")
 
+    # SWING COOLDOWN: gate FIRST — before target search, block fallback,
+    # stamina drain or the hit roll. A swing inside the animation window
+    # never consumes breath nor chips blocks (spam cannot bypass the arm
+    # rhythm through the block-fallback path either).
+    import time as _swing_t
+
+    now_s = _swing_t.monotonic()
+    if now_s - player.last_swing_at < PLAYER_SWING_COOLDOWN:
+        return ActionResult(False, "cooldown")
+    player.last_swing_at = now_s
+
     zombies = getattr(state, "zombies", {})
+
     candidates = zombies.values() if isinstance(zombies, dict) else (zombies or [])
     # Discord clients resolve against the turn-based pack; web clients resolve
     # against their own realtime pack (float hits — see web_hit below). The

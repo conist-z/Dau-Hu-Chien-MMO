@@ -672,6 +672,20 @@ def _is_cave_map(rt) -> bool:
     return False
 
 
+def _is_indoor_map(rt) -> bool:
+    """Indoor/trade-zone maps are WEATHER-IMMUNE like caves: no rain/snow/
+    storm INSIDE a building. Data source: game/travel.TRADE_ZONE_MAPS (the
+    monter-trade interior + trade lobby) — the same frozenset that already
+    drives the mob-free + no-build rules, so adding a new trade map there
+    opts it out of weather automatically."""
+    try:
+        from game.travel import TRADE_ZONE_MAPS
+
+        return rt.map_data.map_id in TRADE_ZONE_MAPS
+    except AttributeError:
+        return False
+
+
 def _web_weather_key(rt) -> str:
     """The weather key the WEB client should render — with the night guard:
     a day-only key (sunny/sun_clouds) observed during in-game night is
@@ -694,8 +708,12 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
     # Cave maps are WEATHER-IMMUNE: no rain/snow/storm indoors (the cave
     # biome pin mirrors what the Discord-side weather gate does for maps
     # that opt out — the client also renders its cave ambience instead).
+    # Indoor TRADE maps (montertradebase + lobbytrade) are immune the same
+    # way: the weather key becomes a non-animated clear sky for them.
     weather = (
-        "cave" if _is_cave_map(rt) else _web_weather_key(rt)
+        "cave" if _is_cave_map(rt)
+        else "sun_clouds" if _is_indoor_map(rt)
+        else _web_weather_key(rt)
     )
     player = rt.state.get_player(user_id)
     # Station proximity for the web craft UI's button gating (client-side

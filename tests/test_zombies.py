@@ -293,6 +293,9 @@ def test_attack_costs_stamina_and_rolls_hit_quality():
         r = apply_attack(state, AttackAction(1))
     assert r.missed is True and r.damage == 0 and zombie.hp == 10_000
     assert player.stamina == player.max_stamina - rules_mod.STAMINA_ATTACK_DRAIN
+    # Swing gate reset: the next attack arrives AFTER the arm finished the
+    # previous swing (the 450ms window is its own test below).
+    player.last_swing_at = 0.0
 
     # --- CRIT: miss roll clears, crit roll lands ---
     with mock.patch("random.random", side_effect=[0.9, 0.01]):
@@ -300,6 +303,7 @@ def test_attack_costs_stamina_and_rolls_hit_quality():
     assert r.critical is True
     assert r.damage == int(round(6 * rules_mod.ATTACK_CRIT_MULT))
     assert zombie.hp == 10_000 - r.damage
+    player.last_swing_at = 0.0
 
     # --- Exhausted: miss chance rises to ATTACK_MISS_TIRED; the threshold
     # 0.01 < p <= 0.30 band now MISSES where a fresh player would hit ---
@@ -308,6 +312,7 @@ def test_attack_costs_stamina_and_rolls_hit_quality():
         r = apply_attack(state, AttackAction(1))
     assert r.missed is True  # 0.20 >= base 0.10 (hit) but < tired 0.30 (miss)
 
+    player.last_swing_at = 0.0
     with mock.patch("random.random", return_value=0.5):
         r = apply_attack(state, AttackAction(1))
     assert r.missed is False and r.damage == 6  # plain hit again
@@ -341,6 +346,7 @@ def test_attack_bare_hand_vs_weapon_damage():
     # Bare hand: 6 dmg per hit.
     r1 = apply_attack(state, AttackAction(1))
     assert r1.damage == 6 and z1.hp == 34
+    player.last_swing_at = 0.0  # arm ready again (cooldown has its own test)
 
     # Weapon: bind wood_axe to slot 0 and give one to the bag. The rule
     # targets the nearest zombie (z1, same tile as z2 but lower id wins tie).
@@ -352,6 +358,7 @@ def test_attack_bare_hand_vs_weapon_damage():
     state.inventories[1].add("wood_axe", 1)
     r2 = apply_attack(state, AttackAction(1))
     assert r2.damage == tool_damage("wood_axe") and z1.hp == 34 - r2.damage
+    player.last_swing_at = 0.0
 
     # Family ranking: a same-tier sword hits harder than the axe, a shovel
     # hits weakest — what you hold decides how hard you hit. Fresh inventory
@@ -361,12 +368,14 @@ def test_attack_bare_hand_vs_weapon_damage():
         state.hotbars = {1: {0: iid}}
         state.inventories = {1: Inventory()}
         state.inventories[1].add(iid, 1)
+        player.last_swing_at = 0.0
         r = apply_attack(state, AttackAction(1))
         assert r.damage == tool_damage(iid)
     assert tool_damage("wood_sword") > tool_damage("wood_axe") > tool_damage("wood_shovel")
 
     # Binding present but item out of stock -> still bare-handed.
     state.inventories = {1: Inventory()}
+    player.last_swing_at = 0.0
     r3 = apply_attack(state, AttackAction(1))
     assert r3.damage == 6
 
@@ -450,3 +459,43 @@ def test_player_cannot_walk_onto_zombie_tile(world):
     assert result.moved is False
     assert (player.x, player.y) == (10, 10)
     assert player.direction == "EAST"
+
+
+def test_player_swing_cooldown_blocks_rapid_attacks(world):
+    """USER 29/09: one arm swing animation = one hit, for EVERY mob kind.
+    A second attack inside PLAYER_SWING_COOLDOWN (the ~450ms atk anim
+    window) is refused with reason "cooldown" — no damage, no stamina
+    drain, and the block-fallback path is gated by the SAME clock, so
+    spamming F cannot bypass the arm rhythm by punching blocks."""
+    import time as t
+
+    from game.rules import STAMINA_ATTACK_DRAIN, apply_attack
+
+    state, _collision, player = world
+    player.direction = "EAST"
+    zombie = Zombie("z1", 11, 10, hp=10_000, max_hp=10_000)
+    state.zombies["z1"] = zombie
+
+    # First swing lands (pin the roll above miss/crit thresholds).
+    from unittest import mock
+
+    with mock.patch("random.random", return_value=0.5):
+        r1 = apply_attack(state, AttackAction(1))
+    assert r1.success is True and r1.damage == 6
+    hp_after_first = zombie.hp
+    stamina_after_first = player.stamina
+    assert stamina_after_first == player.max_stamina - STAMINA_ATTACK_DRAIN
+
+    # Immediate second swing: refused BEFORE any cost or damage.
+    r2 = apply_attack(state, AttackAction(1))
+    assert r2.success is False and r2.reason == "cooldown"
+    assert zombie.hp == hp_after_first  # no damage
+    assert player.stamina == stamina_after_first  # no breath spent
+    assert t.monotonic() - player.last_swing_at < 0.45  # clock NOT reset
+
+    # Once the arm finished the swing (past the window), the next hit lands.
+    player.last_swing_at = t.monotonic() - 0.50
+    with mock.patch("random.random", return_value=0.5):
+        r3 = apply_attack(state, AttackAction(1))
+    assert r3.success is True and r3.damage == 6
+    assert zombie.hp == hp_after_first - 6

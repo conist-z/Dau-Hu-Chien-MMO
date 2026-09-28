@@ -31,6 +31,7 @@ MSG_PUSH = "push"                # one-off UI notice (toast)
 MSG_CHAT = "chat"                # cross-player chat {uid, name, color, text}
 MSG_ERROR = "error"              # {code, message}
 MSG_PONG = "pong"
+MSG_TRAVEL_BEGIN = "travel_begin"  # {map_name} — pre-travel iris veil signal
 
 # Rate limiting: max input frames per second per session (20 Hz tick needs
 # far fewer; the client only sends on change).

@@ -55,6 +55,16 @@ def is_trade_zone(rt) -> bool:
         return False
 
 
+def has_portal_config(rt, portal_cfg: Portals) -> bool:
+    """True when ``rt``'s map has portal wiring in portals.json — the cheap
+    pre-check the web tick gates its portal scan on (maps without an entry
+    are a dict-miss no-op)."""
+    try:
+        return portal_cfg.for_map(rt.map_data.map_id) is not None
+    except AttributeError:
+        return False
+
+
 def load_portals(assets_dir: Path) -> Portals:
     """Load portals.json. ``assets_dir`` is the project's assets root (or the
     maps dir itself — both resolve to the same config file)."""
