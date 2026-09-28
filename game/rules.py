@@ -310,24 +310,19 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
                 best.alert_until = 0.0
                 best.panic_until = _t.monotonic() + 1.2
             if beh.get("style") == "neutral":
-                # BEAR O5b TWO-STAGE RAGE (user 28/09): the FIRST hit inside
-                # the rage window is a WARNING (aggravates but no real aggro);
-                # the second escalates to the full fight.
+                # USER 29/09 ("gấu chả đánh trả"): the old two-stage rage
+                # EARLY-RETURNED on the first hit without ever arming
+                # aggro_until — the web tick read the lapsed clock and the
+                # bear calmly went back to wandering. Now EVERY hit provokes:
+                # the rage window (rage_s) just tracks the escalation memory.
+                now_m = _t.monotonic()
                 if beh.get("rage_s"):
-                    now_m = _t.monotonic()
-                    if now_m - best.bear_hit_at > float(beh.get("rage_s", 30.0)):
-                        # First (or stale) hit: warning only — arm the clock,
-                        # brief face-the-player stand via alert_until.
-                        best.bear_hit_at = now_m
-                        best.alert_until = now_m + 1.0
-                        best.damage = _ms(best.kind)["dmg"]
-                        return ActionResult(
-                            True, state_changed=True,
-                            pos=(best.x, best.y), block_id="zombie",
-                            damage=0, target_id=target_id,
-                            target_defeated=False, drops=[],
-                        )
-                best.aggro_until = _t.monotonic() + float(
+                    best.bear_hit_at = (
+                        now_m if now_m - best.bear_hit_at
+                        > float(beh.get("rage_s", 30.0)) else best.bear_hit_at
+                    )
+                    best.alert_until = now_m + 1.0  # brief face-the-player
+                best.aggro_until = now_m + float(
                     beh.get("aggro_s", 15.0)
                 )
                 best.aggro_origin = None  # re-anchor the defensive leash

@@ -271,7 +271,7 @@ MOB_BEHAVIORS: Dict[str, dict] = {
     "skeleton":  dict(style="melee"),
     "slime":     dict(style="melee"),
     "rat":       dict(style="skittish"),
-    "spider":    dict(style="ambush", ambush_bonus_vision=6.0),
+    "spider":    dict(style="ambush", ambush_bonus_vision=6.0),  # pounce trigger radius (see zombies.py x0.5) — USER 29/09: x2 = 12
     "bat":       dict(style="swarm"),
     "skeleton2": dict(style="melee", cooldown=2.6, damage_mult=1.4),
     "spectre":   dict(style="ranged", ranged_range=4.0, cooldown=2.4),
@@ -288,6 +288,11 @@ MOB_BEHAVIORS: Dict[str, dict] = {
     "flock_r": 7.0, "flock_w": 0.35,
     # prey: never attacks; ALERT stand (alert_s) THEN flees, and keeps
     # running to panic_overrun x flee_vision before calming down.
+    # USER 29/09 ("khó đánh bọn nó vãi chưởng"): vision x1.5 pushed the
+    # flight trigger past MELEE_ATTACK_RANGE reach entirely — the animal
+    # bolted while the player was still ~17 tiles away and overran past
+    # every chase. Back to the tuned x2.5 vision (11.25 base) and a
+    # modest overrun so melee can actually CATCH them.
     "bunny":     dict(style="prey", flee_vision=11.25, flee_mult=1.35,
                       alert_s=0.6, panic_overrun=1.4,
                       zigzag=True, zigzag_deg=40, zigzag_every_s=1.0,
@@ -304,19 +309,25 @@ MOB_BEHAVIORS: Dict[str, dict] = {
                       alert_s=0.4, panic_overrun=1.5,
                       scatter_r=6.0, hop_circle_s=0.6,
                       # fly_away REWORK: despawn only when the player keeps
-                      # CLOSING IN (within 3 tiles) mid-flight — with a
-                      # 13.75-tile vision the old always-despawn emptied the
-                      # map of birds entirely.
+                      # CLOSING IN (within 3 tiles) mid-flight — with the old
+                      # always-despawn the map emptied of birds entirely.
                       fly_away=True, fly_away_close_r=3.0),
     # neutral: wanders; only fights back for aggro_s seconds after a hit.
     "boar":      dict(style="neutral", aggro_s=15.0,
                       # O4a warn-charge + O4c defensive leash (Vintage Story
                       # parity: pursuit is DEFENSIVE, distance-capped).
+                      # USER 29/09 ("gấu chả đánh trả"): no two-stage rage on
+                      # the BOAR — one hit charges it immediately. The staged
+                      # rage stays BEAR-only below.
                       warn_s=0.7, charge_s=1.5, charge_mult=2.0,
                       charge_leash=6.0),
     "bear":      dict(style="neutral", aggro_s=20.0,
-                      # O5a back-turn pursuit + O5b two-stage rage + O5c
-                      # endurance cap (bears aren't endurance hunters).
+                      # O5a back-turn pursuit + O5c endurance cap. O5b
+                      # two-stage rage SIMPLIFIED (user 29/09): the first hit
+                      # still aggravates but the bear now CHARGES right away —
+                      # the old warning-hit-then-never-fight-back path (the
+                      # early return never armed aggro_until) read as the
+                      # bear ignoring the player completely.
                       backturn_bonus=1.4, backturn_s=3.0,
                       rage_s=30.0, aggro_leash=8.0),
     # fox: Minecraft parity — tolerant of WALKING players (keeps its
