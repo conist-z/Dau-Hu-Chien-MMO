@@ -178,11 +178,13 @@ export const EQUIP_CHAR_SLOTS = { x: 10, y: 17, w: 46, h: 62, file: "ui/v5/layer
 export const EQUIP_CHAR_TRINKET = { x: 44, y: 65, w: 10, h: 13, file: "ui/v5/layers/equip_char_trinket.png" };
 export const EQUIP_CHAR_RING = { x: 12, y: 66, w: 11, h: 12, file: "ui/v5/layers/equip_char_ring.png" };
 // RIGHT grid = THE BAG (5x4 = all 20 bag cells). The inner parchment of the
-// 148px frame spans x 68..141 (74px) — a 16px pitch needs 78px and spilled
-// over the right border (user: "ô slot tràn ra ngoài panel"). A 15px pitch
-// (1px parchment gap, still clearly separate cells) fits exactly: 4×15+14=74.
+// 148px frame spans x 68..141 (74px). 5 cells of 14px at a 15px pitch fill it
+// EXACTLY — flush against both borders, whose light color (205,166,119) is
+// identical to the cell atom, so flush cells read as "overflowing" the frame
+// (user: tràn trái / tràn phải). Pitch 14.5 leaves a 1px parchment margin on
+// each side (cells 69..140) and 1.5px screen gaps between cells.
 export const EQUIPMENT_GRID: GridLayout = {
-  firstX: 67, firstY: 16, stepX: 15, stepY: 15,
+  firstX: 69, firstY: 16, stepX: 14.5, stepY: 15,
   cols: 5, rows: 4, slotW: 14, slotH: 14,
 };
 export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
