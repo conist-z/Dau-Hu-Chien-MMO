@@ -165,7 +165,7 @@ export class Quests extends Menu {
     this.shortDescription.innerHTML = shortDescription ?? "";
     this.description.innerHTML = description ?? "";
     if (quest.rewards) this.rewards.innerHTML = quest.rewards.join("<br>");
-    this.requirements.innerHTML = "None";
+    this.requirements.innerHTML = "Không có";
   }
 }
 
@@ -346,6 +346,9 @@ export class Leaderboards extends Menu {
   private searchList: HTMLUListElement;
   private resultsList: HTMLUListElement;
   private search: HTMLInputElement;
+  /** The source currently displayed (setRows re-renders only when it is
+   *  the one on screen — live snapshot feeds must not yank the view). */
+  private currentSource: { name: string; rows: LeaderboardRow[] } | null = null;
 
   constructor(private sources: { name: string; rows: LeaderboardRow[] }[]) {
     super("#leaderboards", "#close-leaderboards", "#leaderboard-button");
@@ -355,6 +358,16 @@ export class Leaderboards extends Menu {
     this.search.addEventListener("input", () => this.handleInput());
 
     this.load();
+  }
+
+  /** Live data feed (snapshot players): replace one source's rows. Called
+   *  every 20 Hz snapshot — only touches the array, and re-renders the
+   *  results list ONLY when that source is currently on screen. */
+  public setRows(sourceName: string, rows: LeaderboardRow[]): void {
+    const source = this.sources.find((s) => s.name === sourceName);
+    if (!source) return;
+    source.rows = rows;
+    if (this.currentSource === source) this.handleSearchElement(source);
   }
 
   private load(): void {
@@ -372,7 +385,18 @@ export class Leaderboards extends Menu {
   }
 
   private handleSearchElement(source: { name: string; rows: LeaderboardRow[] }): void {
+    this.currentSource = source;
     this.resultsList.innerHTML = "";
+    if (source.rows.length === 0) {
+      // Friendly empty state (việt hoá): an empty list read as "menu hỏng".
+      const empty = document.createElement("li");
+      const note = document.createElement("p");
+      empty.classList.add("slice-list-item");
+      note.innerHTML = "Chưa có dữ liệu.";
+      empty.append(note);
+      this.resultsList.append(empty);
+      return;
+    }
     for (const result of source.rows) this.createResultElement(result);
   }
 

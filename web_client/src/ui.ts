@@ -993,8 +993,8 @@ export class Hud {
   }
 
   /** Set by main.ts: armor equip/unequip server op. */
-  private onArmorEquipCb: ((action: "equip" | "unequip", slot: string, itemId: string | null) => void) | null = null;
-  onArmorEquip(cb: (action: "equip" | "unequip", slot: string, itemId: string | null) => void): void {
+  private onArmorEquipCb: ((action: "equip" | "unequip", slot: string, itemId: string | null, slotIndex?: number) => void) | null = null;
+  onArmorEquip(cb: (action: "equip" | "unequip", slot: string, itemId: string | null, slotIndex?: number) => void): void {
     this.onArmorEquipCb = cb;
   }
 
@@ -1184,7 +1184,9 @@ export class Hud {
     } else if (d.from === "bag" && target === "worn") {
       // Bag armor → worn slot: the server validates the slot match and
       // swaps the previous piece back into the bag (armor_equip op).
-      this.onArmorEquipCb?.("equip", EQUIP_WORN_SLOTS[index]?.slot ?? "", d.stack.id);
+      // d.index = the bag cell the piece was dragged FROM — the swapped-out
+      // old piece lands EXACTLY there (in-place swap, no auto-tidy).
+      this.onArmorEquipCb?.("equip", EQUIP_WORN_SLOTS[index]?.slot ?? "", d.stack.id, d.index);
     } else if (d.from === "worn" && target === "worn") {
       // Worn → worn (helmet onto chest etc.): server refuses (bad_slot),
       // so just spring back — no optimistic swap to unwind.
@@ -1192,9 +1194,11 @@ export class Hud {
     }
     // worn → bag: handled via the worn-slot CLICK (unequip) and the
     // nearestDropTarget worn→bag path below — dragging onto a bag cell
-    // from a worn slot is the unequip gesture.
+    // from a worn slot is the unequip gesture. The dropped-on cell index
+    // rides along (slot_index): the server lands the piece EXACTLY there
+    // (same fix as craft collect-with-slot — no auto-tidy reshuffle).
     if (d.from === "worn" && target === "bag") {
-      this.onArmorEquipCb?.("unequip", EQUIP_WORN_SLOTS[d.index]?.slot ?? "", null);
+      this.onArmorEquipCb?.("unequip", EQUIP_WORN_SLOTS[d.index]?.slot ?? "", null, index);
     }
   }
 
@@ -3254,6 +3258,19 @@ export class Hud {
   /** Feed the players page with the snapshot's player list. */
   setHubPlayers(list: import("./protocol").PlayerPayload[]): void {
     this.hubPages?.setPlayers(list);
+    // LEADERBOARD PARITY: mirror the live player list into the Kaetram
+    // leaderboards menu (name + level/HP info row), sorted by level then
+    // HP. Only touches data — the menu re-renders if it is open.
+    const rows = [...list]
+      .sort(
+        (a, b) =>
+          (b.level ?? 1) - (a.level ?? 1) || (b.hp ?? 0) - (a.hp ?? 0),
+      )
+      .map((p) => ({
+        name: p.name,
+        info: `Cấp ${p.level ?? 1} · HP ${p.hp ?? "?"}/${p.max_hp ?? "?"}`,
+      }));
+    this.kLeaderboards?.setRows("Người chơi online", rows);
   }
 
   /** Open a hub page (render happens inside HubPages.render). */
