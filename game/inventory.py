@@ -1,7 +1,7 @@
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from config import HOTBAR_SLOTS
-from game.items import ITEM_REGISTRY, apply_effect
+from game.items import ITEM_REGISTRY, armor_slot_of, apply_effect
 
 
 class Inventory:
@@ -79,14 +79,19 @@ class Inventory:
         overflow into the first free slot. Slots the player deliberately
         left empty in the middle are never backfilled by later pickups —
         no compaction, ever.
+
+        ARMOR NEVER STACKS (user: "giáp không stack như item bình thường"):
+        each piece is an individual — a second helmet always takes its own
+        cell, exactly like the equipment panel treats it.
         """
         if qty <= 0:
             return
-        for i, s in enumerate(self.slots):
-            if s and s[0] == item_id:
-                self.slots[i] = (item_id, s[1] + qty)
-                self._bump()
-                return
+        if armor_slot_of(item_id) is None:
+            for i, s in enumerate(self.slots):
+                if s and s[0] == item_id:
+                    self.slots[i] = (item_id, s[1] + qty)
+                    self._bump()
+                    return
         free = self.first_free_slot()
         if free >= 0:
             self.slots[free] = (item_id, qty)
@@ -143,13 +148,14 @@ class Inventory:
 
         Same item in both = merge src into dst (nothing stays in src).
         Different/empty = plain swap. Pure grid edit: totals never change.
+        ARMOR NEVER STACKS: two same-kind pieces just swap cells.
         """
         if not (0 <= src < len(self.slots) and 0 <= dst < len(self.slots)):
             return False
         a, b = self.slots[src], self.slots[dst]
         if a is None:
             return False
-        if b and b[0] == a[0]:
+        if b and b[0] == a[0] and armor_slot_of(a[0]) is None:
             self.slots[dst] = (b[0], b[1] + a[1])
             self.slots[src] = None
         else:

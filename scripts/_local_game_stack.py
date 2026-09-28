@@ -245,6 +245,32 @@ class LocalStack:
             except Exception as exc:
                 await self._send(cid, {"type": "push", "message": f"[preview] action error: {exc!r}"})
             return
+        if t == "inventory_op":
+            op = frame.get("op")
+            uid = self.sessions[cid]["user_id"]
+            ch = self.joined.get(cid)
+            inv = self.gm.get_inventory(ch, uid) if ch else None
+            if op == "reorder" and inv is not None:
+                # Preview parity with web_api/core reorder → manager.reorder_bag:
+                # bag-grid drag & drop persists the client's slot layout
+                # (missing this made every drag echo back the OLD server
+                # layout — items "tự sắp xếp" after each drag in preview).
+                await self.gm.reorder_bag(
+                    ch, uid, [(e.get("id"), e.get("qty", 0))
+                              for e in frame.get("order", [])])
+                return
+            if op == "move_to" and inv is not None:
+                await self.gm.set_hotbar_slot(ch, uid, int(frame.get("slot", 0)),
+                                              frame.get("item_id"))
+                return
+            if op == "split" and inv is not None:
+                inv.split_slot(int(frame.get("slot", -1)))
+                return
+            if op == "use":
+                await self.gm.use_item(ch, uid, frame.get("item_id", ""))
+                return
+            if op != "armor_equip":
+                return  # unknown inventory op: stay silent in preview
         if t == "inventory_op" and frame.get("op") == "armor_equip":
             # Preview parity with web_api/core._handle_inventory_op armor_equip:
             # server validates the slot match and swaps the old piece back.
@@ -268,16 +294,46 @@ class LocalStack:
                     await self._send(cid, {"type": "error", "code": "bad_slot"})
                     return
                 prev = equipped.get(slot)
-                inv.remove(item_id, 1)
+                # Position-precise parity with web_api/core equip: the old
+                # piece swaps into the cell the new one was dragged FROM.
+                slot_idx = frame.get("slot_index")
+                slot_idx = int(slot_idx) if isinstance(slot_idx, int) else None
+                if slot_idx is not None and 0 <= slot_idx < len(inv.slots):
+                    src_cell = inv.slots[slot_idx]
+                    if src_cell and src_cell[0] == item_id:
+                        if src_cell[1] > 1:
+                            inv.set_slot(slot_idx, item_id, src_cell[1] - 1)
+                        else:
+                            inv.set_slot(slot_idx, None, 0)
+                    else:
+                        slot_idx = None
+                if slot_idx is None:
+                    inv.remove(item_id, 1)
                 equipped[slot] = item_id
                 if prev:
-                    inv.add(prev, 1)
+                    if slot_idx is not None and inv.slots[slot_idx] is None:
+                        inv.set_slot(slot_idx, prev, 1)
+                    else:
+                        inv.add(prev, 1)
             elif action == "unequip":
                 prev = equipped.pop(slot, None)
-                if prev and inv.first_free_slot() >= 0:
-                    inv.add(prev, 1)
-                elif prev:
-                    equipped[slot] = prev  # bag full: roll back
+                if prev:
+                    # Position-precise parity with web_api/core: drop-to-slot
+                    # lands EXACTLY where dropped (no auto-tidy).
+                    slot_idx = frame.get("slot_index")
+                    slot_idx = int(slot_idx) if isinstance(slot_idx, int) else None
+                    if slot_idx is not None and 0 <= slot_idx < len(inv.slots):
+                        if inv.slots[slot_idx] is None:
+                            inv.set_slot(slot_idx, prev, 1)
+                        elif armor_slot_of(inv.slots[slot_idx][0]) == slot:
+                            equipped[slot] = inv.slots[slot_idx][0]
+                            inv.set_slot(slot_idx, prev, 1)
+                        else:
+                            equipped[slot] = prev  # roll back
+                    elif inv.first_free_slot() >= 0:
+                        inv.add(prev, 1)
+                    else:
+                        equipped[slot] = prev  # bag full: roll back
             await self._send(cid, build_welcome(rt, uid))
             return
         if t == "asset_request":

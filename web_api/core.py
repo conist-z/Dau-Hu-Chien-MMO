@@ -925,23 +925,72 @@ class WebHub:
                                "message": "Không còn món đó trong túi."})
                     return
                 prev = equipped.get(slot)
-                inv.remove(item_id, 1)
+                # POSITION-PRECISE equip: the client sends slot_index = the
+                # bag cell the new piece was dragged FROM. The swapped-out
+                # old piece lands EXACTLY there (an in-place swap) instead of
+                # auto-tidying to the first free slot.
+                slot_idx = frame.get("slot_index")
+                slot_idx = int(slot_idx) if isinstance(slot_idx, int) else None
+                src_cell = None
+                if slot_idx is not None and 0 <= slot_idx < len(inv.slots):
+                    src_cell = inv.slots[slot_idx]
+                    if src_cell and src_cell[0] == item_id:
+                        if src_cell[1] > 1:
+                            inv.set_slot(slot_idx, item_id, src_cell[1] - 1)
+                        else:
+                            inv.set_slot(slot_idx, None, 0)
+                    else:
+                        slot_idx = None  # stale echo: fall back to remove()
+                if slot_idx is None:
+                    inv.remove(item_id, 1)
                 equipped[slot] = item_id
                 if prev:
-                    inv.add(prev, 1)  # the old piece swaps back into the bag
+                    if slot_idx is not None and inv.slots[slot_idx] is None:
+                        inv.set_slot(slot_idx, prev, 1)  # in-place swap
+                    else:
+                        inv.add(prev, 1)  # fallback: classic landing
             elif action == "unequip":
                 prev = equipped.pop(slot, None)
                 if not prev:
                     await self.send_to_client_conn(
                         sess, {"type": MSG_ERROR, "code": "bad_slot"})
                     return
-                if inv.first_free_slot() < 0:
-                    equipped[slot] = prev  # roll back — bag is FULL
-                    await self.send_to_client_conn(
-                        sess, {"type": MSG_ERROR, "code": "bag_full",
-                               "message": "Túi đầy — không tháo được."})
-                    return
-                inv.add(prev, 1)
+                # POSITION-PRECISE (same fix as craft collect-with-slot): the
+                # client names the exact bag cell the piece was dropped on.
+                # Empty cell = land there; same-kind armor cell = refused
+                # (armor never stacks); occupied different cell = plain swap
+                # with the worn slot. NO first-free-slot search — the piece
+                # lands EXACTLY where the player dropped it, no auto-tidy.
+                slot_idx = frame.get("slot_index")
+                slot_idx = int(slot_idx) if isinstance(slot_idx, int) else None
+                if slot_idx is not None and 0 <= slot_idx < len(inv.slots):
+                    target = inv.slots[slot_idx]
+                    if target is None:
+                        inv.set_slot(slot_idx, prev, 1)
+                    else:
+                        # Occupied: swap with the worn slot (the dropped-on
+                        # stack takes the old piece's place on the mannequin
+                        # IF it is armor for THIS slot; otherwise roll back).
+                        swap_id = target[0]
+                        want = armor_slot_of(swap_id)
+                        if want == slot:
+                            equipped[slot] = swap_id
+                            inv.set_slot(slot_idx, prev, 1)
+                        else:
+                            equipped[slot] = prev  # roll back
+                            await self.send_to_client_conn(
+                                sess, {"type": MSG_ERROR, "code": "bad_slot",
+                                       "message": "Ô đó đã có đồ khác — không đổi được."})
+                            return
+                else:
+                    # Plain click unequip (no drop target): classic path.
+                    if inv.first_free_slot() < 0:
+                        equipped[slot] = prev  # roll back — bag is FULL
+                        await self.send_to_client_conn(
+                            sess, {"type": MSG_ERROR, "code": "bag_full",
+                                   "message": "Túi đầy — không tháo được."})
+                        return
+                    inv.add(prev, 1)
             else:
                 await self.send_to_client_conn(
                     sess, {"type": MSG_ERROR, "code": "bad_op"})

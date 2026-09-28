@@ -339,9 +339,13 @@ export class Hud {
         if (this.invPanel.classList.contains("hidden")) {
           this.invClosed = false;
           this.craftClosed = false;
+          this.equipClosed = false;
           this.lastBagSig = "";
           this.toggleInventory(true);
         }
+        // Re-clicking the EQUIP tab always re-shows its panel (same rule
+        // as craft: a tab click is an explicit open of that tab's panel).
+        if (tab === this.equipTab) this.equipClosed = false;
         document.querySelectorAll<HTMLElement>(".inv-tab").forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
         // Re-apply the per-panel layout; applyTabLayout also plays the
@@ -719,6 +723,7 @@ export class Hud {
       this.stationOpen = false;
       this.invClosed = false;
       this.craftClosed = false;
+      this.equipClosed = false;
       this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
       this.applyTabLayout(false);
       this.animateShow(this.invPanel);
@@ -732,6 +737,8 @@ export class Hud {
 
   /** Station-opened override: force the 9-cell grid until a plain open. */
   private stationOpen = false;
+  /** Per-panel close flag for the EQUIPMENT panel (independent of craft). */
+  private equipClosed = false;
 
   get inventoryOpen(): boolean {
     return !this.invPanel.classList.contains("hidden");
@@ -743,6 +750,7 @@ export class Hud {
   openCraftPanel(): void {
     this.invClosed = false;
     this.craftClosed = false;
+    this.equipClosed = false;
     this.stationOpen = true; // force the 9-cell grid (interacted at a table)
     this.lastBagSig = ""; // opening must ALWAYS repaint (stale-grid guard)
     if (this.invPanel.classList.contains("hidden")) {
@@ -781,7 +789,7 @@ export class Hud {
     if (equipActive) {
       // EQUIP tab: the equipment panel ALONE — its right grid IS the bag
       // (user: "bỏ cái inv panel ở bên dưới của trang bị panel").
-      const showEquip = this.visiblyShow(this.invEquipWrap, this.craftClosed);
+      const showEquip = this.visiblyShow(this.invEquipWrap, this.equipClosed);
       this.invItemsWrap.classList.add("hidden");
       this.invCraftWrap.classList.add("hidden");
       this.invItemsCraftWrap.classList.add("hidden");
@@ -838,9 +846,11 @@ export class Hud {
       this.applyTabLayout();
       this.renderInventory();
     } else if (which === "equip") {
-      // Equip X: same per-panel rule as craft — panel hides, bag stays.
-      this.craftClosed = true;
-      this.applyTabLayout(true);
+      // Equip X: hides the equipment panel ONLY — its own close flag (NOT
+      // craftClosed: sharing it made the craft-tab slide-up branch fire and
+      // re-show the old inv panel alone under the equip tab).
+      this.equipClosed = true;
+      this.applyTabLayout(false);
       if (this.invClosed) {
         this.stationOpen = false;
         this.animateHide(this.invPanel);
@@ -869,6 +879,7 @@ export class Hud {
   reopenAfterFullClose(): void {
     this.invClosed = false;
     this.craftClosed = false;
+    this.equipClosed = false;
   }
 
   private lastBagSig = "";
