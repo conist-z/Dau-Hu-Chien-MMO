@@ -177,13 +177,12 @@ export const EQUIP_MANNEQUIN = { x: 11, y: 16, w: 43, h: 46, file: "ui/v5/layers
 export const EQUIP_CHAR_SLOTS = { x: 10, y: 17, w: 46, h: 62, file: "ui/v5/layers/equip_char_slots.png" };
 export const EQUIP_CHAR_TRINKET = { x: 44, y: 65, w: 10, h: 13, file: "ui/v5/layers/equip_char_trinket.png" };
 export const EQUIP_CHAR_RING = { x: 12, y: 66, w: 11, h: 12, file: "ui/v5/layers/equip_char_ring.png" };
-// RIGHT grid = THE BAG (5x4 = all 20 bag cells). The kit's 16px pitch only
-// fits 4 cols inside the 148px frame, but packing 5 cols at a 14px pitch
-// made the cells TOUCH — no parchment gap, one flat slab (user: "ô slot
-// không hiện"). Keep the bag's 16px pitch (2px gap between cells, exactly
-// the bag-tab look) and start at x=66 right after the mannequin zone.
+// RIGHT grid = THE BAG (5x4 = all 20 bag cells). The inner parchment of the
+// 148px frame spans x 68..141 (74px) — a 16px pitch needs 78px and spilled
+// over the right border (user: "ô slot tràn ra ngoài panel"). A 15px pitch
+// (1px parchment gap, still clearly separate cells) fits exactly: 4×15+14=74.
 export const EQUIPMENT_GRID: GridLayout = {
-  firstX: 66, firstY: 17, stepX: 16, stepY: 16,
+  firstX: 67, firstY: 16, stepX: 15, stepY: 15,
   cols: 5, rows: 4, slotW: 14, slotH: 14,
 };
 export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
