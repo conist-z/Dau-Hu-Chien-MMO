@@ -50,6 +50,7 @@ import {
   EQUIP_MANNEQUIN, EQUIPMENT_GRID, EQUIPMENT_PANEL,
   EQUIPMENT_TITLE, EQUIP_WORN_SLOTS, INV_COIN, INV_CRYSTAL,
   INV_SLOT, INV_TITLE, INVENTORY_GRID, INVENTORY_PANEL, PIXEL_SCALE,
+  EQUIP_GRID_CELL, ARMOR_ITEM_IDS,
   PURSE_COIN_X, PURSE_CRYSTAL_X, PURSE_DIGIT,
   itemIconUrl, makeDigitRun, makeLayer, makeSlot, sizePanel, slotXY,
 } from "./pixel_ui";
@@ -913,7 +914,7 @@ export class Hud {
     for (const w of EQUIP_WORN_SLOTS) {
       const stem = this.wornArmor[w.slot] ?? null;
       const slot = document.createElement("div");
-      slot.className = "slot-pix equip-worn";
+      slot.className = "slot-pix equip-worn" + (stem && ARMOR_ITEM_IDS.has(stem) ? " icon-armor" : "");
       slot.style.cssText =
         `left:${w.x * PIXEL_SCALE}px;top:${w.y * PIXEL_SCALE}px;` +
         `width:${14 * PIXEL_SCALE}px;height:${14 * PIXEL_SCALE}px;` +
@@ -957,14 +958,16 @@ export class Hud {
     for (let i = 0; i < cells; i++) {
       const [x, y] = slotXY(g, i);
       const st = this.inventory.bag[i] ?? null;
-      // Same DARK cell atom as the inventory panel (user: "box của inv
-      // trang bị nên không trong suốt, y như inv túi đồ").
-      const slot = makeSlot(g.slotW, x, y, INV_SLOT, {
+      // DARK cell atom (inv_slot.png): the equip grid packs cells at a 14px
+      // pitch so the LIGHT cell melted into the parchment as a flat slab —
+      // the darker cell keeps each slot visible (user: "ô nền đậm như inv").
+      const slot = makeSlot(g.slotW, x, y, EQUIP_GRID_CELL, {
         iconUrl: st ? itemIconUrl(st.id) : undefined,
         emoji: st ? iconFor(st.id, this.itemEmojis) : "",
         qty: st && st.qty > 1 ? String(st.qty) : "",
         title: st ? st.id : undefined,
       });
+      if (st && ARMOR_ITEM_IDS.has(st.id)) slot.classList.add("icon-armor");
       slot.dataset.slot = String(i);
       if (st) {
         slot.classList.add("has-item");

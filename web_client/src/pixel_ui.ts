@@ -185,6 +185,16 @@ export const EQUIPMENT_GRID: GridLayout = {
   cols: 5, rows: 4, slotW: 14, slotH: 14,
 };
 export const EQUIP_SLOT_ATOM = "ui/v5/atoms/equip_slot.png";
+// Equip grid cells are packed at a 14px pitch (no parchment gap between
+// cells, unlike the bag's 16px grid), so the LIGHT cell atom melts into the
+// frame's parchment as one flat slab. The DARK cell (inv_slot.png) keeps
+// each cell visible when they touch (user: "ô nền đậm như inv").
+export const EQUIP_GRID_CELL = "ui/v5/atoms/inv_slot.png";
+// Kaetram armor sprites draw their ink at only ~12x11 inside the 16x16
+// canvas (stone/wood fill the full canvas) — at the shared icon size armor
+// looked visibly smaller (user: "icon giáp không to lên"). Slots carrying
+// armor get the .icon-armor class → rendered larger to match the others' ink.
+export const ARMOR_ITEM_IDS = new Set(["leatherhelmet", "leatherchest", "leatherleggings"]);
 // Paperdoll SLOTS (left, worn): slot keys + their kit-local cell bboxes.
 export const EQUIP_WORN_SLOTS: { slot: "helmet" | "chest" | "legs"; x: number; y: number }[] = [
   { slot: "helmet", x: 26, y: 17 },
