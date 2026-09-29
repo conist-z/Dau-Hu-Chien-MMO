@@ -229,6 +229,16 @@ export class PreviewPanel {
     for (const [id, label] of MAPS) {
       btn(mapSec, label, () => this.send("map", id), "#33321a");
     }
+    // 🟧 Box chặn: local collision overlay (game.ts setCollisionDebug) —
+    // đỏ = ô chặn vuông, cam = phần mask thực sự chặn. Toggle qua window
+    // event — cùng đường với phím F3, không cần frame server.
+    btn(mapSec, "🟧 Box chặn", () => {
+      const scene = (window as unknown as {
+        gameScene?: { getCollisionDebug(): boolean };
+      }).gameScene;
+      const on = !(scene?.getCollisionDebug() ?? false);
+      window.dispatchEvent(new CustomEvent("toggle-collision", { detail: on }));
+    }, "#3a2a12");
 
     // ---- 📡 status + log ----
     const st = details("📡 Trạng thái & log", true);

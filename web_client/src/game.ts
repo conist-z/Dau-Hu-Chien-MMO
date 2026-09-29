@@ -353,6 +353,11 @@ export class WorldScene extends Phaser.Scene {
   private paperdollReady = false;
   private selfDoll: PaperdollBody | null = null;
   private remoteDolls = new Map<number, PaperdollBody>();
+  // DEATH DISSOLVE (user 29/09): while dead, the self body fades + sinks
+  // exactly like the mob die animation (setAlpha/sink per frame in update).
+  // T0 = performance.now() when the death snapshot landed (0 = alive).
+  private selfDieT0 = 0;
+  private selfDissolving = false;
   // --- client-side prediction (instant local movement) ---
   private inputVec = { dx: 0, dy: 0, running: false };
   /** Previous prediction frame's input vector — feeds the direction-reversal
@@ -943,6 +948,9 @@ export class WorldScene extends Phaser.Scene {
         }
       }
     }
+    // Debug overlay follow-the-map: a stale overlay kept painting the
+    // PREVIOUS map's boxes over the new one — rebuild whenever it is on.
+    if (this.collisionDebug) this.setCollisionDebug(true);
     this.selfDir = welcome.self.dir || "SOUTH";
     this.lastSentTurnDir = ""; // fresh map: re-announce facing once
     if (!this.faceVec) {
@@ -2134,6 +2142,15 @@ export class WorldScene extends Phaser.Scene {
         this.lastSentTurnDir = "";
       }
       this.selfDoll.animate(this.selfX * this.tilePx, this.selfY * this.tilePx + this.tilePx / 2, moving ? "walk" : "idle", this.selfDir, nowMs);
+      // DEATH DISSOLVE (mob-die parity): alpha 1→0 + a slow sink over ~2.5 s
+      // while the phase-1 death overlay is up. The name label fades along.
+      if (this.selfDissolving) {
+        const age = nowMs - this.selfDieT0;
+        const k = Math.min(1, age / 2500);
+        this.selfDoll.setRenderAlpha(1 - k);
+        this.selfDoll.setPositionOffsetY(10 * k);
+        if (this.selfLabel) this.selfLabel.setAlpha(Math.max(0, 1 - k * 2));
+      }
     }
 
     const now = performance.now() - INTERP_BUFFER_MS;
@@ -4080,6 +4097,24 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** PHASE-1 death screen: fade + sink the self body (mob-die parity,
+   *  ~2.5s so the player sees themselves go while the death text is up).
+   *  `on` while dead; cleared on respawn — the doll pops back opaque. */
+  setSelfDissolving(on: boolean): void {
+    if (on && !this.selfDissolving) {
+      this.selfDissolving = true;
+      this.selfDieT0 = performance.now();
+    } else if (!on) {
+      this.selfDissolving = false;
+      this.selfDieT0 = 0;
+      // Restore instantly on respawn (the skull veil is usually covering
+      // this moment, so a pop is invisible; without the veil it still reads
+      // as "revived".
+      if (this.selfDoll) this.selfDoll.setRenderAlpha(1);
+      if (this.selfLabel) this.selfLabel.setAlpha(1);
+    }
+  }
+
   /** Kill echo from action_result: play the death animation for one zombie. */
   noteZombieKill(targetId: string | null | undefined, defeated: boolean | undefined): void {
     if (!targetId || !defeated) return;
@@ -4204,9 +4239,13 @@ export class WorldScene extends Phaser.Scene {
     this.selectedBlock = id;
   }
 
-  /** F3 debug: paint every collision tile RED over the map (viewport-wide
-   *  grid, follows the map origin exactly) so solids-vs-art mismatches are
-   *  visible in-game without any external tooling. */
+  /** F3 / /boxchan debug: paint the REAL blocking shape over the map so
+   *  solids-vs-art mismatches are visible in-game without any tooling.
+   *  THREE layers: red = full-tile solid (collision grid), amber = the
+   *  opaque 8x8 SUB-CELLS of mask-refined tiles (what actually stops the
+   *  box — the old tiles-only overlay read "lệch" everywhere in the cave
+   *  because 450+ tiles block via masks, not squares), outline = mask tile
+   *  bounds (enterable for the sweep, refined inside). */
   getCollisionDebug(): boolean {
     return this.collisionDebug !== null;
   }
@@ -4223,12 +4262,41 @@ export class WorldScene extends Phaser.Scene {
     const tw = this.welcome?.map?.tile_width ?? 32;
     const th = this.welcome?.map?.tile_height ?? tw;
     const g = this.add.graphics().setDepth(900);
-    g.fillStyle(0xff2020, 0.45);
+    // 1) Full-tile solids (red).
+    g.fillStyle(0xff2020, 0.4);
     for (let y = 0; y < this.collision.length; y++) {
       const row = this.collision[y];
       for (let x = 0; x < row.length; x++) {
         if (row[x]) g.fillRect(x * tw, y * th, tw, th);
       }
+    }
+    // 2) Opaque sub-cells of mask-refined tiles (amber) — the real box.
+    const RES = WorldScene.MASK_RES;
+    const cell = 1 / RES;
+    g.fillStyle(0xffa500, 0.6);
+    for (const [key, mask] of this.tileMasks) {
+      const ci = key.indexOf(",");
+      const tx = parseInt(key.slice(0, ci), 10);
+      const ty = parseInt(key.slice(ci + 1), 10);
+      for (let my = 0; my < RES; my++) {
+        const rowbits = mask >> (my * RES);
+        if (rowbits === 0) continue;
+        for (let mx = 0; mx < RES; mx++) {
+          if ((rowbits & (1 << mx)) === 0) continue;
+          g.fillRect(
+            (tx + mx * cell) * tw, (ty + my * cell) * th,
+            tw * cell, th * cell,
+          );
+        }
+      }
+    }
+    // 3) Mask tile outlines (thin amber border around refined tiles).
+    g.lineStyle(1, 0xffa500, 0.9);
+    for (const key of this.tileMasks.keys()) {
+      const ci = key.indexOf(",");
+      const tx = parseInt(key.slice(0, ci), 10);
+      const ty = parseInt(key.slice(ci + 1), 10);
+      g.strokeRect(tx * tw, ty * th, tw, th);
     }
     this.collisionDebug = g;
   }

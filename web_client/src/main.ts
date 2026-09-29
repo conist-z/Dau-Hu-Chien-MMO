@@ -36,6 +36,22 @@ const travelVeil = new TravelVeil();
 const scene = new WorldScene();
 
 // =====================================================================
+// 3-PHASE DEATH SCREEN (user 29/09)
+// =====================================================================
+// PHASE 1 — the world stays visible: the character dissolves (mob-die
+//   parity, game.ts) + the death text fades in over a red vignette. NO veil.
+// PHASE 2 — the countdown's final second: the SKULL iris swallows the
+//   screen onto the loading screen (transitions.ts closeSkull).
+// PHASE 3 — respawn (dead=false): the veil exits and the iris OPENS AS A
+//   CIRCLE (the skull is close-only — user: "mở ra thì vẫn hình tròn").
+// Death identity = the snapshot's died_at (unix, stamped server-side per
+// death): a NEW died_at re-arms phase 1 exactly once; the boolean `dead`
+// alone flips every snapshot and cannot gate "fresh death".
+let deathSeenAt: number | null = null;
+let deathVeilArmed = false; // phase-2 skull close armed?
+const DEATH_VEIL_LEAD_S = 1.0; // skull swallows the screen 1s before respawn
+
+// =====================================================================
 // MOBILE-UI MODE FLAG (PC ↔ mobile parity rule, docs §1b)
 // =====================================================================
 // One body class drives EVERY mobile decision: CSS layouts (hub tray,
@@ -585,9 +601,36 @@ const net = new Net({
     // hồi trên 18% hoặc chết thì tắt (fade-out). Debounce band chống flicker
     // khi regen nhấp nhô quanh ngưỡng — chi tiết trong lowhp.ts.
     lowHpFx.setRatio(frame.self.hp, frame.self.max_hp, !!frame.self.dead);
-    hud.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
-    travelVeil.setDead(!!frame.self.dead, frame.self.respawn_s ?? 0);
-    if (frame.self.dead) input.clearKeys();
+    // --- 3-PHASE DEATH SCREEN (see the block above the handlers) ---------
+    const dead = !!frame.self.dead;
+    const diedAt = frame.self.died_at ?? null;
+    const freshDeath = dead && diedAt !== null && diedAt !== deathSeenAt;
+    if (freshDeath) deathSeenAt = diedAt;
+    if (!dead) deathSeenAt = null; // rearmed for the next death
+    // PHASE 1: the dissolve + text overlay runs as soon as the death is
+    // fresh (the veil stays OFF — that is the whole point of the change).
+    scene.setSelfDissolving(dead);
+    hud.setDead(dead, frame.self.respawn_s ?? 0,
+      frame.self.death_reason ?? undefined, freshDeath);
+    if (dead) input.clearKeys();
+    // PHASE 2: arm the skull close for the countdown's final second. The
+    // close itself fires once (deathVeilArmed), driven by the countdown so
+    // a burst of dropped snapshots cannot skip or replay it.
+    if (dead && !deathVeilArmed && (frame.self.respawn_s ?? 0) <= DEATH_VEIL_LEAD_S) {
+      deathVeilArmed = true;
+      hud.setDead(false, 0); // hand the screen over to the veil
+      travelVeil.closeSkull();
+    }
+    if (!dead) deathVeilArmed = false;
+    // PHASE 3: dead=false → travelVeil.setDead(false) runs the normal
+    // circle-open exit (only when the veil is actually up).
+    travelVeil.setDead(dead, frame.self.respawn_s ?? 0);
+    // Lost-connection safety: a death stuck with no snapshots for 10 s must
+    // never trap the player behind the loading veil (mirror of FORCE_MS).
+    if (dead && deathVeilArmed && (frame.self.respawn_s ?? 0) > DEATH_VEIL_LEAD_S + 9) {
+      deathVeilArmed = false;
+      travelVeil.abortDeath();
+    }
     // Bag rides along only when it changed (inv_version ack) — otherwise
     // this is a no-op and the grid never re-renders mid-drag.
     if (frame.inventory) applyInventory(frame.inventory, frame.inv_version);
@@ -899,6 +942,10 @@ window.addEventListener("keydown", (e) => {
     }
   }
 });
+// Console handle for the preview harness: window.toggleBoxChan(true|false)
+// re-draws the collision debug overlay after a map switch.
+(window as unknown as { toggleBoxChan: (on?: boolean) => void }).toggleBoxChan =
+  (on?: boolean) => scene.setCollisionDebug(on ?? !scene.getCollisionDebug());
 
 // ---- DESYNC DEBUG (F3 toggle) -------------------------------------------
 // On-screen panel (10 Hz): predicted vs server position, divergence, ack seq,
@@ -979,6 +1026,15 @@ hud.onWarpRegion = (id) => {
 hud.setHooks(
   (itemId) => net.inventoryOp("use", { item_id: itemId }),
   (text) => {
+    // /boxchan — bật/tắt overlay box chặn (đỏ = ô chặn vuông, cam = phần
+    // đất thực sự chặn theo sub-tile mask). Local-only: không gửi server.
+    if (text.trim() === "/boxchan") {
+      const on = !scene.getCollisionDebug();
+      scene.setCollisionDebug(on);
+      hud.toast(on ? "🟧 Box chặn: BẬT (đỏ=ô chặn, cam=mask thật)"
+                   : "Box chặn: TẮT");
+      return;
+    }
     if (text.startsWith("/")) {
       net.chatCommand(text);
     } else {

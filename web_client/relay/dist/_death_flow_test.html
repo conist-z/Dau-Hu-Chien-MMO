@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<!-- LIVE TEST — 3-phase death screen (user 29/09). Not shipped: dev-only. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>death flow test</title>
+<style>
+  body { margin:0; background:#3a5f3a; overflow:hidden; font-family: monospace; }
+  #world { position:absolute; inset:0; }
+  .tile { position:absolute; width:80px; height:80px; box-sizing:border-box; outline:1px solid rgba(0,0,0,.15); }
+  /* --- death overlay (copy of styles.css current rules) --- */
+  #death-overlay {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, rgba(60,8,14,0) 34%, rgba(60,8,14,.45) 78%, rgba(40,4,10,.7) 100%);
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 18vh; z-index: 50; opacity: 0; transition: opacity 1.2s ease; pointer-events: none;
+  }
+  #death-overlay.shown { opacity: 1; }
+  #death-overlay.hidden { display: none; }
+  .death-panel { background: rgba(20,8,10,.6); border: 2px solid #ba2d40; border-radius: 14px; padding: 14px 34px; text-align:center; color:#fff; text-shadow:0 2px 4px #000; }
+  .death-panel h2 { font-size: 22px; color: #ff6b7d; margin: 0 0 6px; }
+  .death-panel p { font-size: 14px; opacity: .85; margin: 4px 0; }
+  #death-timer { font-weight: 700; color: #ffd75e; margin-top: 8px; }
+  /* --- travel veil (copy) --- */
+  #travel-root { position: fixed; inset: 0; z-index: 6000; pointer-events: auto; }
+  #travel-root.hidden { display: none; }
+  #travel-root .tv-iris {
+    position: absolute; left: 50%; top: 50%; border-radius: 50%;
+    background: transparent; box-shadow: 0 0 0 2400px #000; pointer-events: none;
+  }
+  #travel-root .tv-iris.tv-skull {
+    border-radius: 0;
+    -webkit-mask-image: url("/ui/death_skull.png"); mask-image: url("/ui/death_skull.png");
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  }
+  #travel-root .tv-label { position:absolute; left:0; right:0; bottom:12vh; text-align:center; color:#fff; font-size:20px; }
+  /* fake player */
+  #player { position:absolute; left:46%; top:40%; width:36px; height:52px; background:#e8b98a; border-radius:8px; box-shadow:0 0 0 3px #5865f2; }
+  #log { position:absolute; top:8px; left:8px; color:#fff; font-size:13px; background:rgba(0,0,0,.55); padding:8px 10px; z-index:99; white-space:pre; }
+  button { position:absolute; top:8px; right:8px; z-index:99; font-size:16px; padding:8px 14px; }
+</style>
+</head>
+<body>
+<div id="world"></div>
+<div id="player"></div>
+<div id="death-overlay" class="hidden">
+  <div class="death-panel">
+    <h2>Bạn đã chết</h2>
+    <p id="death-reason">Bạn đã gục ngã</p>
+    <p id="death-timer">Hồi sinh sau 5s…</p>
+  </div>
+</div>
+<div id="travel-root" class="hidden">
+  <div class="tv-iris"></div>
+  <div class="tv-label"></div>
+</div>
+<div id="log">ready</div>
+<button onclick="runDeath()">▶ Chạy death flow</button>
+<script>
+// build checkerboard world
+const world = document.getElementById('world');
+for (let y = 0; y < 20; y++) for (let x = 0; x < 30; x++) {
+  const t = document.createElement('div');
+  t.className = 'tile';
+  t.style.left = x*80+'px'; t.style.top = y*80+'px';
+  t.style.background = (x+y)%2 ? '#4a7a4a' : '#417041';
+  world.appendChild(t);
+}
+const log = (m) => document.getElementById('log').textContent += '\n' + m;
+const player = document.getElementById('player');
+
+function phase1(reason, secs) {
+  const ov = document.getElementById('death-overlay');
+  document.getElementById('death-reason').textContent = reason;
+  let left = secs;
+  document.getElementById('death-timer').textContent = `Hồi sinh sau ${left}s…`;
+  ov.classList.remove('hidden');
+  void ov.offsetWidth;
+  ov.classList.add('shown');
+  // dissolve: fade + sink the player (parity with the Phaser tween)
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / 2500);
+    player.style.opacity = 1 - k;
+    player.style.transform = `translateY(${10*k}px)`;
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  const iv = setInterval(() => {
+    left -= 1;
+    if (left <= 0) { clearInterval(iv); phase2(); return; }
+    document.getElementById('death-timer').textContent = `Hồi sinh sau ${left}s…`;
+  }, 1000);
+}
+function phase2() {
+  document.getElementById('death-overlay').classList.remove('shown');
+  document.getElementById('death-overlay').classList.add('hidden');
+  closeSkullIris();
+}
+function closeSkullIris() {
+  const root = document.getElementById('travel-root');
+  const iris = root.querySelector('.tv-iris');
+  iris.classList.add('tv-skull');
+  iris.style.transition = 'none';
+  const half = Math.max(innerWidth, innerHeight)/2 + 40;
+  const startR = half / 0.62;
+  setIris(iris, startR);
+  root.classList.remove('hidden');
+  void iris.offsetWidth;
+  iris.style.transition = 'width 450ms cubic-bezier(.65,0,.35,1), height 450ms cubic-bezier(.65,0,.35,1), margin 450ms cubic-bezier(.65,0,.35,1)';
+  setTimeout(() => setIris(iris, 0), 30);
+  log('skull closing…');
+  setTimeout(() => { log('skull CLOSED (loading screen would hold here)'); }, 600);
+}
+function setIris(el, r) {
+  const d = Math.max(0, r*2);
+  el.style.width = d+'px'; el.style.height = d+'px';
+  el.style.margin = `${-d/2}px 0 0 ${-d/2}px`;
+}
+function openCircleIris() {
+  const root = document.getElementById('travel-root');
+  const iris = root.querySelector('.tv-iris');
+  iris.classList.remove('tv-skull');           // opening = CIRCLE
+  root.classList.remove('hidden');
+  setIris(iris, 0);
+  void iris.offsetWidth;
+  iris.style.transition = 'width 550ms cubic-bezier(.65,0,.35,1), height 550ms cubic-bezier(.65,0,.35,1), margin 550ms cubic-bezier(.65,0,.35,1)';
+  const half = Math.hypot(innerWidth, innerHeight)/2 + 40;
+  setTimeout(() => setIris(iris, half), 30);
+  setTimeout(() => {
+    root.classList.add('hidden');
+    player.style.opacity = 1; player.style.transform = 'none';
+    log('respawn: circle open OK');
+  }, 700);
+}
+function runDeath() {
+  document.getElementById('log').textContent = 'running…';
+  phase1('Bị zombie tấn công', 4);
+  setTimeout(openCircleIris, 4300); // fake respawn mid-hold
+}
+</script>
+</body>
+</html>

@@ -994,6 +994,29 @@ def load_map(map_id: str, assets_dir: Path) -> MapData:
             log.info("[portals] %s: freed %d arrival tile(s) walkable", map_id, n_freed)
     except FileNotFoundError:
         pass
+    # STALE-MASK PRUNE ("box chặn không khớp vật thể" — tái diễn): masks are
+    # built from poly/albedo cells BEFORE the later carves (invisible-blocker,
+    # portal arrival). Any tile that ended up WALKABLE must not keep a
+    # sub-tile mask: the tile sweep treats it as enterable (mask-passable)
+    # but masks.correct()/correctMaskOverlap still pushes the box out of its
+    # leftover opaque sub-cells — an INVISIBLE WALL on open floor right where
+    # the player sees nothing drawn. The mask refines a static block; with no
+    # block there is nothing to refine. Drop those masks so both the server
+    # sweep and the client prediction agree with the visible art.
+    if tile_masks is not None:
+        n_pruned = 0
+        for y in range(height):
+            row_c = collision[y]
+            row_m = tile_masks.grid[y]
+            for x in range(width):
+                if not row_c[x] and row_m[x] is not None:
+                    row_m[x] = None
+                    n_pruned += 1
+        if n_pruned:
+            log.info(
+                "[masks] %s: pruned %d stale mask(s) on walkable tiles",
+                map_id, n_pruned,
+            )
     image_path = assets_dir / f"{map_id}.png"
     if not image_path.exists():
         image_path = None

@@ -10,8 +10,8 @@
     <!-- Kaetram ORIGINAL UI stylesheet (compiled from their own scss by
          scripts/compile_kaetram_css.mjs) — loads AFTER our styles so the
          original component rules win over the generic resets. -->
-    <script type="module" crossorigin src="./assets/index-DYwRUDMc.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CUkH7op5.css">
+    <script type="module" crossorigin src="./assets/index-pZxUsX9T.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-UvLcpRN4.css">
   </head>
   <body>
     <!-- Landscape lock (mobile): covers the screen when a touch device is
@@ -441,11 +441,14 @@
             </div>
           </div>
         </div>
-        <!-- Death overlay (hp 0): full-screen veil + respawn countdown -->
+        <!-- Death overlay — PHASE 1 (user 29/09): the world stays visible
+             while the character dissolves; the red vignette + reason +
+             countdown fade in over it. The skull-iris veil arrives only at
+             the END of the countdown (phase 2, see transitions.ts). -->
         <div id="death-overlay" class="hidden">
           <div class="death-panel">
-            <h2>Bạn đã gục</h2>
-            <p id="death-reason">Bị zombie tấn công</p>
+            <h2>Bạn đã chết</h2>
+            <p id="death-reason">Bạn đã gục ngã</p>
             <p id="death-timer">Hồi sinh sau 5s…</p>
           </div>
         </div>
