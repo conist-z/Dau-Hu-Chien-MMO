@@ -38,6 +38,9 @@ ITEM_REGISTRY: Dict[str, ItemDef] = {
         "wood_pickaxe", "Cúp gỗ", "⛏️", "material", {}, "Đập đá hiệu quả hơn"
     ),
     "rotten_flesh": ItemDef("rotten_flesh", "Thịt thối", "🥩", "consumable", {"heal_hp": 5}, "Ăn được… nhưng chỉ hồi 5 HP"),
+    # Hunting drop (game/zombies.py wildlife table) — the armor material
+    # chain (wiki Mine parity: hide -> leather armor at the crafting table).
+    "hide": ItemDef("hide", "Da thú", "🟫", "material", {}, "Da động vật săn được — chế giáp da ở bàn chế tạo"),
     "coin": ItemDef("coin", "Xu", "🪙", "material", {}, "Xu nhặt được từ zombie"),
     # Smelting chain (game/smelting.py): ores from mining, ingots/fuel/food
     # from the furnace, cooked meat is a real consumable.

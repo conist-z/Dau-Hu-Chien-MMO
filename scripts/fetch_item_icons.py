@@ -34,6 +34,7 @@ ITEM_ICON_CODEPOINTS = {
     "wood_axe": "1fa93",        # 🪓 axe
     "wood_pickaxe": "26cf",     # ⛏️ pick
     "rotten_flesh": "1f969",    # 🥩 cut of meat
+    "hide": "1f7e5",            # 🟤 brown circle (tấm da thú — twemoji không có hide)
     "coin": "1fa99",            # 🪙 coin
     # --- smelting chain (game/smelting.py) ---
     "iron_ore": "1f348",        # 🍈 chestnut-like brown blob (fallback ore)

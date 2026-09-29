@@ -88,6 +88,7 @@ SOURCES: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float, float]]
     # as the floor planks) so Ván gỗ reads as planks, not a brown square.
     "plank": ("block", "floor"),
     "rotten_flesh": ("twemoji", "1f969"),
+    "hide": ("twemoji", "1f7e5"),  # 🟤 tấm da thú (twemoji không có hide sprite)
 }
 
 

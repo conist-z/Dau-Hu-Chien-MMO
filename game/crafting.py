@@ -105,7 +105,59 @@ RECIPE_REGISTRY: Dict[str, RecipeDef] = {
 }
 
 
+# ---- Armor recipes (wiki Mine parity): leather armor from hunting hides.
+# Mine helmet pattern: H H H / . . . / . . .   (5 hides → 1 helmet)
+# Mine chestplate:     H . H / H H H / H H H   (8 hides → 1 chest)
+# Mine leggings:       H H H / H . H / H . H   (7 hides → 1 leggings)
+# All require the crafting table (same gate as tools). Group "tool" so they
+# sit beside equipment in the quick-craft catalog.
+def _register_armor_recipes() -> None:
+    H = "hide"
+    RECIPE_REGISTRY["leatherhelmet"] = RecipeDef(
+        "leatherhelmet", "Mũ da", "🪖",
+        inputs=[(H, 5)],
+        output=("leatherhelmet", 1),
+        requires_table=True,
+        group="tool",
+        # Hàng trên đầy 5 da (wiki Mine: 5 hide hàng trên).
+        pattern=[(H, 0, 0), (H, 1, 0), (H, 2, 0)],
+        description="5 da thú xếp hàng trên (wiki Mine) — mặc vào ô Mũ.",
+    )
+    RECIPE_REGISTRY["leatherchest"] = RecipeDef(
+        "leatherchest", "Giáp ngực da", "🥋",
+        inputs=[(H, 8)],
+        output=("leatherchest", 1),
+        requires_table=True,
+        group="tool",
+        # 2 da hai vai trên + hàng giữa + hàng dưới kín (wiki Mine).
+        pattern=[(H, 0, 0), (H, 2, 0),
+                 (H, 0, 1), (H, 1, 1), (H, 2, 1),
+                 (H, 0, 2), (H, 1, 2), (H, 2, 2)],
+        description="8 da thú: 2 vai + 2 hàng dưới kín (wiki Mine) — mặc vào ô Thân.",
+    )
+    RECIPE_REGISTRY["leatherleggings"] = RecipeDef(
+        "leatherleggings", "Quần giáp da", "👖",
+        inputs=[(H, 7)],
+        output=("leatherleggings", 1),
+        requires_table=True,
+        group="tool",
+        # Hàng trên kín + 2 cột ngoài xuống dưới (wiki Mine).
+        pattern=[(H, 0, 0), (H, 1, 0), (H, 2, 0),
+                 (H, 0, 1), (H, 2, 1),
+                 (H, 0, 2), (H, 2, 2)],
+        description="7 da thú: hàng trên kín + 2 ống chân (wiki Mine) — mặc vào ô Chân.",
+    )
+
+
+_register_armor_recipes()
+
+
 # ---- Tool recipes (game/tools.py): mỗi tool được làm từ đúng vật liệu của nó
+# (gỗ / sắt / vàng / thép) và CHỈ chế được khi có bàn chế tạo gần đó (user rule).
+#
+# Minecraft-parity GRID PATTERNS (user 14/09: chép từ wiki Mine). ``pattern``
+# liệt kê từng ô trong lưới 3x3 (col, row, gốc trên-trái) — craft chỉ khớp khi
+# nguyên liệu nằm ĐÚNG vị trí (cho phép đặt镜像 — Minecraft parity):
 # (gỗ / sắt / vàng / thép) và CHỈ chế được khi có bàn chế tạo gần đó (user rule).
 #
 # Minecraft-parity GRID PATTERNS (user 14/09: chép từ wiki Mine). ``pattern``

@@ -108,7 +108,7 @@ const DAYNIGHT_NAMES: Record<string, string> = {
 const ITEM_EMOJI: Record<string, string> = {
   leatherhelmet: "🪖", leatherchest: "🥋", leatherleggings: "👖",
   wood: "🪵", plank: "🟫", stone: "🪨", dirt: "🟤", stick: "🥢",
-  grass: "🌿", sand: "🏖️", coin: "🪙", rotten_flesh: "🍖",
+  grass: "🌿", sand: "🏖️", coin: "🪙", rotten_flesh: "🍖", hide: "🟤",
   crafting_table: "🛠️", furnace: "🔥",   wood_axe: "🪓", wood_pickaxe: "⛏️", wood_sword: "🗡️", wood_shovel: "🥄",
    stone_axe: "🪓", stone_pickaxe: "⛏️", stone_sword: "🗡️",
   iron_axe: "🪓", iron_pickaxe: "⛏️", iron_sword: "⚔️",
