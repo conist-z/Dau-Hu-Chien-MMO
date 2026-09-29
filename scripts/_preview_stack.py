@@ -274,7 +274,7 @@ class PreviewStack(LocalStack):
 
         if value == "none":
             for z in iter_web_zombies(rt.state):
-                remove_web_zombie(rt.state, z.id)
+                remove_web_zombie(rt.state, z.zombie_id)
             await self._send(cid, {"type": "push", "message": "[preview] Đã dọn sạch quái."})
             return
         player = rt.state.get_player(uid)
@@ -296,7 +296,7 @@ class PreviewStack(LocalStack):
             n = 0
             for z in iter_web_zombies(rt.state):
                 if getattr(z, "ambient", False):
-                    remove_web_zombie(rt.state, z.id)
+                    remove_web_zombie(rt.state, z.zombie_id)
                     n += 1
             await self._send(cid, {"type": "push", "message": f"[preview] Đã dọn {n} con vật."})
             return
@@ -443,7 +443,7 @@ class PreviewStack(LocalStack):
         cleared = 0
         for z in list(iter_web_zombies(rt.state)):
             if not getattr(z, "ambient", False):
-                remove_web_zombie(rt.state, z.id)
+                remove_web_zombie(rt.state, z.zombie_id)
                 cleared += 1
         player.revive_teleport(*tile)
         self.gm._schedule_save(rt, player)
