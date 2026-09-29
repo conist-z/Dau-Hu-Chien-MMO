@@ -500,6 +500,8 @@ const net = new Net({
     net.selectSlot(hud.currentSlot);
     hud.setItemEmojis(frame.item_emojis ?? {});
     hud.setItemNames(frame.item_names ?? {});
+    // Rich item tooltip metadata (usable / material / equipment rows + lore).
+    hud.setItemMeta(frame.item_meta ?? {});
     hud.setBars(frame.self.hp, frame.self.max_hp, frame.self.mana, frame.self.max_mana,
       (frame.self as { stamina?: number }).stamina ?? 1,
       (frame.self as { max_stamina?: number }).max_stamina ?? 0);

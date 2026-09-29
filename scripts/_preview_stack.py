@@ -158,6 +158,7 @@ class PreviewStack(LocalStack):
             "respawn": self._cmd_respawn,
             "status": self._cmd_status,
             "tp": self._cmd_tp,
+            "give": self._cmd_give,
         }.get(cmd)
         if handler is None:
             await self._send(cid, {"type": "push", "message": f"[preview] Lệnh lạ: {cmd}"})
@@ -427,6 +428,39 @@ class PreviewStack(LocalStack):
             feed.append((time.time(), uid, dmg, "status"))
             del feed[:-40]
         await self._send(cid, {"type": "push", "message": f"[preview] ☣️ Áp {se.EFFECTS[effect_id]['name']} — {dmg} dmg mỗi {interval:.0f}s."})
+
+    async def _cmd_give(self, cid: int, uid: int, rt, value) -> None:
+        """[preview] give <item_id> [qty] — REAL inventory add (Inventory.add
+        bumps the bag version, so the next snapshot pushes the bag to the
+        client). Unknown ids fall back to a handy demo set."""
+        player = self._player_or_msg(cid, uid, rt)
+        if player is None:
+            return
+        inv = rt.inventories.get(uid)
+        if inv is None:
+            # Preview sessions don't run load_inventories — create on demand.
+            from game.inventory import Inventory
+            inv = Inventory()
+            rt.inventories[uid] = inv
+        parts = str(value or "").split()
+        demo = ["potion_hp", "potion_mp", "iron_sword", "stone", "torch", "leatherhelmet"]
+        item_id = parts[0] if parts else "demo"
+        try:
+            qty = int(parts[1]) if len(parts) > 1 else 1
+        except ValueError:
+            qty = 1
+        if item_id == "demo":
+            for iid in demo:
+                inv.add(iid, 3 if iid in ("potion_hp", "stone") else 1)
+            await self._send(cid, {"type": "push", "message": "[preview] 🎁 Đã thêm bộ demo (potion, sword, block, giáp)."})
+            return
+        from game.items import ITEM_REGISTRY
+        from game.blocks import BLOCK_REGISTRY
+        if item_id not in ITEM_REGISTRY and item_id not in BLOCK_REGISTRY:
+            await self._send(cid, {"type": "push", "message": f"[preview] Không biết item: {item_id}"})
+            return
+        inv.add(item_id, max(1, qty))
+        await self._send(cid, {"type": "push", "message": f"[preview] 🎁 +{qty} {item_id}."})
 
     async def _cmd_tp(self, cid: int, uid: int, rt, value) -> None:
         player = self._player_or_msg(cid, uid, rt)

@@ -13,6 +13,18 @@ export const MSG_PING = "ping";
  *  the heavy welcome/handoff lands ("che cơ chế dịch chuyển chậm"). */
 export const MSG_TRAVEL_BEGIN = "travel_begin";
 
+/** Rich item tooltip metadata (welcome.item_meta, web_api/snapshots.py
+ *  _item_meta_payload). effects/stats rows are render-ready label/value
+ *  pairs; lore is the italic flavor footer (null = none). */
+export interface ItemMeta {
+  kind: "usable" | "material" | "equipment";
+  name: string;
+  desc: string;
+  effects: { label: string; value: string }[];
+  stats: { label: string; value: string }[];
+  lore?: string | null;
+}
+
 export interface WelcomePayload {
   type: "welcome";
   /** Server session's highest input seq at handoff time. A mid-session
@@ -94,6 +106,11 @@ export interface WelcomePayload {
   // Item id -> display name (server registries; việt hoá tooltips/toasts).
   // Optional: older servers omit it (client falls back to the raw id).
   item_names?: Record<string, string>;
+  // Item id -> rich tooltip metadata (user 29/09): kind/effects/stats/lore.
+  // kind: "usable" (consumed on use -> effect rows) | "material" (blocks,
+  // ores — function rows) | "equipment" (weapons/armor — stat rows).
+  // Optional: older servers omit it (tooltip falls back to name-only).
+  item_meta?: Record<string, ItemMeta>;
   blocks_catalog: { id: string; emoji: string; name: string }[];
   blocks: [number, number, string][];
   // "x,y" -> [damage, needed(hardness)] — only DAMAGED blocks appear. The

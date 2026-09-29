@@ -14,7 +14,7 @@
 // - DESCRIPTION region shows the selected quick-craft recipe's info in the
 //   panel's own pixel style.
 
-import type { InventoryPayload, RecipePayload } from "./protocol";
+import type { InventoryPayload, RecipePayload, ItemMeta } from "./protocol";
 
 /** Status-effect tooltip copy — mirrors game/status_effects.py EFFECTS
  *  (names + mechanics). Keys are effect ids used by ui/hud/status/*.png;
@@ -250,6 +250,10 @@ export class Hud {
   // Server-driven DISPLAY-NAME map (welcome.item_names, việt hoá): powers
   // slot tooltips + craft toasts; absent on old servers (falls back to id).
   private itemNames: Record<string, string> = {};
+  // Server-driven RICH TOOLTIP metadata (welcome.item_meta, user 29/09):
+  // kind/effects/stats/lore per item id; absent on old servers = tooltip
+  // falls back to the plain display name (browser title).
+  private itemMeta: Record<string, ItemMeta> = {};
   private recipes: RecipePayload[] = [];
   // MATERIAL grid state: SERVER truth (synced via craft_op mat_sync). The
   // client keeps a local mirror for instant painting; the server owns the
@@ -1002,6 +1006,7 @@ export class Hud {
         slot.appendChild(im);
         slot.classList.add("has-item");
         slot.title = this.itemName(stem);
+        this.bindItemTooltip(slot, () => stem); // panel rebuilds: closure is fresh
         slot.addEventListener("mousedown", (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -1042,6 +1047,7 @@ export class Hud {
       slot.dataset.slot = String(i);
       if (st) {
         slot.classList.add("has-item");
+        this.bindItemTooltip(slot, () => st.id, () => st.qty); // fresh element each rebuild
         slot.addEventListener("mousedown", (e) => {
           if (e.button === 2) { this.splitBag(i); return; }
           if (e.button !== 0) return;
@@ -1503,6 +1509,12 @@ export class Hud {
         // slot, outside-panels throws, otherwise cancel.
         slot.addEventListener("pointercancel", () => this.cancelDrag());
         slot.addEventListener("contextmenu", (e) => e.preventDefault());
+        // Rich item tooltip — bind ONCE per slot element (the grid reuses
+        // slots in place); the lazy resolver reads the CURRENT stack at
+        // hover time so re-binding on every repaint is unnecessary.
+        const fresh: HTMLElement = slot; // const capture (closure-safe)
+        this.bindItemTooltip(fresh, () => this.inventory.bag[Number(fresh.dataset.slot)]?.id ?? null,
+          () => this.inventory.bag[Number(fresh.dataset.slot)]?.qty ?? 0);
         wrap.appendChild(slot);
       }
       this.refreshSlotContent(slot, stack, g.slotW);
@@ -1656,6 +1668,8 @@ export class Hud {
       });
       if (rec) {
         slot.classList.add("quick");
+        // Recipe output tooltip (same rich tooltip, kind = output item).
+        this.bindItemTooltip(slot, () => rec.output.id, () => rec.output.qty);
         if (haveAll) slot.classList.add("ready");
         else if (this.isShortOnMaterials(rec)) slot.classList.add("short");
         else slot.classList.add("locked"); // red hatched overlay (no table)
@@ -1709,6 +1723,9 @@ export class Hud {
       });
       slot.dataset.slot = String(i);
       if (st) {
+        // Material buffer slots carry the same rich tooltip (fresh element
+        // each rebuild — direct binding, no staleness).
+        this.bindItemTooltip(slot, () => st.id, () => st.qty);
         slot.addEventListener("mousedown", (e) => {
           if (e.button === 2) return;
           this.startDrag({ from: "mat", index: i, stack: { ...st } }, e);
@@ -1740,6 +1757,10 @@ export class Hud {
     outSlot.classList.add("result");
     if (this.parkedResult) {
       outSlot.classList.add("craftable");
+      // Crafted output tooltip — reads parkedResult at hover time (it can
+      // be collected/cleared between render and hover).
+      this.bindItemTooltip(outSlot, () => this.parkedResult?.id ?? null,
+        () => this.parkedResult?.qty ?? 1);
       outSlot.addEventListener("click", () => this.onCollect?.(null));
       // DRAG the output straight into any bag slot (server places it there
       // — merge onto the same kind, bad_slot otherwise).
@@ -2671,6 +2692,100 @@ export class Hud {
     this.statusTooltipEl?.classList.remove("visible");
   }
 
+  // ===== ITEM TOOLTIP (user 29/09) =====
+  // Rich hover tooltip for EVERY inventory item, replacing the one-line
+  // browser `title`. Three kinds from the server registry (item_meta.kind):
+  //   usable    = consumed on use  -> green "hiệu ứng" rows (heal +30 HP…)
+  //   material  = blocks/ores/etc  -> neutral "chức năng" rows (độ cứng, ánh sáng…)
+  //   equipment = weapons/armor    -> combat stat rows (sát thương, bậc, ô giáp…)
+  // All kinds: name header + kind badge, short desc, then the italic lore
+  // line. Built from the same shared element as the status tooltip (only
+  // one tooltip on screen at a time).
+  private itemTooltipEl: HTMLDivElement | null = null;
+
+  /** Bind hover rich tooltip to any item slot element.
+   *  resolveId = the item id is read at HOVER TIME (slot elements are reused
+   *  in-place by the bag grid, so a captured id would go stale — the lazy
+   *  resolver keeps one binding per slot forever). qty is optional and also
+   *  re-read at hover time when omitted. meta = resolved ItemMeta or null
+   *  (binds nothing — slot keeps its own plain title). Safe to re-call. */
+  private bindItemTooltip(
+    el: HTMLElement,
+    resolveId: () => string | null | undefined,
+    qty?: () => number,
+  ): void {
+    el.addEventListener("pointerenter", () => {
+      const itemId = resolveId();
+      if (!itemId) return;
+      const meta = this.itemMetaOf(itemId);
+      if (!meta) return; // old server / unknown id: plain title fallback
+      this.showItemTooltip(
+        el, meta, this.itemName(itemId),
+        itemIconUrl(itemId), iconFor(itemId, this.itemEmojis),
+        qty ? qty() : 1,
+      );
+    });
+    el.addEventListener("pointerleave", () => this.hideItemTooltip());
+  }
+
+  private showItemTooltip(
+    anchor: HTMLElement, meta: ItemMeta, name: string,
+    iconUrl: string | null, emoji: string, qty: number,
+  ): void {
+    let tip = this.itemTooltipEl;
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "item-tooltip";
+      document.body.appendChild(tip);
+      this.itemTooltipEl = tip;
+    }
+    const KIND_VI: Record<ItemMeta["kind"], string> = {
+      usable: "Dùng được",
+      material: "Nguyên liệu",
+      equipment: "Trang bị",
+    };
+    const head =
+      `<div class="it-head">` +
+      (iconUrl
+        ? `<img class="it-icon" src="${iconUrl}" alt="">`
+        : emoji ? `<span class="it-icon it-emoji">${emoji}</span>` : "") +
+      `<span class="it-name">${escapeHtml(name)}</span>` +
+      (qty > 1 ? `<span class="it-qty">×${qty}</span>` : "") +
+      `<span class="it-kind kind-${meta.kind}">${KIND_VI[meta.kind]}</span></div>`;
+    const rows = (rows: { label: string; value: string }[], cls: string): string =>
+      rows.length
+        ? `<div class="it-rows ${cls}">` +
+          rows.map((r) =>
+            `<div class="it-row"><span>${escapeHtml(r.label)}</span><b>${escapeHtml(r.value)}</b></div>`,
+          ).join("") + `</div>`
+        : "";
+    const body =
+      (meta.desc ? `<div class="it-desc">${escapeHtml(meta.desc)}</div>` : "") +
+      rows(meta.effects, "it-effects") +
+      rows(meta.stats, "it-stats");
+    const lore = meta.lore
+      ? `<div class="it-lore">${escapeHtml(meta.lore)}</div>`
+      : "";
+    tip.innerHTML = head + body + lore;
+    // Root kind class tints the item name (badge colours live in CSS).
+    tip.className = `item-tooltip kind-${meta.kind}`;
+    tip.classList.add("visible");
+    // Position: below-right of the anchor, clamped to the viewport (slots
+    // sit inside panels at screen edges — above-anchor often has no room).
+    const r = anchor.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let x = r.right + 10;
+    let y = r.top;
+    if (x + tw > window.innerWidth - 8) x = Math.max(8, r.left - tw - 10);
+    if (y + th > window.innerHeight - 8) y = Math.max(8, window.innerHeight - th - 8);
+    tip.style.left = `${Math.round(x)}px`;
+    tip.style.top = `${Math.round(y)}px`;
+  }
+
+  private hideItemTooltip(): void {
+    this.itemTooltipEl?.classList.remove("visible");
+  }
+
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,
           stamina = 1, maxStamina = 0): void {
     this.hpFill.style.width = `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`;
@@ -3009,6 +3124,23 @@ export class Hud {
     if (this.inventoryOpen) this.renderInventory();
   }
 
+  /** Rich tooltip metadata map (welcome.item_meta, user 29/09). Older
+   *  servers omit it — every call site falls back to the plain title. */
+  setItemMeta(map: Record<string, ItemMeta>): void {
+    this.itemMeta = map ?? {};
+    // Mirror setItemNames: repaint open panels so freshly-bound tooltips
+    // resolve against the new metadata (slots bind lazily at hover time,
+    // but the hotbar's rebuild guard keys on this map's size).
+    if (this.inventoryOpen) this.renderInventory();
+    this.renderHotbar();
+  }
+
+  /** Metadata of an item id (null = unknown -> plain-title fallback). */
+  itemMetaOf(id: string | null | undefined): ItemMeta | null {
+    if (!id) return null;
+    return this.itemMeta[id] ?? null;
+  }
+
   /** Vietnamese display name of an item id (falls back to the raw id). */
   itemName(id: string | null | undefined): string {
     if (!id) return "";
@@ -3031,7 +3163,7 @@ export class Hud {
     const slotCount = Math.max(this.inventory.hotbar.length, 6);
     const sig = this.inventory.bag.slice(0, slotCount)
       .map((s) => (s ? `${s.id}:${s.qty}` : "-")).join(",") +
-      `|${this.activeSlot}|${Object.keys(this.itemEmojis).length}`;
+      `|${this.activeSlot}|${Object.keys(this.itemEmojis).length}|${Object.keys(this.itemMeta).length}`;
     if (sig === this.lastHotbarSig) return;
     this.lastHotbarSig = sig;
     this.hotbarEl.innerHTML = "";
@@ -3106,6 +3238,10 @@ export class Hud {
           this.dropOn("bag", idx);
         }
       });
+      // Rich tooltip parity with the inventory panels (lazy: reads the bag
+      // at hover time, safe against the sig-guard rebuilds).
+      this.bindItemTooltip(div, () => this.inventory.bag[idx]?.id ?? null,
+        () => this.inventory.bag[idx]?.qty ?? 0);
       this.hotbarEl.appendChild(div);
     }
   }

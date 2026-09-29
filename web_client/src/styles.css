@@ -361,6 +361,130 @@ html, body {
   padding-top: 4px;
 }
 
+/* ---- Item rich tooltip (all inventory slots) -----------------------------
+   One shared floating element for every item slot (bag grid, equip worn +
+   bag cells, craft material grid, result, hotbar). Kind colour scheme:
+   usable = green (consumable effects), material = neutral parchment
+   (blocks/ores function rows), equipment = gold (combat stats). */
+.item-tooltip {
+  position: fixed;
+  z-index: 4000; /* same layer as the status tooltip — above all HUD */
+  width: max-content;
+  max-width: 262px;
+  background: rgba(10, 14, 22, 0.94);
+  border: 1px solid rgba(120, 140, 170, 0.55);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+  color: #e8edf5;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  pointer-events: none;   /* never traps the cursor itself */
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.item-tooltip.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.item-tooltip .it-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.item-tooltip .it-icon {
+  width: 24px;
+  height: 24px;
+  image-rendering: pixelated;
+  flex: none;
+  object-fit: contain;
+}
+.item-tooltip .it-icon.it-emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  line-height: 1;
+}
+.item-tooltip .it-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: #e8edf5;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.item-tooltip .it-qty {
+  color: #9fb2cc;
+  font-size: 11px;
+}
+.item-tooltip .it-kind {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  padding: 2px 5px;
+  flex: none;
+}
+/* Kind badges: usable green / material parchment / equipment gold. */
+.item-tooltip .it-kind.kind-usable {
+  color: #8fe08f;
+  background: rgba(74, 222, 128, 0.14);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+}
+.item-tooltip .it-kind.kind-material {
+  color: #d8c9a8;
+  background: rgba(216, 201, 168, 0.12);
+  border: 1px solid rgba(216, 201, 168, 0.4);
+}
+.item-tooltip .it-kind.kind-equipment {
+  color: #ffd75e;
+  background: rgba(255, 215, 94, 0.13);
+  border: 1px solid rgba(255, 215, 94, 0.45);
+}
+/* Title tint follows the kind (same tiers as the badges). */
+.item-tooltip.kind-usable .it-name { color: #a5e8a5; }
+.item-tooltip.kind-material .it-name { color: #e6d9b8; }
+.item-tooltip.kind-equipment .it-name { color: #ffe28a; }
+.item-tooltip .it-desc {
+  color: #cfd8e6;
+  margin-bottom: 4px;
+}
+.item-tooltip .it-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(120, 140, 170, 0.25);
+}
+.item-tooltip .it-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.item-tooltip .it-row span { color: #9fb2cc; }
+.item-tooltip .it-row b {
+  font-weight: 600;
+  text-align: right;
+  color: #cfd8e6;
+}
+/* Effect rows read green (heal/regen); stat rows read gold (combat). */
+.item-tooltip .it-effects .it-row b { color: #8fe08f; }
+.item-tooltip .it-stats .it-row b { color: #ffd75e; }
+.item-tooltip .it-lore {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(120, 140, 170, 0.25);
+  font-style: italic;
+  font-size: 11px;
+  color: #9fb2cc;
+}
+
 /* Bottom-center: hotbar — always visible */
 #hud-hotbar {
   position: absolute;

@@ -18,7 +18,8 @@
 type Cmd =
   | "clock" | "meteor" | "weather" | "zombies" | "animals" | "map"
   | "state" | "bite" | "heal" | "kill" | "respawn" | "status" | "tp"
-  | "hurt"; // 🩸 Nặng Má: HP% để thử bloody screen (main.ts lowHpFx)
+  | "hurt"
+  | "give"; // 🎁 give: item_id [qty] — bộ demo / item tùy chọn (tooltip test)
 
 interface PanelHooks {
   send: (frame: Record<string, unknown>) => void;
@@ -200,6 +201,8 @@ export class PreviewPanel {
     btn(me, "🩸 Nặng Má", () => this.send("hurt", "0.15"), "#3a1418");
     btn(me, "☠️ Chết", () => this.send("kill"), "#5a1a1a");
     btn(me, "✨ Hồi sinh", () => this.send("respawn"), "#1a2a52");
+    // 🎁 give: bộ demo item (potion/sword/block/giáp) để thử rich tooltip.
+    btn(me, "🎁 Bộ demo", () => this.send("give", "demo"), "#2a2a1a");
     row(me);
     for (const [key, label] of STATUSES) {
       btn(me, `☣️ ${label}`, () => this.send("status", key), "#1a2a1a");

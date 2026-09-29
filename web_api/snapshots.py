@@ -579,6 +579,9 @@ def build_welcome(rt: ScenarioRuntime, user_id: int) -> dict:
         "item_emojis": _item_emojis_payload(),
         # Item id -> display name (việt hoá) for tooltips + toasts.
         "item_names": _item_names_payload(),
+        # Item id -> rich tooltip metadata (kind/effects/stats/lore) for the
+        # inventory item tooltip (user 29/09).
+        "item_meta": _item_meta_payload(),
         # What THIS player holds right now (hotbar slot -> item id). The
         # client renders its own hand instantly from the local hotbar, but
         # the echo + snapshot copy keep reconnects/welcome in sync.
@@ -621,6 +624,120 @@ def _players_manifest_payload() -> dict:
         except OSError:
             _PLAYERS_MANIFEST_CACHE = {}
     return _PLAYERS_MANIFEST_CACHE
+
+
+def _item_meta_payload() -> Dict[str, dict]:
+    """Item id -> tooltip metadata for the web client's rich item tooltip.
+
+    Pure data pulled from game/items.py ITEM_REGISTRY + game/tools.py
+    parse_tool_id + game/blocks.py BLOCK_REGISTRY (same pairing as the
+    emoji/name payloads above, so they never drift apart).
+
+    Shape per id: { kind, name, desc, effects, stats, lore }
+    - kind: "usable" | "material" | "equipment" — the client's 3 tooltip
+      categories (user 29/09):
+        * usable     = consumed on use -> shows the effect it grants
+        * material   = blocks/ores/tools-materials -> shows its function
+        * equipment  = armor/weapons  -> shows combat stats + side effects
+    - effects: [{label, value}] human-readable effect rows (heal_hp ->
+      "+30 HP"; heal_mp -> "+20 Mana"); armor_slot renders the slot name.
+    - stats: [{label, value}] combat stats (weapon damage / tool damage,
+      armor slot); values are formatted strings, ready to render.
+    - lore: short flavor line (server description when it reads like lore,
+      else a generated line); the client shows it italic under a divider.
+    """
+    from game.blocks import BLOCK_REGISTRY
+    from game.items import ITEM_REGISTRY
+    from game.tools import (
+        MATERIALS, parse_tool_id, tool_damage,
+    )
+
+    _SLOT_VI = {"helmet": "Mũ", "chest": "Thân", "legs": "Chân"}
+    _FAMILY_VI = {"sword": "Kiếm", "axe": "Rìu", "pickaxe": "Cúp", "shovel": "Xẻng"}
+    _MAT_VI = {"wood": "gỗ", "stone": "đá", "iron": "sắt", "gold": "vàng", "steel": "thép"}
+    # Tier ordering label ("bậc 1..5") mirrors game/tools.py MATERIALS order.
+    out: Dict[str, dict] = {}
+    for iid, item in ITEM_REGISTRY.items():
+        effects: List[dict] = []
+        stats: List[dict] = []
+        kind = "material"
+        tool = parse_tool_id(iid)
+        if item.type == "consumable":
+            kind = "usable"
+            if "heal_hp" in item.effect:
+                effects.append({"label": "Hồi HP", "value": f"+{item.effect['heal_hp']}"})
+            if "heal_mp" in item.effect:
+                effects.append({"label": "Hồi Mana", "value": f"+{item.effect['heal_mp']}"})
+        elif item.type == "equipment":
+            kind = "equipment"
+            slot = item.effect.get("armor_slot")
+            if slot in _SLOT_VI:
+                stats.append({"label": "Ô giáp", "value": _SLOT_VI[slot]})
+        if tool is not None:
+            # Tools count as equipment-class in the tooltip taxonomy (they
+            # carry combat stats) — user category 3.
+            kind = "equipment"
+            dmg = tool_damage(iid)
+            stats.insert(0, {"label": "Sát thương", "value": str(dmg)})
+            stats.append({"label": "Bậc", "value": f"{MATERIALS.index(tool.material) + 1}/5 ({_MAT_VI[tool.material]})"})
+            hits = None
+            if tool.family == "sword":
+                pass  # damage row above is the whole story
+            elif tool.family == "axe":
+                from game.tools import axe_hits
+                hits = axe_hits(tool.material)
+                stats.append({"label": "Chặt cây", "value": f"~{hits} phát"})
+            elif tool.family == "pickaxe":
+                from game.tools import pickaxe_hits
+                hits = pickaxe_hits(tool.material)
+                stats.append({"label": "Đập quặng", "value": f"~{hits} phát"})
+            elif tool.family == "shovel":
+                from game.tools import shovel_hits
+                hits = shovel_hits(tool.material)
+                stats.append({"label": "Cào cỏ", "value": f"~{hits} phát"})
+        out[iid] = {
+            "kind": kind,
+            "name": item.name,
+            "desc": item.description,
+            "effects": effects,
+            "stats": stats,
+            "lore": _lore_of(item.description, item.type),
+        }
+    for bid, block in BLOCK_REGISTRY.items():
+        if bid in out:
+            continue
+        stats: List[dict] = []
+        if block.hardness:
+            stats.append({"label": "Độ cứng", "value": str(block.hardness)})
+        if block.light_radius > 0:
+            stats.append({"label": "Ánh sáng", "value": f"bán kính {block.light_radius:g}"})
+        stats.append({"label": "Chống đi qua", "value": "Có" if block.solid else "Không"})
+        out[bid] = {
+            "kind": "material",
+            "name": block.name,
+            "desc": "Nguyên liệu xây dựng (đặt bằng hotbar)",
+            "effects": [],
+            "stats": stats,
+            "lore": None,
+        }
+    # NOTE: WEAPON_ITEM_IDS contains 4 phantom ids (iron_shovel, ...) —
+    # tool_item_id enumerates all family x material pairs while the shovel
+    # only exists at the wood tier (game/tools.py FAMILY_MATERIALS). They
+    # can never be crafted/looted, so no meta row is needed for them.
+    return out
+
+
+def _lore_of(description: str, item_type: str) -> Optional[str]:
+    """Flavor line for the tooltip's italic footer. The registry descriptions
+    are functional; lore-worthy lines are the ones with personality (they
+    mention the world, taste or a caution) — pick per type otherwise."""
+    d = (description or "").strip()
+    # Lines that read like flavor already ("Ăn được…", "ánh sáng giữa đêm tối")
+    if d and ("…" in d or "đêm tối" in d or "dại" in d or "nhặt được" in d):
+        return d
+    if item_type == "consumable" and d:
+        return d  # food copy tends to be flavor ("Ăn sống được…")
+    return None
 
 
 def _blocks_catalog_payload() -> List[dict]:
@@ -797,6 +914,18 @@ def build_snapshot(rt: ScenarioRuntime, user_id: int, seq: int) -> dict:
             "respawn_s": (
                 max(0, round(player.dead_until - _time.time(), 1))
                 if player is not None and player.dead_until is not None else 0
+            ),
+            # 3-PHASE DEATH SCREEN (user 29/09): the reason string + damage
+            # source kind + unix timestamp the death happened. The client
+            # restarts its "seeing yourself die" overlay exactly once per
+            # death by comparing died_at (the boolean `dead` alone flips at
+            # 20 Hz); the countdown itself runs off respawn_s.
+            "death_reason": player.death_reason if player else None,
+            "death_kind": getattr(player, "death_kind", None) if player else None,
+            "died_at": (
+                round(player.died_at, 2)
+                if player is not None and getattr(player, "died_at", None) is not None
+                else None
             ),
             # The client must target relative to THIS (its predicted float
             # position drifts; using it for offsets misplaced blocks).
