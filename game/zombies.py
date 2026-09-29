@@ -936,13 +936,33 @@ def _web_nearest(z: Zombie, players: List[object]):
 
 
 def _web_facing(dx: float, dy: float) -> str:
-    if abs(dx) > abs(dy):
-        return "E" if dx > 0 else "W"
-    if abs(dy) > abs(dx):
-        return "S" if dy > 0 else "N"
-    if dx > 0:
-        return "SE" if dy > 0 else "NE"
-    return "SW" if dy > 0 else "NW"
+    """8-WAY octant facing: pick the nearest of the 8 compass directions by
+    angle, not "the dominant axis". The old abs(dx) vs abs(dy) test only
+    ever returned a diagonal when |dx| == |dy| EXACTLY — which a float
+    chase vector almost never is, so diagonally-running hostiles showed a
+    4-way face and glided sideways ("không đi chéo được"). 22.5° octant
+    boundaries keep every Kaetram walk row reachable."""
+    import math as _fmath
+
+    if dx == 0 and dy == 0:
+        return "S"
+    ang = _fmath.degrees(_fmath.atan2(dy, dx))  # -180..180, 0=E, 90=S
+    # Octant table centred on each compass direction (22.5° wide each).
+    if -157.5 <= ang < -112.5:
+        return "NW"
+    if -112.5 <= ang < -67.5:
+        return "N"
+    if -67.5 <= ang < -22.5:
+        return "NE"
+    if -22.5 <= ang < 22.5:
+        return "E"
+    if 22.5 <= ang < 67.5:
+        return "SE"
+    if 67.5 <= ang < 112.5:
+        return "S"
+    if 112.5 <= ang < 157.5:
+        return "SW"
+    return "W"
 
 
 # ---- side-view animal facing (user 28/09: "quay mặt qua trái rồi chạy lên
