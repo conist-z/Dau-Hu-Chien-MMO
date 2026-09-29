@@ -140,17 +140,17 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
   // used to hover the HP bar just above the animal's back instead of an
   // empty transparent cell top (bear's cell is 2 tiles tall).
   bunny: {
-    texKey: "mob-bunny", size: 32, artH: 8, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bunny", size: 32, artH: 13, cellW: 32, cellH: 32, singleFacing: true,
     // Frame lengths = REAL opaque cells in assets/mobs/bunny.png (a loop past
     // the last packed frame renders an EMPTY cell — the "blink" bug).
     rows: { atk: { right: [0, 3], up: [0, 3], down: [0, 3] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   deer: {
-    texKey: "mob-deer", size: 48, artH: 21, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer", size: 48, artH: 24, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   deer2: {
-    texKey: "mob-deer2", size: 64, artH: 34, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-deer2", size: 64, artH: 26, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   bird: {
@@ -162,19 +162,19 @@ const MOB_SHEETS: Record<string, MobSheetInfo> = {
     rows: { atk: { right: [0, 4], up: [0, 4], down: [0, 4] }, walk: { right: [1, 3], up: [1, 3], down: [1, 3] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   boar: {
-    texKey: "mob-boar", size: 64, artH: 20, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-boar", size: 64, artH: 18, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   bear: {
-    texKey: "mob-bear", size: 80, artH: 28, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-bear", size: 80, artH: 18, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   fox: {
-    texKey: "mob-fox", size: 48, artH: 16, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-fox", size: 48, artH: 18, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 4], up: [1, 4], down: [1, 4] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
   wolf: {
-    texKey: "mob-wolf", size: 64, artH: 22, cellW: 32, cellH: 32, singleFacing: true,
+    texKey: "mob-wolf", size: 64, artH: 18, cellW: 32, cellH: 32, singleFacing: true,
     rows: { atk: { right: [0, 5], up: [0, 5], down: [0, 5] }, walk: { right: [1, 5], up: [1, 5], down: [1, 5] }, idle: { right: [2, 4], up: [2, 4], down: [2, 4] } },
   },
 };
@@ -3986,7 +3986,10 @@ export class WorldScene extends Phaser.Scene {
         // verbatim cell is 2 tiles tall, mostly transparent; a cell-anchored
         // bar floated a tile above its back.
         const barH = sheet.artH ?? sheet.size;
-        const barY = bodyY + sheet.size / 2 - barH - 9;
+        // Gap 12px: bar rides clear of the back (artH values are REAL
+        // opaque-art heights measured from the sheets — art bottom touches
+        // the tile bottom, so bodyY + size/2 - artH = the back line).
+        const barY = bodyY + sheet.size / 2 - barH - 12;
         const disp = sheet.disposition ?? MOB_DISPOSITION[kindKey] ?? "hostile";
         container.add([body as Phaser.GameObjects.GameObject, label]);
         container.setDepth(5);
