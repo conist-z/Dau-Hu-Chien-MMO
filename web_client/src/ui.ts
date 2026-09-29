@@ -2740,10 +2740,45 @@ export class Hud {
       this.purseEchoItemId = null;
     }
     const bag = this.inventory.bag.map((s) => (s ? { ...s } : null));
+    // ARMOR POSITION PARITY (user: "tự động xếp đồ khi tháo giáp còn":
+    // armor NEVER auto-tidies). The server lands an unequipped piece at the
+    // EXACT cell the player dropped it on (position-precise armor_equip),
+    // but the totals-only delta-merge below kept the piece at its old cell
+    // whenever totals matched — so the bag LOOKED reshuffled. Armor stacks
+    // are qty-1 and never merge, so we can simply reconcile them
+    // slot-by-slot from the server payload; only non-armor stacks keep
+    // the player's dragged layout.
+    const armorIds = ARMOR_ITEM_IDS;
+    for (let i = 0; i < bag.length && i < inv.bag.length; i++) {
+      const srv = inv.bag[i];
+      const loc = bag[i];
+      const srvIsArmor = !!srv && armorIds.has(srv.id);
+      const locIsArmor = !!loc && armorIds.has(loc.id);
+      if (srvIsArmor && !locIsArmor) {
+        // Server has armor here, we show something else: evict our stack's
+        // armor? No — our stack is not armor, so the server moved THIS
+        // armor piece here. Move our non-armor stack away (first free cell).
+        if (loc) {
+          const free = bag.findIndex((b, j) => !b && !inv.bag[j]);
+          if (free >= 0) bag[free] = loc;
+        }
+        bag[i] = { id: srv.id, qty: srv.qty };
+      } else if (locIsArmor && !srvIsArmor) {
+        // We still show armor here but the server says it left (equipped
+        // or moved): clear the cell unless the server holds another copy.
+        const serverCount = inv.bag.reduce(
+          (n, s) => n + (s && s.id === loc!.id ? s.qty : 0), 0);
+        const shownCount = bag.reduce(
+          (n, s) => n + (s && s.id === loc!.id ? s.qty : 0), 0);
+        if (shownCount > serverCount) bag[i] = null;
+      }
+    }
     const changed: string[] = [];
     const allIds = new Set([...Object.keys(shown), ...Object.keys(server)]);
     for (const id of allIds) {
-      // Purse echo, ACK-AWARE: the held diff is only valid while the op is
+      // Armor stacks are reconciled positionally above — skip them here so
+      // the totals-only merge can never relocate them (auto-tidy bug).
+      if (armorIds.has(id)) continue;
       // genuinely un-acked. The raw diff tells us the state:
       //   0            → op fully acked: clear the echo, merge nothing
       //                  (a fixed TTL here minted +1 phantom EVERY snapshot
@@ -3182,6 +3217,17 @@ export class Hud {
     for (const m of [this.kQuests, this.kAchievements, this.kSettings, this.kLeaderboards, this.kWarp, this.kEquipments])
       this.kaetramMenus.register(m);
 
+    // #equipment-button lives INSIDE the profile page (.button-row), NOT in
+    // the #buttons bar — the bar's click delegation below can never see it.
+    // Bind it directly: close any Kaetram page, then open OUR equip tab
+    // (user: "icon giáp trên hub vẫn mở menu Kaetram cũ — fix lại").
+    document.getElementById("equipment-button")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.kaetramHideAll();
+      this.openEquipTab();
+    });
+
     // The bar buttons Kaetram's sprite sheet defines (rows 0-9). Buttons
     // without a menu (inventory → bag panel, chat → focus input, guilds/
     // friends → not built server-side yet) get the original toggle feel.
@@ -3301,9 +3347,11 @@ export class Hud {
           this.chatInput.focus();
           break;
         case "profile-button":
-          // The Kaetram Equipments menu was the profile page's default view
-          // (original behavior — main-bar profile button).
-          this.kEquipments.toggle();
+          // The armor icon BELOW the map icon on the hub bar — the user
+          // wants OUR equipment panel here too (it used to toggle the
+          // Kaetram Equipments menu: "vẫn hiện cái cũ của kaetram").
+          this.kaetramHideAll();
+          this.openEquipTab();
           break;
         case "equipment-button":
           // OUR Equipment tab (user: hub armor icon opens our panel now):
