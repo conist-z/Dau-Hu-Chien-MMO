@@ -615,7 +615,9 @@ class WebHub:
                 abs_dx = max(-3, min(3, abs_dx)) if abs(abs_dx) > 3 else abs_dx
                 abs_dy = max(-3, min(3, abs_dy)) if abs(abs_dy) > 3 else abs_dy
         if name == "attack":
-            action = AttackAction(user_id=uid)
+            # Clicked tile rides along (may be None for keyboard swings) —
+            # rules.resolve_attack uses it to hit the mob near that tile.
+            action = AttackAction(user_id=uid, dx=abs_dx, dy=abs_dy)
         elif name == "chop":  # chặt cây (mouse tile nếu có)
             action = ChopAction(
                 user_id=uid,

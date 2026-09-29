@@ -1117,7 +1117,10 @@ const input = new KeyboardInput({
       if (scene.zombieNear(target)) {
         if (!swingGateOpen()) return;
         markSwingSent();
-        net.action("attack");
+        // Send the clicked tile: server resolves the hit against the mob
+        // near THAT tile (an animal 2 tiles away was un-hittable when the
+        // swing only searched a ring around the player).
+        net.actionAt("attack", target.x, target.y);
         scene.swingSelfHand();
         return;
       }
@@ -1251,7 +1254,8 @@ const mobile = new MobileControls({
     if (scene.zombieNear(target)) {
       if (!swingGateOpen()) return;
       markSwingSent();
-      net.action("attack");
+      // Clicked tile rides along (see onScreenClick attack path).
+      net.actionAt("attack", target.x, target.y);
       scene.swingSelfHand();
       return;
     }

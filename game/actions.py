@@ -16,9 +16,16 @@ class MoveAction:
 
 @dataclass
 class AttackAction:
-    """Attack the tile the player is facing."""
+    """Attack the tile the player is facing (or the clicked tile on web).
+
+    dx/dy (optional): offset from the player tile to the CLICKED tile —
+    the web client sends these so the hit resolves against the mob near
+    that tile (an animal 2 tiles away / mid-flee was un-hittable when the
+    server only searched a ring around the player)."""
 
     user_id: int
+    dx: Optional[int] = None
+    dy: Optional[int] = None
 
 
 @dataclass

@@ -257,14 +257,31 @@ def apply_attack(state: GameState, action: AttackAction, blocks: BlockGrid = Non
 
         web = getattr(state, "web_zombies", {})
         wcand = web.values() if isinstance(web, dict) else (web or [])
+        # CLICKED-TILE RESOLUTION: the web client sends the tile it clicked
+        # (action.dx/dy). Resolve against the mob nearest THAT tile first —
+        # an animal standing 2 tiles away (or mid-flee between snapshots)
+        # was un-hittable when the search ring centred on the player.
+        # Slack 1.25 ≈ half-tile body + one flee tick (~3.2 tiles/s / 20 Hz).
         best = None
         best_d = float("inf")
-        for enemy in wcand:
-            if not enemy.alive:
-                continue
-            d = _math.hypot(enemy.x_f - player.x_f, enemy.y_f - player.y_f)
-            if d <= MELEE_ATTACK_RANGE and d < best_d:
-                best, best_d = enemy, d
+        if action.dx is not None and action.dy is not None:
+            cx = player.x + action.dx + 0.5
+            cy = player.y + action.dy + 0.5
+            for enemy in wcand:
+                if not enemy.alive:
+                    continue
+                d = _math.hypot(enemy.x_f - cx, enemy.y_f - cy)
+                if d <= 1.25 and d < best_d:
+                    best, best_d = enemy, d
+        if best is None:
+            # Fallback: old nearest-to-player ring (keyboard swings, stale
+            # clicks when the animal already bolted).
+            for enemy in wcand:
+                if not enemy.alive:
+                    continue
+                d = _math.hypot(enemy.x_f - player.x_f, enemy.y_f - player.y_f)
+                if d <= MELEE_ATTACK_RANGE and d < best_d:
+                    best, best_d = enemy, d
         if best is None:
             if blocks is not None:
                 from game import blocks as blocks_mod
