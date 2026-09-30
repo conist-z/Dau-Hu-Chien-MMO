@@ -2740,7 +2740,7 @@ export class Hud {
       this.itemTooltipEl = tip;
     }
     const KIND_VI: Record<ItemMeta["kind"], string> = {
-      usable: "Dùng được",
+      usable: "Vật Phẩm Tiêu Hao",
       material: "Nguyên liệu",
       equipment: "Trang bị",
     };

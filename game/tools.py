@@ -116,6 +116,43 @@ def mult_of(material: str) -> float:
     return TIER_MULT.get(material, 1.0)
 
 
+# ---- mining power (tooltip unit, user 30/09) --------------------------------
+# Raw swing counts ("~8 phát") read crude AND derive from nothing: the
+# generic pickaxe ladder and the real rock table (ROCK_PICKAXE_HITS in
+# game/resources.py) disagree. The tooltip instead exposes ONE derived unit:
+#
+#     SỨC ĐÀO (power) = POWER_BASE x TIER_MULT  ->  20/26/32/45/64
+#
+# Every harvestable thing carries a hidden HARDNESS; swings = ceil(hard /
+# power). The calibration constants below make ceil() reproduce the three
+# existing swing tables EXACTLY, so gameplay is untouched — only the
+# tooltip vocabulary changes:
+#   pickaxe vs ore vein:  90 -> 5/4/3/2/2  == pickaxe_hits ladder
+#   axe vs tree:         170 -> 9/7/6/4/3  == axe_hits ladder
+#   shovel vs grass:      60 -> 3          == shovel_hits (wood only)
+# Rock/meteor nodes scale their own table from ROCK_PICKAXE_HITS; power
+# stays a property of the TOOL (harder nodes simply need more swings).
+POWER_BASE = 20
+TOOL_HARDNESS = {"pickaxe": 90, "axe": 170, "shovel": 60}
+
+
+def tool_power(family: str, material: str) -> int:
+    """Tooltip power unit of a tool (family x material tier)."""
+    return round(POWER_BASE * TIER_MULT.get(material, 1.0))
+
+
+def swings_for(family: str, material: str) -> Optional[int]:
+    """Audit helper: ceil(hardness / power) for a calibrated family.
+
+    Matches the ``*_hits`` tables exactly (see TOOL_HARDNESS); None for
+    uncalibrated families (sword deals damage instead)."""
+    hard = TOOL_HARDNESS.get(family)
+    if hard is None:
+        return None
+    import math
+    return max(1, math.ceil(hard / tool_power(family, material)))
+
+
 # ---- item registry helpers --------------------------------------------------
 
 @dataclass(frozen=True)

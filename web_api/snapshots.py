@@ -680,21 +680,16 @@ def _item_meta_payload() -> Dict[str, dict]:
             dmg = tool_damage(iid)
             stats.insert(0, {"label": "Sát thương", "value": str(dmg)})
             stats.append({"label": "Bậc", "value": f"{MATERIALS.index(tool.material) + 1}/5 ({_MAT_VI[tool.material]})"})
-            hits = None
-            if tool.family == "sword":
-                pass  # damage row above is the whole story
-            elif tool.family == "axe":
-                from game.tools import axe_hits
-                hits = axe_hits(tool.material)
-                stats.append({"label": "Chặt cây", "value": f"~{hits} phát"})
-            elif tool.family == "pickaxe":
-                from game.tools import pickaxe_hits
-                hits = pickaxe_hits(tool.material)
-                stats.append({"label": "Đập quặng", "value": f"~{hits} phát"})
-            elif tool.family == "shovel":
-                from game.tools import shovel_hits
-                hits = shovel_hits(tool.material)
-                stats.append({"label": "Cào cỏ", "value": f"~{hits} phát"})
+            # Harvest power (user 30/09): one derived unit instead of raw
+            # swing counts — power = 20 x tier, swings vs a node come from
+            # ceil(node hardness / power) at harvest time.
+            if tool.family != "sword":  # damage row above is the whole story
+                from game.tools import tool_power
+                power = tool_power(tool.family, tool.material)
+                label = {"pickaxe": "Sức đào", "axe": "Sức chặt",
+                         "shovel": "Sức xẻng"}.get(tool.family)
+                if label:
+                    stats.append({"label": label, "value": str(power)})
         out[iid] = {
             "kind": kind,
             "name": item.name,
