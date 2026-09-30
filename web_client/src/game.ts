@@ -1215,6 +1215,11 @@ export class WorldScene extends Phaser.Scene {
     }
     // Camera background must read as cave dark OUTSIDE the art, not sea-blue.
     this.cameras.main.setBackgroundColor("#07070c");
+    // Start at the current ambient blend so a map switch into a cave at noon
+    // doesn't flash pitch-black for the first frames.
+    if (this.caveDark) {
+      this.caveDark.alpha = 1 - 0.55 * dayNightPhaser.ambientFactor;
+    }
   }
 
   private bakeMapIfReady(): void {
@@ -2125,6 +2130,15 @@ export class WorldScene extends Phaser.Scene {
     // during movement was the PC-only stutter (idle = static screen = browser
     // skips recomposite; movement = every pixel changes = blend every frame).
     if (perf.daynight) dayNightPhaser.update();
+    // CAVE AMBIENCE × DAY/NIGHT BLEND: the darkness sheet bakes at full
+    // strength but its ALPHA breathes with the ambient light — at night it
+    // sits at full cave-dark, at high noon it lifts to ~45% so the cave is
+    // still a cave but clearly brighter than night (the old hard-coded sheet
+    // made caves read "ngày cũng tối như đêm").
+    if (this.caveDark) {
+      const amb = dayNightPhaser.ambientFactor; // 1 = full day, 0 = night
+      this.caveDark.alpha = 1 - 0.55 * amb;
+    }
     // Facing vector still feeds the hover square + swing geometry (the hand
     // dot itself is hidden once the paperdoll body renders).
     this.updateFacing();

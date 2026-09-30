@@ -32,6 +32,11 @@ export class DayNightPhaser {
   private clockSec = -1;
   private clockRecvMs = 0;
   private lastKey = "";
+  /** Normalized ambient light 0..1, refreshed by update(): 1 = full day,
+   *  0 = full night (or no clock yet / daynight gate off). Other systems
+   *  (e.g. the cave darkness sheet) blend against this instead of baking
+   *  their own clock — ONE source of truth for time-of-day light. */
+  private ambientNorm = 0;
 
   /** Attach to the world scene (called from WorldScene.buildWorld once).
    *  Idempotent: map switches re-run buildWorld — keep the existing rects. */
@@ -94,6 +99,7 @@ export class DayNightPhaser {
     const [r, g, b] = tintFactor(sec);
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const ambient = Math.max(MIN_AMBIENT, 1 - DARK_STRENGTH * (1 - lum));
+    this.ambientNorm = clamp01((ambient - MIN_AMBIENT) / (1 - MIN_AMBIENT));
     const darkA = 1 - ambient;
     const cast = castColor(sec);
     const castA = clamp01((1 - lum) * CAST_ALPHA);
@@ -115,6 +121,11 @@ export class DayNightPhaser {
     } else {
       this.cast.setVisible(false);
     }
+  }
+
+  /** Current normalized ambient (see ambientNorm). */
+  get ambientFactor(): number {
+    return this.ambientNorm;
   }
 
   /** Same interpolation contract as DayNightFx.currentSec(). */
