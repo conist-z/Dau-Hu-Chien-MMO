@@ -1585,38 +1585,12 @@ body.mobile-ui #mc-actions.mc-hidden {
   box-shadow: 0 0 0 2400px #000;
   pointer-events: none;
 }
-/* SKULL IRIS (death-close only, user 29/09): the death veil closes with a
-   SKULL-shaped hole instead of the circle — same mechanics as .tv-iris (the
-   element IS the solid black; a fixed-spread box-shadow is the outside),
-   but a CSS mask punches the SKULL out of the element: the INVERTED skull
-   alpha (death_skull_hole.png — skull silhouette transparent, surroundings
-   opaque) makes the element invisible exactly where the skull is, so the
-   game shows THROUGH the skull while everything else stays black. JS
-   animates width/height/margin exactly like the circular iris (NEVER
-   transform:scale — it shrinks the shadow too). The mask scales WITH the
-   element (mask-size: 100% 100%), so the skull reads as growing/shrinking
-   with the iris — "chụp vào full như bình thường, chỉ khác là nó là đầu
-   lâu". Opening stays the circle (no skull on respawn — user: "lúc mở ra
-   thì vẫn là hình tròn iris"). */
-#travel-root .tv-iris.tv-skull {
-  border-radius: 0;
-  /* Solid fill instead of the circle's transparent+box-shadow trick: a CSS
-     mask clips the element's ENTIRE rendering INCLUDING its box-shadow —
-     everything outside the mask's box goes transparent, so the shadow
-     (the circle mode's black) would vanish completely. With a solid #000
-     background the black lives INSIDE the box, the inverted skull mask
-     punches the skull-shaped hole, and the box (sized by skullCloseStartR
-     to overshoot the viewport) covers the whole screen at frame one. */
-  background: #000;
-  -webkit-mask-image: url("/ui/death_skull_hole.png");
-  mask-image: url("/ui/death_skull_hole.png");
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
-}
+/* (Legacy .tv-iris.tv-skull mask rule REMOVED 30/09: a CSS mask clips the
+   element's ENTIRE rendering INCLUDING its box-shadow — left on the iris
+   through the open phase it made the restored black shadow transparent and
+   the circle-open invisible on production (user: "vẫn không có iris tròn").
+   The skull close is now drawn ONLY on #tv-skull-canvas below; the iris
+   stays circle-mode at all times.) */
 /* SKULL-CLOSE canvas (death-close only): full-screen, real-alpha — the
    black is fillRect'ed and the skull hole is cut with destination-out, so
    what is drawn is exactly what shows (CSS mask-image with a data-URI did

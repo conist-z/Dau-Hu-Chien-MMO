@@ -352,6 +352,13 @@ export class TravelVeil {
   private enterLoading(): void {
     this.state = "loading";
     this.startedAt = performance.now();
+    // The skull canvas owns the CLOSE visuals — hand the iris back to
+    // CIRCLE mode the moment the close finishes. The legacy .tv-skull CSS
+    // mask clips the element's ENTIRE rendering INCLUDING its box-shadow;
+    // leaving the class on through the open phase made the black shadow
+    // transparent and the circle-open invisible (user: "loading xong là
+    // hiện game luôn"). The canvas hides in exitSequence.
+    this.iris.classList.remove("tv-skull");
     this.showVideo(true);
     const vid = this.video;
     if (vid) {
@@ -417,9 +424,12 @@ export class TravelVeil {
     // entirely and the game just pops in when the video fades (user:
     // "loading xong là hiện game luôn"). The iris takes over the black.
     if (this.skullCanvas) this.skullCanvas.style.display = "none";
-    // Restore the circle iris's black box-shadow (skull close set it to
+    // Belt-and-braces: drop the skull class here too (enterLoading already
+    // does it — this covers a force-exit straight out of "closing"), then
+    // restore the circle iris's black box-shadow (skull close set it to
     // "none" — without it the opening circle has no black to reveal
     // through, so the open is invisible).
+    this.iris.classList.remove("tv-skull");
     this.syncShadowSpread();
     const vid = this.video;
     if (!vid || this.videoDur <= 0) {
