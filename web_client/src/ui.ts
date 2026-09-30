@@ -426,6 +426,19 @@ export class Hud {
     // drives the ghost; pointerup with no drop target = throw (same rule
     // as a mouse drag released outside every panel).
     window.addEventListener("mousemove", (e) => this.updateDragGhost(e.clientX, e.clientY));
+    // Item-tooltip guard: hide when the pointer is over something that is
+    // NOT the anchor slot (click a close button, drag, UI layer swap — the
+    // anchor may be gone before its pointerleave can fire).
+    window.addEventListener("pointermove", (e) => {
+      if (e.pointerType !== "mouse") return;
+      const anchor = this.itemTipAnchor;
+      if (!anchor || !this.itemTooltipEl?.classList.contains("visible")) return;
+      if (!anchor.isConnected) { this.hideItemTooltip(); return; }
+      const r = anchor.getBoundingClientRect();
+      const inAnchor = e.clientX >= r.left && e.clientX <= r.right
+        && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inAnchor) this.hideItemTooltip();
+    });
     window.addEventListener("pointermove", (e) => {
       if (e.pointerType === "mouse") return; // mousemove already covers it
       this.updateDragGhost(e.clientX, e.clientY);
@@ -731,6 +744,10 @@ export class Hud {
 
   /** Play the pop-out animation then flip .hidden (140 ms exit). */
   private animateHide(el: HTMLElement): void {
+    // Panels are the tooltip anchors' container — every close path funnels
+    // through here (X buttons, B/E keys, station range exit, tab repaints),
+    // so dropping the tooltip in lockstep can't strand it on screen.
+    this.hideItemTooltip();
     el.classList.remove("anim-show", "slide-up");
     el.classList.add("anim-hide");
     if (this.hideTimer !== null) window.clearTimeout(this.hideTimer);
@@ -2702,6 +2719,11 @@ export class Hud {
   // line. Built from the same shared element as the status tooltip (only
   // one tooltip on screen at a time).
   private itemTooltipEl: HTMLDivElement | null = null;
+  /** Slot the visible tooltip is anchored to. Guard listeners check this
+   *  so a panel close / tab repaint without a pointerleave (the slot is
+   *  REMOVED from the DOM — the event can never fire) can't strand the
+   *  tooltip on screen (user bug 30/09: "tooltip còn đó khi tắt panel"). */
+  private itemTipAnchor: HTMLElement | null = null;
 
   /** Bind hover rich tooltip to any item slot element.
    *  resolveId = the item id is read at HOVER TIME (slot elements are reused
@@ -2726,6 +2748,9 @@ export class Hud {
       );
     });
     el.addEventListener("pointerleave", () => this.hideItemTooltip());
+    // Stuck-tooltip guards live elsewhere: animateHide drops the tooltip
+    // whenever any panel closes (the anchor dies with it), and the window
+    // pointermove guard hides it the moment the pointer is off the anchor.
   }
 
   private showItemTooltip(
@@ -2770,6 +2795,7 @@ export class Hud {
     // Root kind class tints the item name (badge colours live in CSS).
     tip.className = `item-tooltip kind-${meta.kind}`;
     tip.classList.add("visible");
+    this.itemTipAnchor = anchor;
     // Position: below-right of the anchor, clamped to the viewport (slots
     // sit inside panels at screen edges — above-anchor often has no room).
     const r = anchor.getBoundingClientRect();
@@ -2784,6 +2810,7 @@ export class Hud {
 
   private hideItemTooltip(): void {
     this.itemTooltipEl?.classList.remove("visible");
+    this.itemTipAnchor = null;
   }
 
   setBars(hp: number, maxHp: number, mana: number, maxMana: number,
