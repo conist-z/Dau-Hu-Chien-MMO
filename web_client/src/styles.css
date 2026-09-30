@@ -1585,6 +1585,51 @@ body.mobile-ui #mc-actions.mc-hidden {
   box-shadow: 0 0 0 2400px #000;
   pointer-events: none;
 }
+/* SKULL IRIS (death-close only, user 29/09): the death veil closes with a
+   SKULL-shaped hole instead of the circle — same mechanics as .tv-iris (the
+   element IS the solid black; a fixed-spread box-shadow is the outside),
+   but a CSS mask punches the SKULL out of the element: the INVERTED skull
+   alpha (death_skull_hole.png — skull silhouette transparent, surroundings
+   opaque) makes the element invisible exactly where the skull is, so the
+   game shows THROUGH the skull while everything else stays black. JS
+   animates width/height/margin exactly like the circular iris (NEVER
+   transform:scale — it shrinks the shadow too). The mask scales WITH the
+   element (mask-size: 100% 100%), so the skull reads as growing/shrinking
+   with the iris — "chụp vào full như bình thường, chỉ khác là nó là đầu
+   lâu". Opening stays the circle (no skull on respawn — user: "lúc mở ra
+   thì vẫn là hình tròn iris"). */
+#travel-root .tv-iris.tv-skull {
+  border-radius: 0;
+  /* Solid fill instead of the circle's transparent+box-shadow trick: a CSS
+     mask clips the element's ENTIRE rendering INCLUDING its box-shadow —
+     everything outside the mask's box goes transparent, so the shadow
+     (the circle mode's black) would vanish completely. With a solid #000
+     background the black lives INSIDE the box, the inverted skull mask
+     punches the skull-shaped hole, and the box (sized by skullCloseStartR
+     to overshoot the viewport) covers the whole screen at frame one. */
+  background: #000;
+  -webkit-mask-image: url("/ui/death_skull_hole.png");
+  mask-image: url("/ui/death_skull_hole.png");
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+/* SKULL-CLOSE canvas (death-close only): full-screen, real-alpha — the
+   black is fillRect'ed and the skull hole is cut with destination-out, so
+   what is drawn is exactly what shows (CSS mask-image with a data-URI did
+   NOT render in the live preview: screen stayed fully black). Sits ABOVE
+   the iris (whose background goes transparent in skull mode) and BELOW the
+   fill/video. display toggled by JS (skull close only). */
+#travel-root #tv-skull-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 /* Solid-black filler ABOVE the iris, BELOW the video: covers the tiny
    center hole left by the MIN_SCALE clamp while the loading video (whose
    own first frame may not be painted yet) takes over. Toggled with the
@@ -1596,24 +1641,77 @@ body.mobile-ui #mc-actions.mc-hidden {
   pointer-events: none;
 }
 
-/* Death overlay: full-screen dark veil + centered panel (Kaetram dead parity). */
+/* Death overlay — PHASE 1 of the 3-phase death screen (user 29/09): the
+   player still SEES the world (no veil yet) while their character dissolves
+   and the death text fades in. A light red vignette (edges only, the map
+   stays visible through the center) + a centered text block. The heavy
+   veil + skull iris arrive only at the END of the countdown (phase 2).
+   Panel style (user 30/09 "không hợp phong cách game"): PIXEL KIT — square
+   corners, thick double-outline frame (same language as .danger-alert),
+   Jacquard12 blackletter title + PixelTahoma body (the game's bundled
+   fantasy fonts), and the white skull art stamped above the title. */
 #death-overlay {
   position: absolute; inset: 0;
-  background: rgba(60, 8, 14, 0.55);
-  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(60, 8, 14, 0) 34%,
+    rgba(60, 8, 14, 0.45) 78%,
+    rgba(40, 4, 10, 0.7) 100%
+  );
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 18vh;
   z-index: 50;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
 }
+#death-overlay.shown { opacity: 1; }
 #death-overlay.hidden { display: none; }
 .death-panel {
-  background: rgba(20, 8, 10, 0.92);
-  border: 2px solid #ba2d40;
-  border-radius: 14px;
-  padding: 26px 40px;
+  position: relative;
+  background: #1c090c;
+  /* Pixel double frame: dark outer ring + blood inner line (no radius —
+     crisp square corners like every other pixel panel in the game). */
+  border: 3px solid #ba2d40;
+  box-shadow:
+    0 0 0 3px #120406,
+    0 0 22px rgba(186, 45, 64, 0.4),
+    inset 0 0 14px rgba(120, 20, 30, 0.5);
+  padding: 16px 40px 18px;
   text-align: center;
+  image-rendering: pixelated;
 }
-.death-panel h2 { font-size: 24px; color: #ff6b7d; margin-bottom: 6px; }
-.death-panel p { font-size: 14px; opacity: 0.85; }
-#death-timer { font-weight: 700; color: #ffd75e; margin-top: 8px; }
+.death-panel h2 {
+  font-family: "Jacquard12", "PixelTahoma", monospace;
+  font-weight: 400;
+  font-size: 40px;         /* Jacquard12 is designed for its native 12px; upscaled it keeps the pixel look */
+  line-height: 1;
+  color: #ff6b7d;
+  margin: 6px 0 8px;
+  text-shadow: 2px 2px 0 #000;
+}
+.death-panel p {
+  font-family: "PixelTahoma", Tahoma, monospace;
+  font-size: 14px;
+  color: #e8d5d5;
+  text-shadow: 1px 1px 0 #000;
+}
+#death-reason { opacity: 0.92; }
+#death-timer {
+  font-weight: 700;
+  color: #ffd75e;
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+/* Countdown stamp-in pulse each second: the number "lands" without any
+   smooth easing — pure pixel-game motion (steps, no interpolation). */
+#death-timer.tick {
+  animation: death-tick 0.3s steps(3) 1;
+}
+@keyframes death-tick {
+  0% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
 
 /* ==================== LOBBY — "NEXT GAME" 3-column layout ====================
    Logo on top, three panels: account | play menu | server selection.

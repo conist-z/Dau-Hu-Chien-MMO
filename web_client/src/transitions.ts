@@ -30,6 +30,20 @@ export class TravelVeil {
   private video: HTMLVideoElement | null = null;
   private videoDur = 0;
   private label: HTMLDivElement;
+  // SKULL-CLOSE mode (user 29/09): the death veil closes with a SKULL-shaped
+  // hole instead of the circle; OPENING always stays the circle. The hole
+  // is DRAWN on a full-screen <canvas> (black fill + destination-out skull
+  // punch) — CSS mask-image with a data-URI DID NOT RENDER in the live
+  // preview (screen stayed fully black, 29/09), and a mask-size tween left
+  // the un-masked box remainder transparent (world leak). A canvas has real
+  // alpha: what we draw is exactly what shows. The hole is path-drawn
+  // (bezier dome, round sockets, triangle nose, teeth) — the old blocky
+  // PNG read ugly (user: "đầu lâu trông xấu vl") and starts at ~48% of the
+  // viewport diagonal so the black border is THICK from frame one (user:
+  // "viền đen chưa đủ to, tăng diện tích gấp vài lần").
+  private skullCanvas: HTMLCanvasElement | null = null;
+  private skullCtx: CanvasRenderingContext2D | null = null;
+  private skull = false;
 
   /** idle → closing (iris in) → loading (native video playback) →
    *  reversing (bar un-fills) → opening (iris out) → idle. */
@@ -59,6 +73,10 @@ export class TravelVeil {
   private static readonly REVERSE_MS = 500; // video scrub back to 0
   private static readonly FORCE_MS = 8000;
   private static readonly POLL_MS = 100;
+  /** Hole height at close-start as a fraction of the viewport diagonal:
+   *  ~48% keeps a THICK black border on every edge from the very first
+   *  frame (user: "viền đen tăng diện tích gấp vài lần"). */
+  private static readonly SKULL_START_FRAC = 0.48;
 
   constructor() {
     this.root = document.createElement("div");
@@ -79,6 +97,16 @@ export class TravelVeil {
     document.body.appendChild(this.root);
     this.label = this.root.querySelector(".tv-label")!;
     this.iris = this.root.querySelector(".tv-iris")!;
+    // Skull-close canvas: ABOVE the iris, BELOW the fill/video. Hidden
+    // unless a skull close is running (skull-close only; opening is a
+    // circle). Full-screen, real alpha — the skull hole is cut with
+    // destination-out so what we draw is exactly what shows.
+    const sc = document.createElement("canvas");
+    sc.id = "tv-skull-canvas";
+    sc.style.display = "none";
+    this.root.insertBefore(sc, this.root.querySelector(".tv-fill"));
+    this.skullCanvas = sc;
+    this.skullCtx = sc.getContext("2d");
     const vid = this.root.querySelector("video");
     if (vid) {
       vid.addEventListener("loadedmetadata", () => {
@@ -97,6 +125,36 @@ export class TravelVeil {
   /** True while the veil is on screen. */
   get busy(): boolean {
     return this.state !== "idle";
+  }
+
+  /** (Re)size the skull canvas to the viewport and DRAW the hole at
+   *  progress `t` (0 = start, 1 = fully black). Redraw per step is cheap:
+   *  one fillRect + one path fill on a viewport-sized canvas. */
+  private drawSkull(t: number): void {
+    const cv = this.skullCanvas;
+    const ctx = this.skullCtx;
+    if (!cv || !ctx) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const pw = Math.ceil(vw * dpr);
+    const ph = Math.ceil(vh * dpr);
+    if (cv.width !== pw || cv.height !== ph) {
+      cv.width = pw;
+      cv.height = ph;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, vw, vh);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, vw, vh);
+    const diag = Math.hypot(vw, vh);
+    const h = diag * TravelVeil.SKULL_START_FRAC * (1 - t);
+    if (h > 2) {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "#fff";
+      drawSkullHole(ctx, vw / 2, vh / 2, h);
+    }
   }
 
   /** PRE-TRAVEL SIGNAL (server travel_begin): FULLY BLACK NOW.
@@ -119,6 +177,8 @@ export class TravelVeil {
     this.clearForceTimer();
     this.cancelDrivers();
     this.deathMode = false;
+    this.skull = false;
+    this.iris.classList.remove("tv-skull");
     this.truth = 0;
     this.iris.style.transition = "none"; // no animation — snap
     this.syncShadowSpread();
@@ -176,18 +236,42 @@ export class TravelVeil {
     this.truth = 1;
   }
 
-  /** Death: same veil flow (iris closes, video holds). dead=false →
-   *  reverse out + iris-open. NO death text on purpose (user): the loading
-   *  video alone covers the screen — "chỉ có cái loading thôi". */
+  /** Death — 3-PHASE flow (user 29/09). Phase 1 (the world + dissolve +
+   *  death text) runs WITHOUT the veil: the client calls armSkullDeath()
+   *  when the death is fresh and this class does nothing until the
+   *  countdown ends (deathVeilNow()). Phase 2 = closeSkull(): the skull
+   *  iris swallows the screen, then the loading video holds. Phase 3 =
+   *  dead=false → the loading screen exits and the iris OPENS AS A CIRCLE
+   *  (no skull on respawn — user: "lúc mở ra thì vẫn là hình tròn"). */
   setDead(dead: boolean, _respawnS: number): void {
     if (dead) {
-      this.deathMode = true;
-      if (this.state === "idle") this.startTravel();
-      this.setLabel(""); // death text removed — loading screen only
+      this.deathMode = true; // countdown running client-side; veil not yet
+      return;
     } else if (this.deathMode) {
       this.deathMode = false;
-      this.exitSequence();
+      // Respawn while the skull veil is up → normal circle-open exit.
+      if (this.state !== "idle") this.exitSequence();
     }
+  }
+
+  /** PHASE 2 entry (called by the client when the respawn countdown hits
+   *  0): skull-iris close onto the loading screen. Safe to call repeatedly
+   *  (idempotent once the veil has started). */
+  closeSkull(): void {
+    this.deathMode = true;
+    if (this.state === "idle") {
+      this.skull = true;
+      this.startTravel();
+    }
+  }
+
+  /** Force-open safety for the death path (a lost snapshot mid-death must
+   *  never trap the player behind the veil). */
+  abortDeath(): void {
+    if (this.state !== "idle") this.exitSequence();
+    this.deathMode = false;
+    this.skull = false;
+    this.iris.classList.remove("tv-skull");
   }
 
   // ------------------------------------------------------------------ flow
@@ -208,19 +292,59 @@ export class TravelVeil {
     // starts at the INSCRIBED radius — the four corners are already black
     // on the first frame — and shrinks to r=0 (FULLY black: the shadow
     // covers every corner at every radius — no clamp, no rubber-band, no
-    // hand-off flash).
+    // hand-off flash). SKULL mode: the black lives on a full-screen CANVAS
+    // whose skull hole shrinks per step (CSS mask proved unrenderable with
+    // data-URIs in the live preview). The canvas covers the viewport the
+    // whole time — the black never uncovers the world.
     this.syncShadowSpread();
+    const useSkull = this.skull && !!this.skullCanvas;
+    this.iris.classList.toggle("tv-skull", useSkull);
     this.iris.style.transition = "none";
-    this.applyIris(this.inscribedR());
+    if (useSkull) {
+      this.iris.style.boxShadow = "none";
+      this.iris.style.background = "transparent"; // black lives on the canvas
+      this.applyIris(0);
+      this.skullCanvas!.style.display = "block";
+      this.drawSkull(0);
+    } else {
+      this.applyIris(this.inscribedR());
+    }
     this.root.classList.remove("hidden");
     this.showVideo(false);
     this.setLabel("");
     void this.iris.offsetWidth; // flush the start state before animating
     this.state = "closing";
-    this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
-      if (this.state === "closing") this.enterLoading();
-    });
+    if (useSkull) {
+      this.skull = false; // opening always re-opens as the CIRCLE
+      this.stepSkullFrames(TravelVeil.IRIS_CLOSE_MS, () => {
+        if (this.state === "closing") this.enterLoading();
+      });
+    } else {
+      this.animateIris(0, TravelVeil.IRIS_CLOSE_MS, () => {
+        this.skull = false; // opening always re-opens as the CIRCLE
+        if (this.state === "closing") this.enterLoading();
+      });
+    }
     this.armForceTimer();
+  }
+
+  /** STEP the skull-hole shrink (setTimeout 25ms ticks — hidden/throttled
+   *  tabs still finish): each tick redraws the canvas with a smaller hole;
+   *  the black around it stays pinned over every pixel. */
+  private stepSkullFrames(ms: number, onDone: () => void): void {
+    const t0 = performance.now();
+    const tick = () => {
+      if (this.state !== "closing") return; // raced: abort/force
+      const t = Math.min(1, (performance.now() - t0) / ms);
+      this.drawSkull(t);
+      if (t >= 1) {
+        this.irisTimer = null;
+        onDone();
+        return;
+      }
+      this.irisTimer = window.setTimeout(tick, 25);
+    };
+    tick();
   }
 
   /** Fully black now: swap the iris for the loading video and let it play
@@ -288,6 +412,15 @@ export class TravelVeil {
     if (this.state === "idle" || this.state === "opening") return;
     this.cancelDrivers();
     this.setLabel("");
+    // Hide the skull canvas BEFORE the open: it is fully black (t=1) and
+    // sits ABOVE the iris — left visible it covers the circle-opening
+    // entirely and the game just pops in when the video fades (user:
+    // "loading xong là hiện game luôn"). The iris takes over the black.
+    if (this.skullCanvas) this.skullCanvas.style.display = "none";
+    // Restore the circle iris's black box-shadow (skull close set it to
+    // "none" — without it the opening circle has no black to reveal
+    // through, so the open is invisible).
+    this.syncShadowSpread();
     const vid = this.video;
     if (!vid || this.videoDur <= 0) {
       this.beginOpening();
@@ -342,18 +475,27 @@ export class TravelVeil {
     this.truth = 0;
     this.setLabel("");
     this.iris.style.transition = "none";
+    this.iris.classList.remove("tv-skull");
     this.applyIris(0); // reset: fully black, ready for the next close
+    this.syncShadowSpread(); // undo a skull close's boxShadow:none
+    this.iris.style.background = "transparent"; // undo a skull close's bg
+    if (this.skullCanvas) this.skullCanvas.style.display = "none";
     this.clearForceTimer();
     this.cancelDrivers();
   }
 
   // ------------------------------------------------------------- internals
 
-  /** Iris tween via CSS clip-path TRANSITION (not per-frame JS): the style
+  /** Iris tween via CSS TRANSITION (not per-frame JS): the style
    *  recalc cost is paid by the compositor-driven transition timeline, not
    *  by 60 full-screen gradient repaints per second — the JS-driven version
    *  was visibly slow/janky (user: "RẤT CHẬM"). `transitionend` fires the
-   *  callback; a timeout fallback covers missed events. */
+   *  callback; a timeout fallback covers missed events.
+   *  SKULL mode tweens the element INSTEAD (fixed full-screen box, the mask
+   *  hole scales from maskScale 1 → 0): the box never moves, so the black
+   *  stays pinned over every pixel while the skull hole shrinks into the
+   *  center — width/height/margin transitions would shrink the BOX and
+   *  uncover the world. */
   private animateIris(toR: number, ms: number, onDone: () => void): void {
     if (this.irisTimer !== null) {
       window.clearTimeout(this.irisTimer);
@@ -515,4 +657,60 @@ export class TravelVeil {
       this.irisTimer = null;
     }
   }
+}
+
+/** Draw a SMOOTH skull silhouette (the mask HOLE) centered at (cx, cy)
+ *  with total height `h`, using canvas paths: bezier dome, round cheeks,
+ *  jaw, oval eye sockets, triangle nose, teeth slits — all one evenodd
+ *  path so the sockets/nose/teeth punch back INSIDE the silhouette
+ *  (they stay black while the world shows through the skull bone).
+ *  Fractions tuned against the user's reference art. */
+function drawSkullHole(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  h: number,
+): void {
+  const w = h * 0.84;
+  const top = cy - h / 2;
+  ctx.beginPath();
+  // Dome (temple → top → temple):
+  ctx.moveTo(cx - w * 0.5, top + h * 0.4);
+  ctx.bezierCurveTo(cx - w * 0.5, top + h * 0.06, cx - w * 0.3, top, cx, top);
+  ctx.bezierCurveTo(cx + w * 0.3, top, cx + w * 0.5, top + h * 0.06, cx + w * 0.5, top + h * 0.4);
+  // Right cheek bulge → taper to the jaw:
+  ctx.bezierCurveTo(cx + w * 0.5, top + h * 0.56, cx + w * 0.46, top + h * 0.6, cx + w * 0.3, top + h * 0.68);
+  ctx.lineTo(cx + w * 0.26, top + h * 0.9);
+  ctx.quadraticCurveTo(cx + w * 0.2, top + h, cx, top + h);
+  ctx.quadraticCurveTo(cx - w * 0.2, top + h, cx - w * 0.26, top + h * 0.9);
+  ctx.lineTo(cx - w * 0.3, top + h * 0.68);
+  ctx.bezierCurveTo(cx - w * 0.46, top + h * 0.6, cx - w * 0.5, top + h * 0.56, cx - w * 0.5, top + h * 0.4);
+  ctx.closePath();
+  // Eye sockets (circles), nose (rounded triangle), teeth (4 slits) —
+  // sub-paths reversed by the evenodd fill rule punch back INSIDE.
+  const eyeY = top + h * 0.45;
+  const eyeR = h * 0.105;
+  const eyeDx = w * 0.22;
+  ctx.moveTo(cx - eyeDx + eyeR, eyeY);
+  ctx.arc(cx - eyeDx, eyeY, eyeR, 0, Math.PI * 2);
+  ctx.moveTo(cx + eyeDx + eyeR, eyeY);
+  ctx.arc(cx + eyeDx, eyeY, eyeR, 0, Math.PI * 2);
+  // Nose: rounded triangle.
+  const nY = top + h * 0.62;
+  const nW = w * 0.09;
+  const nH = h * 0.1;
+  ctx.moveTo(cx, nY - nH / 2);
+  ctx.quadraticCurveTo(cx + nW, nY, cx, nY + nH / 2);
+  ctx.quadraticCurveTo(cx - nW, nY, cx, nY - nH / 2);
+  ctx.closePath();
+  // Teeth: 4 vertical slits between the cheeks.
+  const tY0 = top + h * 0.78;
+  const tY1 = top + h * 0.94;
+  const tW = h * 0.024;
+  const tGap = h * 0.075;
+  for (let i = -1.5; i <= 1.5; i++) {
+    const tx = cx + i * tGap;
+    ctx.rect(tx - tW / 2, tY0, tW, tY1 - tY0);
+  }
+  ctx.fill("evenodd");
 }

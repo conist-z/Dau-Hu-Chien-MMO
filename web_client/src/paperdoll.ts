@@ -124,8 +124,8 @@ export class PaperdollBody {
     now: number,
   ): void {
     if (!this.base) return;
-    // Position (feet anchor).
-    this.base.setPosition(x, y);
+    // Position (feet anchor) + the death-dissolve render-only sink.
+    this.base.setPosition(x, y + this.sinkY);
     // Atk plays ONCE (count=1 in Kaetram) then falls back to the base action.
     if (this.action === "atk" && now >= this.atkEndsAt) {
       this.action = action;
@@ -176,6 +176,24 @@ export class PaperdollBody {
     this.base = null;
     this.weapon = null;
     this.armorLegs = this.armorChest = this.armorHelmet = null;
+  }
+
+  /** DEATH DISSOLVE: set ONE alpha across every live layer (body + weapon
+   *  + armor) — the caller drives the per-frame fade (mob-die parity). */
+  setRenderAlpha(a: number): void {
+    this.base?.setAlpha(a);
+    this.weapon?.setAlpha(a);
+    this.armorLegs?.setAlpha(a);
+    this.armorChest?.setAlpha(a);
+    this.armorHelmet?.setAlpha(a);
+  }
+
+  /** DEATH DISSOLVE sink: a render-only Y offset added on top of the feet
+   *  anchor every layer syncs to (the caller tweens it — mob-die parity). */
+  private sinkY = 0;
+  setPositionOffsetY(dy: number): void {
+    this.sinkY = dy;
+    if (this.base) this.base.y += dy;
   }
 
   // ---- internals ----

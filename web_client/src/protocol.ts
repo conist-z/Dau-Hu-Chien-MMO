@@ -223,6 +223,12 @@ export interface SnapshotPayload {
     // freezes prediction + shows a respawn overlay (Kaetram dead parity).
     dead?: boolean;
     respawn_s?: number;
+    // 3-PHASE DEATH SCREEN: VN reason string + damage-source kind + unix
+    // timestamp of the death. died_at lets the client restart the death
+    // overlay + dissolve exactly once per death (dead flips at 20 Hz).
+    death_reason?: string | null;
+    death_kind?: string | null;
+    died_at?: number | null;
     // Input-seq ack: the client rewinds to (x, y) and replays every local
     // input with seq > last_seq. Absent on pre-seq servers — the client
     // keeps prediction-only movement with no correction in that case.

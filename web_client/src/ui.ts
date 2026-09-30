@@ -2825,13 +2825,52 @@ export class Hud {
     }
   }
 
-  /** Death veil (dead while hp == 0). The TravelVeil loading screen covers
-   *  the death — this overlay stays hidden and NO text is set (user:
-   *  "bỏ hẳn chữ đã chết/đang hồi sinh, chỉ có loading"). Kept as a no-op
-   *  shell so call sites and the DOM don't need surgery. */
-  setDead(_dead: boolean, _respawnS: number, _reason?: string): void {
+  /** PHASE-1 death overlay (user 29/09): the world stays visible while the
+   *  character dissolves — this DOM layer fades in a red vignette + the
+   *  death reason + a live respawn countdown. `armed` gates WHICH death
+   *  this is: the caller compares the snapshot's died_at so the text is
+   *  (re)written exactly once per death, while the countdown re-reads
+   *  respawn_s on every snapshot (server truth). */
+  private deathArmed = false;
+  private deathReasonText = "";
+
+  setDead(dead: boolean, respawnS: number, reason?: string, armed?: boolean): void {
     const overlay = document.getElementById("death-overlay");
-    if (overlay) overlay.classList.add("hidden");
+    if (!overlay) return;
+    const title = overlay.querySelector("#death-reason") as HTMLElement | null;
+    const timer = overlay.querySelector("#death-timer") as HTMLElement | null;
+    if (!dead) {
+      this.deathArmed = false;
+      overlay.classList.remove("shown");
+      overlay.classList.add("hidden");
+      return;
+    }
+    if (armed && !this.deathArmed) {
+      // Fresh death: (re)write the reason once per died_at change.
+      this.deathArmed = true;
+      this.deathReasonText = (reason ?? "Bạn đã gục ngã").trim();
+      if (title) title.textContent = this.deathReasonText;
+    }
+    if (timer) {
+      const s = Math.max(0, Math.ceil(respawnS));
+      const text = `Hồi sinh sau ${s}s…`;
+      if (timer.textContent !== text) {
+        timer.textContent = text;
+        // Pixel-game "stamp" pulse on each new second (steps easing, no
+        // smooth interpolation). Restart the one-shot animation even when
+        // the class is already present.
+        timer.classList.remove("tick");
+        void timer.offsetWidth;
+        timer.classList.add("tick");
+      }
+    }
+    overlay.classList.remove("hidden");
+    // Next-frame shown-toggle so the 1.2s opacity transition plays on
+    // every fresh death (display:none → shown needs a style flush).
+    if (!overlay.classList.contains("shown")) {
+      void overlay.offsetWidth;
+      overlay.classList.add("shown");
+    }
   }
 
   private invVersion = -1;
