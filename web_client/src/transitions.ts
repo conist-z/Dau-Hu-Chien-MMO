@@ -273,8 +273,14 @@ export class TravelVeil {
       return;
     } else if (this.deathMode) {
       this.deathMode = false;
-      // Respawn while the skull veil is up → normal circle-open exit.
-      if (this.state !== "idle") this.exitSequence();
+      // Respawn while the veil is up: the world is ready NOW — latch truth
+      // and let the exit heartbeat wait for the BAR to hit 100% (user
+      // 30/09: the death loading showed no progress at all because the
+      // respawn fired exitSequence the instant the veil appeared, at
+      // ~0.5s of video — bar near 0%). Same gate as the travel exit.
+      // If the respawn lands mid-close (state "closing"), the heartbeat
+      // starts with enterLoading and picks the latched truth up there.
+      if (this.state !== "idle") this.truth = 1;
     }
   }
 
