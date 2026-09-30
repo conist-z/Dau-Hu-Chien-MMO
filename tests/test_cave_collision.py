@@ -37,16 +37,28 @@ def test_no_mask_on_walkable_tiles(cave_map):
 
 def test_no_solid_cell_without_art_interior(cave_map):
     """After the invisible-blocker carve, no interior solid cell may lack
-    non-ground art (the player stops where nothing is drawn)."""
+    non-ground art (the player stops where nothing is drawn).
+
+    Exception: the gate rows — portal trigger tiles are force-solid by the
+    loader (walking THROUGH the door art must be impossible) even where the
+    door art reads as open. Row 5 cols 16-20 is the forest gate (the art
+    there is the exit corridor mouth, drawn on row 6+)."""
     comp = _cell_composite_alpha(cave_map.tile_layers, cave_map.width, cave_map.height)
     if comp is None:  # baked sheet unavailable in this environment
         pytest.skip("ekonia_baked.png not available")
+    from game.portals import Portals
+
+    cfg = Portals.load(ASSETS_DIR / "portals.json")
+    gates = set()
+    mp = cfg.for_map("ekonia/cave_area1")
+    if mp is not None:
+        gates = set(mp.trigger_tiles)
     edge = 2
     bad = [
         (x, y)
         for y in range(edge, cave_map.height - edge)
         for x in range(edge, cave_map.width - edge)
-        if cave_map.collision[y][x] and comp[y][x] == 0
+        if cave_map.collision[y][x] and comp[y][x] == 0 and (x, y) not in gates
     ]
     assert bad == [], f"solid cells without art: {bad[:20]}"
 

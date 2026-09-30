@@ -74,6 +74,15 @@ class Portals:
                     # spawn layer (same lazy resolution as "spawn_layer").
                     target = ()
                     target_is_layer = True
+                elif target_cfg and isinstance(target_cfg[0], (list, tuple)):
+                    # MULTI-TILE arrival area (Ekonia cave net): [[x,y], [x,y],
+                    # ...] — free_arrival_tile picks the first walkable,
+                    # unoccupied, non-trigger tile (cave mouths are 2-4 tiles
+                    # wide; one arrival tile would stack players).
+                    target = tuple(
+                        tuple(int(v) for v in tile) for tile in target_cfg
+                    )
+                    target_is_layer = False
                 else:
                     target = (tuple(int(v) for v in target_cfg),)
                     target_is_layer = False

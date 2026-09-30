@@ -215,6 +215,10 @@ const FORAGE_GIDS = new Set([49, 50, 52, 53, 54, 55, 56, 57, 58,
   // missing any of these made the client treat that decor as a standing
   // node and block movement the server allowed ("bị box chặn").
   621, 625, 626, 629, 630, 640, 641, 642, 643, 648,
+  // Ekonia cave "Props" mushrooms (game/resources.py TILE_NODE_PARTS):
+  // walk-through forage — server parity (gid 331/3368/168 are ROCKS, solid
+  // mineable nodes, deliberately NOT here).
+  157, 292, 293, 309, 3379,
 ]);
 // Station blocks the E-prompt/hover/click interact flow targets (mirrors
 // game/crafting.py STATION_BLOCK_IDS).
@@ -1272,6 +1276,10 @@ export class WorldScene extends Phaser.Scene {
       // visible forever after the node is felled (the "đập rồi vẫn còn"
       // bug)
       "nam nau", "nam tim", "co", "hoa trang", "hoa xanh", "hoa tim", "hoa vang",
+      // Ekonia cave props (game/resources.py RESOURCE_LAYER_NAMES): the cave
+      // "Props" layer holds choppable mushrooms/rocks — baked copies would
+      // stay visible after the node is felled.
+      "props", "props2",
     ]);
     const foldName = (s: string): string =>
       s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")

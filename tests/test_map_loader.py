@@ -39,8 +39,10 @@ def test_load_tiled_godot_wrapper():
     assert len(md.tile_layers) == 19
     # The "tường(...)" + "tảng đá(...)" + "cây" layers drive blocking (union).
     # 338 (wall+boulder) + 308 tree tiles = 646 since "cây" became blocking.
+    # +6 = the widened cave-mouth gate (cols 80..82 × rows 2..3): portal
+    # trigger tiles are force-solid by the loader (portals.json cave net).
     blocked = sum(1 for row in md.collision for v in row if v)
-    assert blocked == 646
+    assert blocked == 652
     assert md.is_walkable(*md.spawn)
 
 
@@ -73,8 +75,9 @@ def test_tang_da_layers_block_union():
     md = load_map("bigmap", ASSETS)
     blocked = sum(1 for row in md.collision for v in row if v)
     # 264 wall + 74 boulder + 308 tree = 646 (trees block since the web
-    # client exposed walk-through-trees; dead trees stay walkable).
-    assert blocked == 646
+    # client exposed walk-through-trees; dead trees stay walkable) + 6
+    # force-solid cave-gate tiles (cols 80..82 × rows 2..3).
+    assert blocked == 652
     assert not md.is_walkable(21, 3)    # tảng đá lớn tile
     assert not md.is_walkable(120, 2)   # tảng đá nhỏ tile
     assert md.is_walkable(0, 0)         # open ground stays open
