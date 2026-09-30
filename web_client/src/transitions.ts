@@ -44,6 +44,10 @@ export class TravelVeil {
   private skullCanvas: HTMLCanvasElement | null = null;
   private skullCtx: CanvasRenderingContext2D | null = null;
   private skull = false;
+  /** True while the CURRENT travel is a skull death-close: enterLoading
+   *  then holds the loading screen for DEATH_MIN_LOAD_MS. Reset per
+   *  travel (see startTravel / onMapSwitch). */
+  private deathLoad = false;
 
   /** idle → closing (iris in) → loading (native video playback) →
    *  reversing (bar un-fills) → opening (iris out) → idle. */
@@ -59,6 +63,13 @@ export class TravelVeil {
    *  map (noteReady). Drives the EXIT decision only — the bar itself is
    *  native playback (see header). */
   private truth = 0;
+  /** BAR-DONE gate (user 30/09: "chạy đến 100% mới là xong"): the exit
+   *  waits for the loading bar to visually COMPLETE, not just for the
+   *  world to be ready. Latched by the video hold-handler below. */
+  private barDone = false;
+  /** Video seconds where the bar is visually FULL (frame ~69/82 of the
+   *  clean webm — probed pixel-wise). */
+  private static readonly BAR_FULL_AT = 3.4;
   private startedAt = 0;
   /** Current iris hole radius in px (mirrors the CSS var). */
   private r = 0;
@@ -68,6 +79,17 @@ export class TravelVeil {
   private forceTimer: number | null = null;
 
   private static readonly MIN_LOAD_MS = 2200; // veil must be SEEN
+  /** DEATH loading lasts LONGER than a map-switch one (user 30/09: death
+   *  always exits at the bare minimum because the same map is instantly
+   *  ready — the whole sequence felt rushed next to a real travel). The
+   *  skull close sets deathLoad and enterLoading then holds the video
+   *  for this long. */
+  private static readonly DEATH_MIN_LOAD_MS = 4200;
+  /** Slower native playback on the death path so the pixel bar keeps
+   *  crawling through the longer hold instead of parking at ~85% for
+   *  seconds (bar completes ≈3.5s video ÷ rate; death rate 0.85 ≈ 4.1s). */
+  private static readonly DEATH_VIDEO_RATE = 0.85;
+  private static readonly TRAVEL_VIDEO_RATE = 1.25;
   private static readonly IRIS_CLOSE_MS = 450; // hole shrinks onto the center
   private static readonly IRIS_OPEN_MS = 550;
   private static readonly REVERSE_MS = 500; // video scrub back to 0
@@ -90,7 +112,7 @@ export class TravelVeil {
     this.root.innerHTML = `
       <div class="tv-iris"></div>
       <div class="tv-fill"></div>
-      <video class="tv-video" src="ui/travel_wipe.webm" muted playsinline
+      <video class="tv-video" src="ui/travel_wipe_clean.webm" muted playsinline
              preload="auto" disablepictureinpicture></video>
       <div class="tv-label"></div>
     `;
@@ -178,8 +200,10 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.skull = false;
+    this.deathLoad = false;
     this.iris.classList.remove("tv-skull");
     this.truth = 0;
+    this.barDone = false;
     this.iris.style.transition = "none"; // no animation — snap
     this.syncShadowSpread();
     this.applyIris(0); // fully black THIS frame
@@ -288,6 +312,7 @@ export class TravelVeil {
     this.cancelDrivers();
     this.deathMode = false;
     this.truth = 0;
+    this.barDone = false;
     // IRIS CLOSE (the user's "hình tròn kéo về tâm siêu nhỏ"): the hole
     // starts at the INSCRIBED radius — the four corners are already black
     // on the first frame — and shrinks to r=0 (FULLY black: the shadow
@@ -298,6 +323,7 @@ export class TravelVeil {
     // whole time — the black never uncovers the world.
     this.syncShadowSpread();
     const useSkull = this.skull && !!this.skullCanvas;
+    this.deathLoad = useSkull; // skull close ⇒ LONGER loading hold
     this.iris.classList.toggle("tv-skull", useSkull);
     this.iris.style.transition = "none";
     if (useSkull) {
@@ -359,27 +385,25 @@ export class TravelVeil {
     // transparent and the circle-open invisible (user: "loading xong là
     // hiện game luôn"). The canvas hides in exitSequence.
     this.iris.classList.remove("tv-skull");
+    this.barDone = this.video === null; // no video → don't gate on the bar
     this.showVideo(true);
     const vid = this.video;
     if (vid) {
       vid.pause();
       vid.currentTime = 0;
       vid.style.opacity = "1";
-      // BAR COMPLETES AT EXIT + NEVER OVERSHOOTS into the broken tail.
-      // Webm facts (probed frame-by-frame): declared 5.1s but the tail is
-      // broken — the last PLAYABLE frame is t=3.5s (bar just full) and the
-      // wrap frame after it is BLANK/0% — the "0% sau khi chạy 100%" bug
-      // (user, twice). Earlier attempts still leaked because (a) timeupdate
-      // only fires every ~250ms REAL time → at rate 1.5 the video overshoots
-      // the target by up to 0.37s INTO the broken zone, and (b) SEEKING
-      // back inside a broken webm can silently fail (stays on the bad
-      // frame).
-      // FIX: PLAY SLOW, PARK EARLY, NEVER SEEK. rate 1.25 caps the worst
-      // timeupdate overshoot at 0.31s; the pause target 3.0s (bar ~85%)
-      // therefore lands at worst ~3.31s — safely inside the playable span
-      // WITHOUT any seeking. 'ended' is a belt-and-braces last resort.
-      const target = 3.0; // ~frame 60: bar ~85% full
-      vid.playbackRate = 1.25;
+      // CLEAN VIDEO (rebuilt 30/09 from the original's decodable span):
+      // the webm now decodes ALL 82 frames (20fps, 4.1s) — the fill runs
+      // frame 0→69 (bar VISUALLY FULL at t≈3.45s) then HOLDS the 100%
+      // frame ~0.6s. No broken tail, no wrap frame → the bar runs to a
+      // real 100% and the old "0% sau khi chạy 100%" leak is gone.
+      // Playback: rate 1.25 spreads the fill (~2.8s to full); at FULL_AT
+      // we latch barDone + pause (never seek — parked on the full frame,
+      // which the clean tail holds anyway).
+      const target = TravelVeil.BAR_FULL_AT; // bar visually 100%
+      vid.playbackRate = this.deathLoad
+        ? TravelVeil.DEATH_VIDEO_RATE
+        : TravelVeil.TRAVEL_VIDEO_RATE;
       const hold = () => {
         if (this.state !== "loading") {
           vid.removeEventListener("timeupdate", hold);
@@ -387,8 +411,8 @@ export class TravelVeil {
           return;
         }
         if (vid.ended || vid.currentTime >= target) {
-          // Pause ONLY — seeking inside the broken webm showed the bad
-          // frame again; the paused ~85% bar is exactly what we want.
+          // Bar at 100%: latch the exit gate + pause on the full frame.
+          this.barDone = true;
           vid.pause();
         }
       };
@@ -396,15 +420,22 @@ export class TravelVeil {
       vid.addEventListener("ended", hold);
       // muted+playsinline ⇒ autoplay is always permitted.
       vid.play().catch(() => {
-        /* blocked playback: the black screen + iris still work */
+        this.barDone = true; // blocked playback: don't gate the exit
+        /* the black screen + iris still work */
       });
     }
-    // Exit poll: truth complete + minimum display time → exit sequence.
+    // Exit poll: world ready + BAR AT 100% (user 30/09: "chạy đến 100%
+    // mới là xong") + minimum display time → exit sequence. DEATH holds
+    // the loading screen longer (DEATH_MIN_LOAD_MS — user 30/09).
     this.heartbeat = window.setInterval(() => {
       if (
         this.state === "loading" &&
         this.truth >= 1 &&
-        performance.now() - this.startedAt >= TravelVeil.MIN_LOAD_MS
+        this.barDone &&
+        performance.now() - this.startedAt >=
+          (this.deathLoad
+            ? TravelVeil.DEATH_MIN_LOAD_MS
+            : TravelVeil.MIN_LOAD_MS)
       ) {
         this.exitSequence();
       }
@@ -483,6 +514,7 @@ export class TravelVeil {
     this.state = "idle";
     this.root.classList.add("hidden");
     this.truth = 0;
+    this.barDone = false;
     this.setLabel("");
     this.iris.style.transition = "none";
     this.iris.classList.remove("tv-skull");
